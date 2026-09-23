@@ -17,6 +17,7 @@ using ValvePak;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.TextureDecoders;
 using Windows.Win32;
+using System.Drawing;
 using Windows.Win32.UI.WindowsAndMessaging;
 using ResourceViewMode = GUI.Types.Viewers.ResourceViewMode;
 
@@ -49,6 +50,7 @@ namespace GUI
             Settings.Load();
             Themer.InitializeTheme();
             InitializeComponent();
+            InitializeCreateMenuItem();
             LoadIcons();
 
             // Let the explorer start scanning games before the window even spawns
@@ -1112,6 +1114,70 @@ namespace GUI
             progressDialog.ShowDialog();
         }
 #endif
+        private void InitializeCreateMenuItem()
+        {
+#pragma warning disable CA2000 // Вызовите Dispose перед выходом из области видимости
+            var targetMenuStrip = Controls.OfType<MenuStrip>().FirstOrDefault() ?? MainMenuStrip;
 
+            if (targetMenuStrip != null)
+            {
+                ToolStripMenuItem? toolsMenuItem = null;
+
+                foreach (ToolStripItem? item in targetMenuStrip.Items)
+                {
+                    if (item is ToolStripMenuItem menuItem &&
+                        (string.Equals(menuItem.Text, "Tools", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(menuItem.Text, "Инструменты", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        toolsMenuItem = menuItem;
+                        break;
+                    }
+                }
+
+                if (toolsMenuItem == null)
+                {
+                    toolsMenuItem = new ToolStripMenuItem("Tools");
+
+                    var insertIndex = Math.Max(0, targetMenuStrip.Items.Count - 2);
+                    targetMenuStrip.Items.Insert(insertIndex, toolsMenuItem);
+                }
+
+                var createMenuItem = new ToolStripMenuItem("VTEX Create");
+                createMenuItem.Click += OnVtexCompilerItemClick;
+
+                toolsMenuItem.DropDownItems.Add(createMenuItem);
+            }
+#pragma warning restore CA2000
+        }
+
+        public void FocusLogPage()
+        {
+            foreach (Control control in Controls)
+            {
+                if (control is TabControl tabControl)
+                {
+                    foreach (TabPage page in tabControl.TabPages)
+                    {
+                        if (page.Text.Contains("Log", StringComparison.OrdinalIgnoreCase) ||
+                            page.Text.Contains("Console", StringComparison.OrdinalIgnoreCase))
+                        {
+                            tabControl.SelectedTab = page;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        public void ShowVtexCompilerDialog()
+        {
+            using var form = new VtexCompilerForm();
+            form.ShowDialog(this);
+        }
+
+        private void OnVtexCompilerItemClick(object? sender, EventArgs e)
+        {
+            ShowVtexCompilerDialog();
+        }
     }
 }
