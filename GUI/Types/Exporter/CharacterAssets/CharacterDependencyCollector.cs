@@ -6,6 +6,7 @@ using ValveKeyValue;
 using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
+using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
 
 namespace GUI.Types.Exporter.CharacterAssets
@@ -42,8 +43,19 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public bool IncludeAudio { get; set; }
 
-        /// <summary>Panorama images: the hero portraits, ability icons and item icons.</summary>
+        /// <summary>
+        /// Writes <see cref="IconReplacements"/> into the game folder: the compiled images the game already has, renamed
+        /// over the hero's own icons.
+        /// </summary>
         public bool Icons { get; set; } = true;
+
+        /// <summary>The icons to write when <see cref="Icons"/> is set.</summary>
+        public IReadOnlyList<IconReplacement> IconReplacements { get; set; } = [];
+
+        /// <summary>
+        /// The models the hero stands on in the loadout screen, and the particles items only play there.
+        /// </summary>
+        public bool Pedestal { get; set; }
 
         /// <summary>
         /// Writes the equipped look over the hero's default assets, so it shows without the items being equipped: the
@@ -65,7 +77,19 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <param name="Target">The model it is written as.</param>
     /// <param name="Skin">The material group to make the default one.</param>
     /// <param name="Particles">Particles the model should create itself, since the items that create them are not equipped.</param>
-    sealed record ModelReplacement(string Source, string Target, int Skin, List<string> Particles);
+    sealed record ModelReplacement(string Source, string Target, int Skin, List<string> Particles)
+    {
+        /// <summary>The body group choices to pick, since nothing switches them without the items equipped.</summary>
+        public Dictionary<string, int> BodyGroups { get; init; } = [];
+
+        /// <summary>Models whose meshes are added to this one, since they have no model of their own to be written over.</summary>
+        public List<MergedModel> Merged { get; init; } = [];
+    }
+
+    /// <summary>
+    /// A model whose meshes are added to another one, see <see cref="ModelReplacement.Merged"/>.
+    /// </summary>
+    sealed record MergedModel(string Model, int Skin, Dictionary<string, int> BodyGroups);
 
     /// <summary>
     /// A particle written over another one, see <see cref="CharacterExportOptions.ReplaceDefaults"/>.
@@ -80,9 +104,6 @@ namespace GUI.Types.Exporter.CharacterAssets
     {
         /// <summary>Models, decompiled with the custom model extractor, which also writes their meshes, animations and physics.</summary>
         public List<string> Models { get; } = [];
-
-        /// <summary>Materials, decompiled with the custom material exporter, which also writes their textures.</summary>
-        public List<string> Materials { get; } = [];
 
         /// <summary>Everything else that is compiled, decompiled with the built-in decompiler.</summary>
         public List<string> Resources { get; } = [];
@@ -99,40 +120,28 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Particle swaps left out because every hero uses the particle they replace.</summary>
         public List<ParticleReplacement> SkippedSharedParticles { get; } = [];
 
-        /// <summary>Equipped models whose slot has no default model they could be written over.</summary>
+        /// <summary>Equipped models that are neither worn by the hero nor written over another model, e.g. a summon's.</summary>
         public List<string> UnplacedModels { get; } = [];
 
-        /// <summary>Meshes, animations and physics found under the models, written by the model extractor.</summary>
-        public int ModelDependencyCount { get; set; }
+        /// <summary>Compiled icons copied into the game folder, as package paths.</summary>
+        public List<IconReplacement> IconReplacements { get; } = [];
 
-        /// <summary>Textures only used by the materials, written by the material exporter.</summary>
-        public int MaterialTextureCount { get; set; }
+        /// <summary>Things worth knowing about how the loadout was exported.</summary>
+        public List<string> Notes { get; } = [];
 
         /// <summary>References that could not be found in the game files.</summary>
         public List<string> Missing { get; } = [];
     }
 
     /// <summary>
-    /// Works out which files make up a hero with a set of items: the models, particles, sound events and icons the items
-    /// name in items_game.txt, and everything those resources reference in turn.
+    /// Works out which files make up a hero with a set of items: the models, particles and sound events the items name
+    /// in items_game.txt. Nothing they reference is exported on top, the addon loads it from the game like the game does.
     /// </summary>
     sealed class CharacterDependencyCollector
     {
-        // Written by the model extractor next to the model that uses them
-        private static readonly HashSet<string> ModelOwnedExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".vmesh", ".vmorf", ".vphys", ".vagrp", ".vanim", ".vmodel", ".vseq", ".vpulse",
-        };
-
-        // Resources whose references are not worth opening them for
-        private static readonly HashSet<string> LeafExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".vsnd", ".vtex",
-        };
-
         private static readonly HashSet<string> AssetExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".vmdl", ".vpcf", ".vsnap", ".vmat", ".vtex", ".vsndevts", ".vsnd",
+            ".vmdl", ".vpcf", ".vsnap", ".vsndevts", ".vsnd",
         };
 
         // Sound event files that never hold hero or cosmetic sounds
@@ -151,11 +160,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         private readonly GameFileLoader fileLoader;
         private readonly IProgress<string>? progress;
 
-        private readonly Queue<(string Path, bool FollowReferences)> queue = new();
+        private readonly Queue<(string Path, bool IncludeSounds)> queue = new();
         private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> optional = new(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> textures = new(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> standaloneTextures = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, (string File, KVObject Data)>? soundEvents;
 
         public CharacterDependencyCollector(Package package, GameFileLoader fileLoader, IProgress<string>? progress)
@@ -183,25 +189,38 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 AddReplacements(loadout, options, equippedAssets, plan);
             }
+            else
+            {
+                AddWornModels(loadout, options);
+            }
 
-            progress?.Report($"Following references of {queue.Count} assets...");
+            if (options.Pedestal)
+            {
+                foreach (var pedestal in loadout.Pedestals)
+                {
+                    Enqueue(pedestal);
+                }
+            }
+
+            if (options.Icons)
+            {
+                foreach (var icon in options.IconReplacements)
+                {
+                    if (Exists(icon.Source))
+                    {
+                        plan.IconReplacements.Add(icon);
+                    }
+                    else
+                    {
+                        plan.Missing.Add(icon.Source);
+                    }
+                }
+            }
 
             while (queue.TryDequeue(out var next))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Visit(next.Path, next.FollowReferences, plan);
-            }
-
-            foreach (var texture in textures)
-            {
-                if (standaloneTextures.Contains(texture))
-                {
-                    plan.Resources.Add(texture);
-                }
-                else
-                {
-                    plan.MaterialTextureCount++;
-                }
+                Visit(next.Path, next.IncludeSounds, plan);
             }
 
             return plan;
@@ -211,20 +230,14 @@ namespace GUI.Types.Exporter.CharacterAssets
         {
             var hero = loadout.Hero;
 
-            // When the hero's model gets replaced, the default one would only be overwritten
-            if (options.HeroModel && (options.ReplaceDefaults ? loadout.HeroModel : hero.Model) is { } heroModel)
-            {
-                Enqueue(heroModel);
-            }
-
             if (options.HeroSounds && hero.GameSoundsFile != null)
             {
-                Enqueue(hero.GameSoundsFile, followReferences: options.IncludeAudio);
+                Enqueue(hero.GameSoundsFile, includeSounds: options.IncludeAudio);
             }
 
             if (options.HeroVoice && hero.VoiceFile != null)
             {
-                Enqueue(hero.VoiceFile, followReferences: options.IncludeAudio);
+                Enqueue(hero.VoiceFile, includeSounds: options.IncludeAudio);
             }
 
             if (options.HeroParticles && hero.ParticleFolder != null)
@@ -240,19 +253,6 @@ namespace GUI.Types.Exporter.CharacterAssets
                     {
                         Enqueue(entry.GetFullPath());
                     }
-                }
-            }
-
-            if (options.Icons)
-            {
-                EnqueueImage($"heroes/{hero.Name}");
-                EnqueueImage($"heroes/icons/{hero.Name}");
-                EnqueueImage($"heroes/selection/{hero.Name}");
-                Enqueue($"panorama/videos/heroes/{hero.Name}.webm", isOptional: true);
-
-                foreach (var ability in hero.Abilities)
-                {
-                    EnqueueImage($"spellicons/{ability}");
                 }
             }
         }
@@ -295,91 +295,118 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         private static bool IsConditionalSwap(string type) => type is "model" or "particle_combined";
 
+        /// <summary>
+        /// Queues what an item swaps in or creates, other than models the hero wears, which depend on whether the default
+        /// assets get replaced. Only the kinds of assets a hero addon can use are looked at: the rest of what items_game.txt
+        /// names, like loading screens, couriers or map effects, has nothing to do with the hero.
+        /// </summary>
         private void AddItemRoots(CharacterLoadout loadout, EquippedItem item, CharacterExportOptions options, HashSet<string> equippedAssets, CharacterExportPlan plan)
         {
-            // Already swapped for any version another item makes of it
-            if (options.ItemModels && loadout.GetItemModel(item) is { } model)
-            {
-                Enqueue(model);
-            }
-
-            if (options.Icons && item.Item.ImageInventory != null)
-            {
-                EnqueueImage(item.Item.ImageInventory);
-            }
-
             foreach (var modifier in item.Modifiers)
             {
+                // Only shown in the loadout screen, which a custom game does not have
+                if (modifier.LoadoutOnly && !options.Pedestal)
+                {
+                    continue;
+                }
+
                 switch (modifier.Type)
                 {
-                    case "model":
-                        continue;
+                    case "sound" when options.ItemSounds && modifier.Modifier != null:
+                        AddSoundEvent(loadout.Hero, modifier.Modifier, options.IncludeAudio, plan);
+                        break;
 
-                    case "sound":
-                        if (options.ItemSounds && modifier.Modifier != null)
+                    // Swapped in particles are exported as the replacements of what they swap when defaults get replaced
+                    case "particle" or "particle_combined" when options.ItemParticles && !options.ReplaceDefaults:
+                        if (IsAssetPath(modifier.Modifier)
+                            && (!IsConditionalSwap(modifier.Type) || (modifier.Asset != null && equippedAssets.Contains(NormalizePath(modifier.Asset)))))
                         {
-                            AddSoundEvent(loadout.Hero, modifier.Modifier, options.IncludeAudio, plan);
+                            Enqueue(modifier.Modifier);
                         }
 
-                        continue;
+                        break;
 
-                    case "ability_icon" when options.Icons && modifier.Modifier != null:
-                        EnqueueImage($"spellicons/{modifier.Modifier}");
-                        continue;
+                    case "particle_create" or "particle_snapshot" when options.ItemParticles && IsAssetPath(modifier.Modifier):
+                        Enqueue(modifier.Modifier);
+                        break;
 
-                    case "icon_replacement_hero" when options.Icons && modifier.Modifier != null:
-                        EnqueueImage($"heroes/{modifier.Modifier}");
-                        EnqueueImage($"heroes/selection/{modifier.Modifier}");
-                        continue;
+                    // Other units, like summons, which have no default model of the hero's to be written over
+                    case "entity_model" when options.ItemModels && IsAssetPath(modifier.Modifier)
+                        && !loadout.Hero.Name.Equals(modifier.Asset, StringComparison.OrdinalIgnoreCase):
+                        Enqueue(modifier.Modifier);
+                        break;
 
-                    case "icon_replacement_hero_minimap" when options.Icons && modifier.Modifier != null:
-                        EnqueueImage($"heroes/icons/{modifier.Modifier}");
-                        continue;
-
-                    case "inventory_icon" when options.Icons && modifier.Modifier != null:
-                        EnqueueImage($"items/{modifier.Modifier}");
-                        continue;
-                }
-
-                if (IsConditionalSwap(modifier.Type) && (modifier.Asset == null || !equippedAssets.Contains(NormalizePath(modifier.Asset))))
-                {
-                    continue;
-                }
-
-                // What gets swapped in is the modifier; the asset is what it replaces, unless the item only names an asset
-                var path = IsAssetPath(modifier.Modifier) ? modifier.Modifier : IsAssetPath(modifier.Asset) ? modifier.Asset : null;
-
-                if (path == null)
-                {
-                    continue;
-                }
-
-                var wanted = Path.GetExtension(path).ToLowerInvariant() switch
-                {
-                    ".vmdl" => options.ItemModels,
-                    ".vpcf" or ".vsnap" => options.ItemParticles,
-                    ".vsndevts" => options.ItemSounds,
-                    ".vsnd" => options.ItemSounds && options.IncludeAudio,
-                    _ => true,
-                };
-
-                if (wanted)
-                {
-                    Enqueue(path);
+                    case "hero_model_change" when options.ItemModels && !options.ReplaceDefaults && IsAssetPath(modifier.Modifier):
+                        Enqueue(modifier.Modifier);
+                        break;
                 }
             }
         }
 
         /// <summary>
-        /// Works out what gets written over the hero's default assets, see <see cref="CharacterExportOptions.ReplaceDefaults"/>.
-        /// What default items do is left alone, the game still applies it.
+        /// Queues the models the hero wears, as they are, when they are not written over the default ones.
         /// </summary>
-        private static void AddReplacements(CharacterLoadout loadout, CharacterExportOptions options, HashSet<string> equippedAssets, CharacterExportPlan plan)
+        private void AddWornModels(CharacterLoadout loadout, CharacterExportOptions options)
+        {
+            if (options.HeroModel)
+            {
+                if (loadout.Hero.Model != null)
+                {
+                    Enqueue(loadout.Hero.Model);
+                }
+
+                if (loadout.HeroModel != null)
+                {
+                    Enqueue(loadout.HeroModel);
+                }
+            }
+
+            if (!options.ItemModels)
+            {
+                return;
+            }
+
+            foreach (var item in loadout.Items)
+            {
+                if (loadout.GetItemModel(item) is { } model)
+                {
+                    Enqueue(model);
+                }
+            }
+
+            foreach (var (_, wearable) in loadout.AdditionalWearables)
+            {
+                Enqueue(wearable);
+            }
+
+            foreach (var unitModel in loadout.UnitDefaultModels)
+            {
+                Enqueue(unitModel);
+            }
+        }
+
+        /// <summary>
+        /// Works out what gets written over the hero's default assets, see <see cref="CharacterExportOptions.ReplaceDefaults"/>,
+        /// and queues what that needs. What default items do is left alone, the game still applies it.
+        /// </summary>
+        private void AddReplacements(CharacterLoadout loadout, CharacterExportOptions options, HashSet<string> equippedAssets, CharacterExportPlan plan)
         {
             var hero = loadout.Hero;
 
-            // Particles of items without a model of their own play on the hero
+            // Particles of items without a model of their own play on the hero, as do those of models added to the hero's
             var heroParticles = new List<string>();
+            var merged = new List<MergedModel>();
+            var replacedParticles = new Dictionary<string, ParticleReplacement>(StringComparer.OrdinalIgnoreCase);
+            var usedParticles = GetUsedParticles(loadout, equippedAssets);
+            var unitSwaps = options.ItemModels ? loadout.UnitModelSwaps.ToList() : [];
+
+            if (options.ItemModels)
+            {
+                foreach (var unitModel in loadout.UnitDefaultModels)
+                {
+                    Enqueue(unitModel);
+                }
+            }
 
             foreach (var item in loadout.Items)
             {
@@ -392,28 +419,67 @@ namespace GUI.Types.Exporter.CharacterAssets
                     : [];
 
                 var model = options.ItemModels ? loadout.GetItemModel(item) : null;
+                var itemUnitSwaps = unitSwaps.Where(swap => swap.Item == item).ToList();
 
-                if (model == null)
+                if (itemUnitSwaps.Count > 0)
                 {
-                    heroParticles.AddRange(createdParticles);
-                }
-                else if (loadout.GetDefaultModel(item.Item.Slot) is { } defaultModel)
-                {
-                    // Also covers default items that another item swaps for a refit
-                    if (!CharacterLoadout.IsSamePath(model, defaultModel) || item.Skin != 0 || createdParticles.Count > 0)
+                    // Dresses a unit the hero creates, its own model is only what the loadout screen shows
+                    foreach (var (_, unitModel, defaultModel) in itemUnitSwaps)
                     {
-                        plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(model), NormalizePath(defaultModel), item.Skin, createdParticles));
+                        var (skin, bodyGroups) = GetModelLook(loadout, unitModel, item.Skin);
+
+                        Enqueue(unitModel);
+
+                        // Default items name the unit's own model too
+                        if (!CharacterLoadout.IsSamePath(unitModel, defaultModel) || skin != 0 || createdParticles.Count > 0 || bodyGroups.Count > 0)
+                        {
+                            plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(unitModel), NormalizePath(defaultModel), skin, createdParticles)
+                            {
+                                BodyGroups = bodyGroups,
+                            });
+                        }
+                    }
+                }
+                else if (model == null)
+                {
+                    if (loadout.IsWornByHero(item.Item.Slot))
+                    {
+                        heroParticles.AddRange(createdParticles);
                     }
                 }
                 else
                 {
-                    // Nothing to write the model over, but its particles can still come from the hero
-                    heroParticles.AddRange(createdParticles);
+                    Enqueue(model);
 
-                    if (!item.Item.IsDefault)
+                    if (loadout.GetDefaultModel(item.Item.Slot) is { } defaultModel)
+                    {
+                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
+
+                        // Also covers default items that another item swaps for a refit, or whose parts an arcana hides
+                        if (!CharacterLoadout.IsSamePath(model, defaultModel) || skin != 0 || createdParticles.Count > 0 || bodyGroups.Count > 0)
+                        {
+                            plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(model), NormalizePath(defaultModel), skin, createdParticles)
+                            {
+                                BodyGroups = bodyGroups,
+                            });
+                        }
+                    }
+                    else if (!item.Item.IsDefault && loadout.IsWornByHero(item.Item.Slot))
+                    {
+                        // Nothing of the hero's to write it over, e.g. a head for a hero without a default one
+                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
+                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups));
+                        heroParticles.AddRange(createdParticles);
+                    }
+                    else if (!item.Item.IsDefault)
                     {
                         plan.UnplacedModels.Add(NormalizePath(model));
                     }
+                }
+
+                if (options.ItemModels)
+                {
+                    AddTransformationReplacements(loadout, item, plan);
                 }
 
                 if (!options.ItemParticles || item.Item.IsDefault)
@@ -438,42 +504,192 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                     var replacement = new ParticleReplacement(NormalizePath(modifier.Modifier), NormalizePath(modifier.Asset));
 
-                    if (options.ReplaceSharedParticles || IsHeroParticle(hero, replacement.Target))
+                    // Items also refit the particles of other items, which only matters with those equipped
+                    if (IsEconParticle(replacement.Target) && !usedParticles.Contains(replacement.Target))
                     {
-                        plan.ParticleReplacements.Add(replacement);
+                        continue;
                     }
-                    else
+
+                    if (!options.ReplaceSharedParticles && !IsHeroParticle(hero, replacement.Target))
                     {
                         plan.SkippedSharedParticles.Add(replacement);
+                        continue;
                     }
+
+                    // A style can swap the same particle twice, the file can only hold one of them
+                    if (replacedParticles.TryGetValue(replacement.Target, out var existing))
+                    {
+                        if (!CharacterLoadout.IsSamePath(existing.Source, replacement.Source))
+                        {
+                            plan.Notes.Add($"{replacement.Target} is swapped for both {existing.Source} and {replacement.Source}, the first one is used");
+                        }
+
+                        continue;
+                    }
+
+                    replacedParticles.Add(replacement.Target, replacement);
+                    plan.ParticleReplacements.Add(replacement);
+                    Enqueue(replacement.Source);
                 }
             }
 
-            if (options.HeroModel && hero.Model != null && loadout.HeroModel != null
-                && (!CharacterLoadout.IsSamePath(loadout.HeroModel, hero.Model) || loadout.HeroSkin != 0 || heroParticles.Count > 0))
+            if (options.ItemModels)
+            {
+                foreach (var (item, wearable) in loadout.AdditionalWearables.Where(static wearable => !wearable.Item.Item.IsDefault))
+                {
+                    var (skin, bodyGroups) = GetModelLook(loadout, wearable, item.Skin);
+                    merged.Add(new MergedModel(NormalizePath(wearable), skin, bodyGroups));
+                    Enqueue(wearable);
+                }
+            }
+
+            if (!options.HeroModel || hero.Model == null)
+            {
+                foreach (var model in merged)
+                {
+                    plan.UnplacedModels.Add(model.Model);
+                    plan.Notes.Add($"{model.Model} has no slot of its own and can only be added to the hero's model, which is not exported");
+                }
+
+                return;
+            }
+
+            var heroModel = loadout.HeroModel ?? hero.Model;
+            var (heroSkin, heroBodyGroups) = GetModelLook(loadout, heroModel, loadout.HeroSkin);
+
+            Enqueue(heroModel);
+
+            if (!CharacterLoadout.IsSamePath(heroModel, hero.Model) || heroSkin != 0 || heroParticles.Count > 0 || merged.Count > 0 || heroBodyGroups.Count > 0)
             {
                 plan.ModelReplacements.Add(new ModelReplacement(
-                    NormalizePath(loadout.HeroModel),
+                    NormalizePath(heroModel),
                     NormalizePath(hero.Model),
-                    loadout.HeroSkin,
-                    [.. heroParticles.Distinct(StringComparer.OrdinalIgnoreCase)]));
+                    heroSkin,
+                    [.. heroParticles.Distinct(StringComparer.OrdinalIgnoreCase)])
+                {
+                    BodyGroups = heroBodyGroups,
+                    Merged = merged,
+                });
             }
         }
+
+        /// <summary>
+        /// Models of forms the hero transforms into, which items can swap like the hero's own.
+        /// </summary>
+        private void AddTransformationReplacements(CharacterLoadout loadout, EquippedItem item, CharacterExportPlan plan)
+        {
+            foreach (var modifier in item.Modifiers)
+            {
+                if (modifier.Type != "hero_model_change" || !IsAssetPath(modifier.Asset) || !IsAssetPath(modifier.Modifier))
+                {
+                    continue;
+                }
+
+                var (skin, bodyGroups) = GetModelLook(loadout, modifier.Modifier, item.Skin);
+
+                if (CharacterLoadout.IsSamePath(modifier.Asset, modifier.Modifier) && skin == 0 && bodyGroups.Count == 0)
+                {
+                    continue;
+                }
+
+                plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(modifier.Modifier), NormalizePath(modifier.Asset), skin, [])
+                {
+                    BodyGroups = bodyGroups,
+                });
+
+                Enqueue(modifier.Modifier);
+            }
+        }
+
+        /// <summary>
+        /// How the loadout shows a model: the skin, unless the model has no such material group, since a style's skin
+        /// also applies to models that come without skins, and the body group choices it sets that change what the
+        /// model shows, i.e. of body groups the model has and to other choices than the one it shows by default.
+        /// </summary>
+        private (int Skin, Dictionary<string, int> BodyGroups) GetModelLook(CharacterLoadout loadout, string model, int skin)
+        {
+            var choices = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                using var resource = fileLoader.LoadFileCompiled(NormalizePath(model));
+
+                if (resource?.DataBlock is not Model modelData)
+                {
+                    return (skin, choices);
+                }
+
+                if (skin >= modelData.GetMaterialGroups().Count())
+                {
+                    skin = 0;
+                }
+
+                var bodyGroups = modelData.MeshGroups.BodyGroups;
+
+                foreach (var (name, choice) in loadout.GetBodyGroupChoices(model))
+                {
+                    if (choice > 0 && bodyGroups.Any(group => group.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && group.Choices.Count > 1))
+                    {
+                        choices[name] = choice;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                progress?.Report($"  ! failed to read \"{model}\": {e.Message}");
+            }
+
+            return (skin, choices);
+        }
+
+        /// <summary>
+        /// Particles the loadout plays itself: the ones its items create or swap in, and the ones the models it wears
+        /// play, e.g. from their animations.
+        /// </summary>
+        private HashSet<string> GetUsedParticles(CharacterLoadout loadout, HashSet<string> equippedAssets)
+        {
+            var particles = new HashSet<string>(equippedAssets.Where(IsParticlePath), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var model in equippedAssets.Where(static asset => asset.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase))
+                .Concat(loadout.AdditionalWearables.Select(static wearable => wearable.Model)))
+            {
+                try
+                {
+                    using var resource = fileLoader.LoadFileCompiled(NormalizePath(model));
+
+                    foreach (var reference in resource?.ExternalReferences?.ResourceRefInfoList ?? [])
+                    {
+                        if (IsParticlePath(reference.Name))
+                        {
+                            particles.Add(NormalizePath(reference.Name));
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    progress?.Report($"  ! failed to read the references of \"{model}\": {e.Message}");
+                }
+            }
+
+            return particles;
+        }
+
+        private static bool IsEconParticle(string path) => path.StartsWith("particles/econ/", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Whether only this hero uses the particle, as opposed to effects every hero plays, like items' or stuns.
         /// </summary>
         private static bool IsHeroParticle(HeroDefinition hero, string path)
-            => path.StartsWith("particles/econ/", StringComparison.OrdinalIgnoreCase)
+            => IsEconParticle(path)
                 || (hero.ParticleFolder != null && path.StartsWith(NormalizePath(hero.ParticleFolder).TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))
                 || path.Contains(hero.ShortName, StringComparison.OrdinalIgnoreCase);
 
         private static bool IsParticlePath([NotNullWhen(true)] string? value)
-            => IsAssetPath(value) && Path.GetExtension(value).Equals(".vpcf", StringComparison.OrdinalIgnoreCase);
+            => IsAssetPath(value) && value.EndsWith(".vpcf", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Adds the file a single sound event is defined in, and when <paramref name="includeAudio"/> is set the sounds it
-        /// plays. The file is exported for its text but not followed, since it usually holds a lot of other events too.
+        /// plays. The file is exported for its text, but not the other events' sounds, since it usually holds a lot of them.
         /// </summary>
         private void AddSoundEvent(HeroDefinition hero, string eventName, bool includeAudio, CharacterExportPlan plan)
         {
@@ -485,7 +701,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 return;
             }
 
-            Enqueue(soundEvent.File, followReferences: false);
+            Enqueue(soundEvent.File);
 
             if (!includeAudio)
             {
@@ -594,13 +810,12 @@ namespace GUI.Types.Exporter.CharacterAssets
             return index;
         }
 
-        private void Visit(string path, bool followReferences, CharacterExportPlan plan)
+        private void Visit(string path, bool includeSounds, CharacterExportPlan plan)
         {
             var sourcePath = path.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.OrdinalIgnoreCase)
                 ? path[..^GameFileLoader.CompiledFileSuffix.Length]
                 : path;
             var compiledPath = sourcePath + GameFileLoader.CompiledFileSuffix;
-            var extension = Path.GetExtension(sourcePath);
 
             if (!Exists(compiledPath))
             {
@@ -608,7 +823,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 {
                     plan.RawFiles.Add(sourcePath);
                 }
-                else if (!optional.Contains(sourcePath))
+                else
                 {
                     plan.Missing.Add(sourcePath);
                 }
@@ -616,90 +831,65 @@ namespace GUI.Types.Exporter.CharacterAssets
                 return;
             }
 
-            if (extension.Equals(".vmdl", StringComparison.OrdinalIgnoreCase))
+            if (sourcePath.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase))
             {
                 plan.Models.Add(compiledPath);
-            }
-            else if (extension.Equals(".vmat", StringComparison.OrdinalIgnoreCase))
-            {
-                plan.Materials.Add(compiledPath);
-            }
-            else if (extension.Equals(".vtex", StringComparison.OrdinalIgnoreCase))
-            {
-                textures.Add(compiledPath);
-            }
-            else if (ModelOwnedExtensions.Contains(extension))
-            {
-                plan.ModelDependencyCount++;
             }
             else
             {
                 plan.Resources.Add(compiledPath);
             }
 
-            if (!followReferences || LeafExtensions.Contains(extension))
+            if (includeSounds && sourcePath.EndsWith(".vsndevts", StringComparison.OrdinalIgnoreCase))
             {
-                return;
-            }
-
-            foreach (var reference in ReadReferences(compiledPath, extension))
-            {
-                var referenceExtension = Path.GetExtension(reference);
-
-                // Textures a material uses are written by the material exporter, anything else using one needs it on its own
-                if (referenceExtension.Equals(".vtex", StringComparison.OrdinalIgnoreCase)
-                    && !extension.Equals(".vmat", StringComparison.OrdinalIgnoreCase))
+                foreach (var sound in ReadSounds(compiledPath))
                 {
-                    standaloneTextures.Add(reference + GameFileLoader.CompiledFileSuffix);
+                    Enqueue(sound);
                 }
-
-                Enqueue(reference);
             }
         }
 
-        private List<string> ReadReferences(string compiledPath, string extension)
+        /// <summary>
+        /// The sounds a sound event file plays, which it does not always list as references.
+        /// </summary>
+        private HashSet<string> ReadSounds(string compiledPath)
         {
-            var references = new List<string>();
-            var stream = fileLoader.GetFileStream(compiledPath);
-
-            if (stream == null)
-            {
-                return references;
-            }
+            var sounds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
-                using var resource = new Resource { FileName = compiledPath };
-                resource.Read(stream);
+                using var resource = fileLoader.LoadFile(compiledPath);
+
+                if (resource == null)
+                {
+                    return sounds;
+                }
 
                 if (resource.ExternalReferences is { } externalReferences)
                 {
                     foreach (var reference in externalReferences.ResourceRefInfoList)
                     {
-                        if (!string.IsNullOrEmpty(reference.Name))
+                        if (reference.Name?.EndsWith(".vsnd", StringComparison.OrdinalIgnoreCase) == true)
                         {
-                            references.Add(reference.Name);
+                            sounds.Add(reference.Name);
                         }
                     }
                 }
 
-                // Sound event files do not always list the sounds they play as references
-                if (extension.Equals(".vsndevts", StringComparison.OrdinalIgnoreCase) && resource.DataBlock != null)
+                if (resource.DataBlock != null)
                 {
-                    var sounds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     CollectSoundPaths(resource.DataBlock.AsKeyValueCollection(), sounds);
-                    references.AddRange(sounds);
                 }
             }
             catch (Exception e)
             {
-                progress?.Report($"  ! failed to read references of \"{compiledPath}\": {e.Message}");
+                progress?.Report($"  ! failed to read the sounds of \"{compiledPath}\": {e.Message}");
             }
 
-            return references;
+            return sounds;
         }
 
-        private void Enqueue(string path, bool followReferences = true, bool isOptional = false)
+        private void Enqueue(string path, bool includeSounds = false)
         {
             path = NormalizePath(path);
 
@@ -708,26 +898,10 @@ namespace GUI.Types.Exporter.CharacterAssets
                 path = path[..^GameFileLoader.CompiledFileSuffix.Length];
             }
 
-            if (isOptional)
-            {
-                optional.Add(path);
-            }
-
             if (visited.Add(path))
             {
-                queue.Enqueue((path, followReferences));
+                queue.Enqueue((path, includeSounds));
             }
-        }
-
-        /// <summary>
-        /// Queues a panorama image, named the way items_game.txt names them: relative to panorama/images and without extension.
-        /// </summary>
-        private void EnqueueImage(string image)
-        {
-            var path = $"panorama/images/{NormalizePath(image)}_png.vtex";
-
-            standaloneTextures.Add(path + GameFileLoader.CompiledFileSuffix);
-            Enqueue(path, isOptional: true);
         }
 
         private bool Exists(string path)

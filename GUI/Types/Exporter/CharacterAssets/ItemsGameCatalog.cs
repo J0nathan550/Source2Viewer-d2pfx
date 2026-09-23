@@ -18,15 +18,16 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <param name="Modifier">What it is replaced with.</param>
     /// <param name="Style">The item style this applies to, or null when it applies to every style.</param>
     /// <param name="LoadoutOnly">Whether this only applies while the hero is shown in the loadout screen.</param>
-    sealed record AssetModifier(string Type, string? Asset, string? Modifier, int? Style, bool LoadoutOnly);
+    /// <param name="Value">The number some types carry, e.g. the level of "arcana_level" or the choice of "bodygroup_visibility".</param>
+    sealed record AssetModifier(string Type, string? Asset, string? Modifier, int? Style, bool LoadoutOnly, int? Value = null);
 
     /// <summary>
     /// One of an item's styles, which picks which of its asset modifiers apply.
     /// </summary>
     /// <param name="Index">The style number the asset modifiers refer to.</param>
     /// <param name="Name">The localized style name.</param>
-    /// <param name="Skin">The material group the style shows the model with.</param>
-    sealed record ItemStyle(int Index, string Name, int Skin);
+    /// <param name="Skin">The material group the style shows the model with, or null to keep the item's own.</param>
+    sealed record ItemStyle(int Index, string Name, int? Skin);
 
     /// <summary>
     /// A cosmetic item from items_game.txt that can be equipped on a hero.
@@ -43,6 +44,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Whether this is the item a hero wears in this slot when nothing else is equipped.</summary>
         public bool IsDefault { get; init; }
 
+        /// <summary>
+        /// The material group the item shows its model with, unless a style picks another. Items that share a model often
+        /// only differ in it, e.g. the golden version of an item.
+        /// </summary>
+        public int Skin { get; init; }
+
         /// <summary>The item's styles, empty when it has only the one look.</summary>
         public List<ItemStyle> Styles { get; } = [];
 
@@ -55,7 +62,12 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <summary>
     /// A loadout slot as declared in a hero's "ItemSlots".
     /// </summary>
-    sealed record HeroSlot(int Index, string Name, string DisplayName);
+    /// <param name="WornByHero">
+    /// Whether the slot's items are worn on the hero's body, as opposed to units the hero creates (summons, wards) or
+    /// a form it transforms into.
+    /// </param>
+    /// <param name="Units">The units the slot's items dress, e.g. Beastmaster's boar.</param>
+    sealed record HeroSlot(int Index, string Name, string DisplayName, bool WornByHero = true, IReadOnlyList<string>? Units = null);
 
     /// <summary>
     /// A playable hero as declared in the npc hero scripts.
@@ -100,25 +112,49 @@ namespace GUI.Types.Exporter.CharacterAssets
     {
         public const string ItemsGamePath = "scripts/items/items_game.txt";
         public const string HeroesPath = "scripts/npc/npc_heroes.txt";
+        public const string UnitsPath = "scripts/npc/npc_units.txt";
 
         private static readonly string[] LocalizationPaths =
         [
             "resource/localization/dota_english.txt",
             "resource/localization/items_english.txt",
+            "resource/localization/abilities_english.txt",
         ];
 
         private readonly List<HeroDefinition> heroes;
         private readonly Dictionary<string, List<EconItem>> itemsByHero;
         private readonly Dictionary<string, List<ItemSet>> setsByHero;
+        private readonly Dictionary<string, string> localization;
+        private readonly Dictionary<string, string> unitModels;
 
         public IReadOnlyList<HeroDefinition> Heroes => heroes;
 
-        private ItemsGameCatalog(List<HeroDefinition> heroes, Dictionary<string, List<EconItem>> itemsByHero, Dictionary<string, List<ItemSet>> setsByHero)
+        private ItemsGameCatalog(List<HeroDefinition> heroes, Dictionary<string, List<EconItem>> itemsByHero, Dictionary<string, List<ItemSet>> setsByHero,
+            Dictionary<string, string> localization, Dictionary<string, string> unitModels)
         {
             this.heroes = heroes;
             this.itemsByHero = itemsByHero;
             this.setsByHero = setsByHero;
+            this.localization = localization;
+            this.unitModels = unitModels;
         }
+
+        /// <summary>
+        /// The model a unit has when no item dresses it, e.g. Beastmaster's boar, or null for units that only get one
+        /// from items.
+        /// </summary>
+        public string? GetUnitModel(string unit) => unitModels.GetValueOrDefault(unit);
+
+        /// <summary>
+        /// The localized text of a token, e.g. "DOTA_Tooltip_ability_drow_ranger_multishot", or null when there is none.
+        /// </summary>
+        public string? Localize(string token) => Localize(localization, token);
+
+        /// <summary>
+        /// Every item the hero can equip, in the order items_game.txt declares them.
+        /// </summary>
+        public IReadOnlyList<EconItem> GetItems(HeroDefinition hero)
+            => itemsByHero.TryGetValue(hero.Name, out var items) ? items : [];
 
         /// <summary>
         /// Whether the package holds the scripts a catalog is read from.
@@ -239,7 +275,11 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             var setsByHero = ReadItemSets(itemsGame, itemsByName, localization);
 
-            return new ItemsGameCatalog(heroes, itemsByHero, setsByHero);
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report($"Reading {UnitsPath}...");
+            var unitModels = LoadUnitModels(package);
+
+            return new ItemsGameCatalog(heroes, itemsByHero, setsByHero, localization, unitModels);
         }
 
         private static EconItem? ReadItem(string defIndex, KVObject itemData, KVObject? prefabs, HashSet<string> heroNames, Dictionary<string, string> localization)
@@ -272,6 +312,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 ImageInventory = NullIfEmpty(GetValue(itemData, "image_inventory")),
                 Rarity = GetValue(itemData, "item_rarity") ?? GetPrefabValue(prefabs, prefab, "item_rarity", 0),
                 IsDefault = isDefault,
+                Skin = visuals is { ValueType: KVValueType.Collection } ? ParseInt(GetValue(visuals, "skin")) ?? 0 : 0,
             };
 
             foreach (var (heroName, value) in usedByHeroes)
@@ -323,7 +364,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                     NullIfEmpty(GetValue(modifier, "asset")),
                     NullIfEmpty(GetValue(modifier, "modifier")),
                     style,
-                    GetValue(modifier, "spawn_in_loadout_only") == "1" || GetValue(modifier, "spawn_in_alternate_loadout_only") == "1"));
+                    GetValue(modifier, "spawn_in_loadout_only") == "1" || GetValue(modifier, "spawn_in_alternate_loadout_only") == "1",
+                    ParseInt(GetValue(modifier, "level") ?? GetValue(modifier, "value"))));
             }
 
             if (visuals.GetSubCollection("styles") is { ValueType: KVValueType.Collection } styles)
@@ -338,7 +380,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     item.Styles.Add(new ItemStyle(
                         index,
                         Localize(localization, GetValue(styleData, "name")) ?? $"Style {index}",
-                        ParseInt(GetValue(styleData, "skin")) ?? styleSkins.GetValueOrDefault(index)));
+                        ParseInt(GetValue(styleData, "skin")) ?? (styleSkins.TryGetValue(index, out var styleSkin) ? styleSkin : null)));
                 }
 
                 item.Styles.Sort(static (a, b) => a.Index.CompareTo(b.Index));
@@ -509,7 +551,13 @@ namespace GUI.Types.Exporter.CharacterAssets
                             ? index
                             : hero.Slots.Count;
 
-                        hero.Slots.Add(new HeroSlot(slotIndex, slotName, Localize(localization, GetValue(slotData, "SlotText")) ?? slotName));
+                        var units = slotData.GetSubCollection("GeneratesUnits") is { ValueType: KVValueType.Collection } generatesUnits
+                            ? generatesUnits.Select(static unit => ToText(unit.Value)).OfType<string>().ToList()
+                            : null;
+
+                        var wornByHero = units == null && GetValue(slotData, "LoadoutPreviewMode") == null;
+
+                        hero.Slots.Add(new HeroSlot(slotIndex, slotName, Localize(localization, GetValue(slotData, "SlotText")) ?? slotName, wornByHero, units));
                     }
                 }
 
@@ -519,6 +567,47 @@ namespace GUI.Types.Exporter.CharacterAssets
             heroes.Sort(static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.DisplayName, b.DisplayName));
 
             return heroes;
+        }
+
+        /// <summary>
+        /// The models units have of their own. Units that only show what an item gives them, like pets, have a placeholder
+        /// model, which is left out.
+        /// </summary>
+        private static Dictionary<string, string> LoadUnitModels(Package package)
+        {
+            var models = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            KVObject? root;
+
+            try
+            {
+                root = ReadKeyValues(package, UnitsPath, new KVSerializerOptions
+                {
+                    FileLoader = new PackageIncludeLoader(package, Path.GetDirectoryName(UnitsPath)!.Replace('\\', '/')),
+                });
+            }
+            catch (Exception e)
+            {
+                // Only summons' default models depend on it
+                Log.Warn(nameof(ItemsGameCatalog), $"Failed to read \"{UnitsPath}\": {e.Message}");
+                return models;
+            }
+
+            if (root == null)
+            {
+                return models;
+            }
+
+            foreach (var (name, unitData) in root)
+            {
+                if (unitData.ValueType == KVValueType.Collection
+                    && GetValue(unitData, "Model") is { Length: > 0 } model
+                    && !model.StartsWith("models/development/", StringComparison.OrdinalIgnoreCase))
+                {
+                    models.TryAdd(name, model);
+                }
+            }
+
+            return models;
         }
 
         private static Dictionary<string, string> LoadLocalization(Package package)

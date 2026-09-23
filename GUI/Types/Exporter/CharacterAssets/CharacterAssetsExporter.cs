@@ -12,20 +12,18 @@ using GUI.Utils;
 using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
-using ValveResourceFormat.ResourceTypes;
 using VmdlExtractor;
 
 namespace GUI.Types.Exporter.CharacterAssets
 {
     /// <summary>
-    /// Exports a Dota 2 hero wearing a chosen set of cosmetic items, as read from the package's items_game.txt, into a
-    /// folder laid out like the package. Models and materials go through the custom exporters so they recompile as is,
-    /// everything else through the built-in decompiler.
+    /// Exports a Dota 2 hero wearing a chosen set of cosmetic items, as read from the package's items_game.txt, into an
+    /// addon. Sources go into its content folder, laid out like the package: models through the custom model extractor
+    /// so they recompile as is, everything else through the built-in decompiler. Icons go into its game folder as the
+    /// compiled images the game has, renamed over the hero's own.
     /// </summary>
     static class CharacterAssetsExporter
     {
-        private static readonly string[] ImageSuffixes = ["_png", "_jpg", "_jpeg", "_webp", "_tga", "_psd"];
-
         public static bool CanExport(Control? owner)
             => GetContext(owner)?.CurrentPackage is { } package && ItemsGameCatalog.IsAvailable(package);
 
@@ -85,28 +83,42 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             CharacterLoadout loadout;
             CharacterExportOptions options;
+            string contentRoot;
+            string? gameRoot;
 
-            using (var form = new CharacterSelectForm(catalog, context))
+            using (var form = new CharacterSelectForm(catalog, context, package))
             {
-                if (await form.ShowDialogAsync().ConfigureAwait(true) != DialogResult.OK || form.SelectedHero == null)
+                if (await form.ShowDialogAsync().ConfigureAwait(true) != DialogResult.OK || form.SelectedHero == null || form.ContentFolder == null)
                 {
                     return;
                 }
 
                 loadout = form.CreateLoadout();
                 options = form.Options;
+                contentRoot = form.ContentFolder;
+                gameRoot = form.GameFolder;
             }
 
-            var outputRoot = AppFileDialogs.PickFolder(
-                "Choose the folder to export the character to, files are laid out like the package (e.g. content/dota_addons/<addon>)",
-                AppFileDialogs.RememberIn.SaveDirectory);
+            await RunInDialogAsync(vpkPath, package, loadout, options, contentRoot, gameRoot).ConfigureAwait(true);
+        }
 
-            if (outputRoot == null)
+        /// <summary>
+        /// The game folder of an addon from its content folder, which mirror each other under the game's install:
+        /// "content/dota_addons/name" goes with "game/dota_addons/name".
+        /// </summary>
+        public static string? GetGameFolder(string contentFolder)
+        {
+            var parts = Path.TrimEndingDirectorySeparator(Path.GetFullPath(contentFolder)).Split(Path.DirectorySeparatorChar);
+            var content = Array.FindLastIndex(parts, static part => part.Equals("content", StringComparison.OrdinalIgnoreCase));
+
+            if (content < 0)
             {
-                return;
+                return null;
             }
 
-            await RunInDialogAsync(vpkPath, package, loadout, options, outputRoot).ConfigureAwait(true);
+            parts[content] = "game";
+
+            return string.Join(Path.DirectorySeparatorChar, parts);
         }
 
         private static VrfGuiContext? GetContext(Control? owner) => owner switch
@@ -140,7 +152,8 @@ namespace GUI.Types.Exporter.CharacterAssets
             return catalog;
         }
 
-        private static async Task RunInDialogAsync(string vpkPath, Package package, CharacterLoadout loadout, CharacterExportOptions options, string outputRoot)
+        private static async Task RunInDialogAsync(string vpkPath, Package package, CharacterLoadout loadout, CharacterExportOptions options,
+            string contentRoot, string? gameRoot)
         {
             var hero = loadout.Hero;
             var items = loadout.Items;
@@ -151,7 +164,12 @@ namespace GUI.Types.Exporter.CharacterAssets
                 Text = $"Exporting {hero.DisplayName}...",
             };
 
-            dialog.AppendLine($"Exporting {hero.DisplayName} with {items.Count} item{(items.Count == 1 ? "" : "s")} to \"{outputRoot}\"");
+            dialog.AppendLine($"Exporting {hero.DisplayName} with {items.Count} item{(items.Count == 1 ? "" : "s")} to \"{contentRoot}\"");
+
+            if (gameRoot != null)
+            {
+                dialog.AppendLine($"Compiled files go to \"{gameRoot}\"");
+            }
 
             foreach (var item in items)
             {
@@ -160,19 +178,21 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             dialog.OnProcess = cancellationToken =>
             {
-                Export(vpkPath, package, loadout, options, outputRoot, dialog, cancellationToken);
+                Export(vpkPath, package, loadout, options, contentRoot, gameRoot, dialog, cancellationToken);
                 return Task.CompletedTask;
             };
 
             await dialog.ShowDialogAsync().ConfigureAwait(true);
         }
 
+        /// <param name="contentRoot">The addon's content folder, which gets the sources.</param>
+        /// <param name="gameRoot">The addon's game folder, which gets the compiled icons, or null to leave them out.</param>
         internal static void Export(string vpkPath, Package package, CharacterLoadout loadout, CharacterExportOptions options,
-            string outputRoot, IProgress<string> progress, CancellationToken cancellationToken)
+            string contentRoot, string? gameRoot, IProgress<string> progress, CancellationToken cancellationToken)
         {
             var startTimestamp = Stopwatch.GetTimestamp();
 
-            Log.Info(nameof(CharacterAssetsExporter), $"Character export of {loadout.Hero.Name} started to \"{outputRoot}\"");
+            Log.Info(nameof(CharacterAssetsExporter), $"Character export of {loadout.Hero.Name} started to \"{contentRoot}\"");
 
             var originalOut = Console.Out;
             var originalError = Console.Error;
@@ -189,7 +209,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                 var plan = new CharacterDependencyCollector(package, fileLoader, progress).Collect(loadout, options, cancellationToken);
 
-                progress.Report($"Found {plan.Models.Count} models, {plan.Materials.Count} materials, {plan.Resources.Count} other resources and {plan.RawFiles.Count} other files");
+                progress.Report($"Found {plan.Models.Count} models, {plan.Resources.Count} particles and sound events, {plan.RawFiles.Count} other files and {plan.IconReplacements.Count} icons");
 
                 foreach (var missing in plan.Missing)
                 {
@@ -199,11 +219,16 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var writtenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var failed = 0;
 
-                failed += ExportModels(plan.Models, vpkPath, outputRoot, fileLoader, progress, cancellationToken);
-                failed += ExportMaterials(plan.Materials, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
-                failed += ExportResources(plan.Resources, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
-                failed += ExportRawFiles(plan.RawFiles, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
-                failed += ApplyReplacements(plan, outputRoot, fileLoader, progress);
+                failed += ExportModels(plan.Models, vpkPath, contentRoot, fileLoader, progress, cancellationToken);
+                failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
+                failed += ExportRawFiles(plan.RawFiles, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
+                failed += ApplyReplacements(plan, contentRoot, fileLoader, progress);
+                failed += ExportIcons(plan.IconReplacements, gameRoot, fileLoader, progress, cancellationToken);
+
+                foreach (var note in plan.Notes)
+                {
+                    progress.Report($"  - {note}");
+                }
 
                 var completedText = $"Export completed in {GenericProgressForm.FormatTime(Stopwatch.GetElapsedTime(startTimestamp))}";
 
@@ -277,14 +302,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 foreach (var (_, resource) in targets)
                 {
-                    try
-                    {
-                        resource?.Dispose();
-                    }
-                    catch
-                    {
-                        // Игнорируем ошибки при закрытии уже освобожденных ресурсов
-                    }
+                    resource.Dispose();
                 }
             }
         }
@@ -304,45 +322,37 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 try
                 {
-                    var vmdlPath = GetExportedPath(outputRoot, replacement.Source, "vmdl");
-                    var vmdl = File.ReadAllText(vmdlPath);
                     var details = new List<string>();
+                    var vmdl = ReadModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, progress, details);
 
-                    if (replacement.Skin != 0)
+                    foreach (var merged in replacement.Merged)
                     {
                         try
                         {
-                            vmdl = ModelDocEditor.MakeMaterialGroupDefault(vmdl, replacement.Skin);
-                            details.Add($"skin {replacement.Skin} as default");
+                            var mergedVmdl = ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, progress, details: null);
+
+                            vmdl = ModelDocEditor.MergeModel(vmdl, mergedVmdl, Path.GetFileNameWithoutExtension(merged.Model));
+                            details.Add($"with the meshes of {merged.Model}");
                         }
                         catch (Exception e)
                         {
-                            progress.Report($"  ! {replacement.Target}: skin {replacement.Skin} was not made the default: {e.Message}");
+                            failed++;
+                            progress.Report($"  FAILED to add {merged.Model} to {replacement.Target}: {e.Message}");
+                            Log.Error(nameof(CharacterAssetsExporter), $"Failed to add '{merged.Model}' to '{replacement.Target}': {e}");
                         }
                     }
 
-                    // Привязываем партиклы, относящиеся к этой модели
-                    if (replacement.Particles != null && replacement.Particles.Count > 0)
+                    if (replacement.Particles.Count > 0)
                     {
                         try
                         {
-                            var modelName = Path.GetFileNameWithoutExtension(replacement.Source);
+                            var particles = replacement.Particles.Select(particle => ModelDocEditor.ResolveParticle(fileLoader, particle)).ToList();
 
-                            var targetParticles = replacement.Particles
-                                .Where(p => IsParticleForModel(p, modelName, replacement.Target) || replacement.Particles.Count == 1)
-                                .Select(p => ModelDocEditor.ResolveParticle(fileLoader, p))
-                                .Where(p => p != null)
-                                .ToList();
+                            vmdl = ModelDocEditor.AddParticles(vmdl, particles);
 
-                            if (targetParticles.Count > 0)
+                            foreach (var particle in particles)
                             {
-                                vmdl = ModelDocEditor.AddParticles(vmdl, targetParticles);
-
-                                foreach (var particle in targetParticles)
-                                {
-                                    var attachment = !string.IsNullOrEmpty(particle.AttachmentPoint) ? particle.AttachmentPoint : "origin";
-                                    details.Add($"creates {particle.Name} on {attachment}");
-                                }
+                                details.Add($"creates {particle.Name} on {(particle.AttachmentPoint.Length > 0 ? particle.AttachmentPoint : "origin")}");
                             }
                         }
                         catch (Exception e)
@@ -383,53 +393,9 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
             }
 
-            // Обработка моделей без стандартного слота замены (Arcana Head, кастомные дополнительные меши и т.д.)
-            foreach (var unplacedModel in plan.UnplacedModels)
+            foreach (var unplaced in plan.UnplacedModels)
             {
-                try
-                {
-                    var vmdlPath = GetExportedPath(outputRoot, unplacedModel, "vmdl");
-
-                    if (File.Exists(vmdlPath))
-                    {
-                        var vmdl = File.ReadAllText(vmdlPath);
-                        var details = new List<string>();
-                        var modelName = Path.GetFileNameWithoutExtension(unplacedModel);
-
-                        // Собираем кандидаты партиклов из плана
-                        var candidateParticles = plan.ParticleReplacements.Select(p => p.Source)
-                            .Concat(plan.ModelReplacements.SelectMany(m => m.Particles))
-                            .Distinct();
-
-                        var targetParticles = candidateParticles
-                            .Where(p => IsParticleForModel(p, modelName, unplacedModel))
-                            .Select(p => ModelDocEditor.ResolveParticle(fileLoader, p))
-                            .Where(p => p != null)
-                            .ToList();
-
-                        if (targetParticles.Count > 0)
-                        {
-                            vmdl = ModelDocEditor.AddParticles(vmdl, targetParticles);
-                            File.WriteAllText(vmdlPath, vmdl);
-
-                            foreach (var particle in targetParticles)
-                            {
-                                var attachment = !string.IsNullOrEmpty(particle.AttachmentPoint) ? particle.AttachmentPoint : "origin";
-                                details.Add($"creates {particle.Name} on {attachment}");
-                            }
-                        }
-
-                        progress.Report($"  + {unplacedModel}{(details.Count > 0 ? $" (standalone model with {string.Join(", ", details)})" : " (standalone model)")}");
-                    }
-                    else
-                    {
-                        progress.Report($"  - {unplacedModel} was exported, but its slot has no default model to write it over");
-                    }
-                }
-                catch (Exception e)
-                {
-                    progress.Report($"  ! {unplacedModel}: failed to process standalone model: {e.Message}");
-                }
+                progress.Report($"  - {unplaced} is not worn by the hero and has no default model to write it over, it was exported as is");
             }
 
             foreach (var skipped in plan.SkippedSharedParticles)
@@ -441,49 +407,38 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
-        /// Проверяет, относится ли партикл к модели предмета по совпадению имён файлов или названию сета/слота.
+        /// Reads an exported model, with the skin and body group choices the loadout shows it with made its defaults.
         /// </summary>
-        private static bool IsParticleForModel(string particlePath, string sourceModelName, string targetModelPath)
+        private static string ReadModel(string outputRoot, string model, int skin, Dictionary<string, int> bodyGroups, IProgress<string> progress, List<string>? details)
         {
-            if (string.IsNullOrEmpty(particlePath))
+            var vmdl = File.ReadAllText(GetExportedPath(outputRoot, model, "vmdl"));
+
+            if (skin != 0)
             {
-                return false;
+                try
+                {
+                    vmdl = ModelDocEditor.MakeMaterialGroupDefault(vmdl, skin);
+                    details?.Add($"skin {skin} as default");
+                }
+                catch (Exception e)
+                {
+                    progress.Report($"  ! {model}: skin {skin} was not made the default: {e.Message}");
+                }
             }
 
-            var particleFileName = Path.GetFileNameWithoutExtension(particlePath);
-            var targetFileName = Path.GetFileNameWithoutExtension(targetModelPath);
-
-            // 1. Прямое совпадение по имени файла или пути
-            if (particleFileName.Contains(sourceModelName, StringComparison.OrdinalIgnoreCase) ||
-                particleFileName.Contains(targetFileName, StringComparison.OrdinalIgnoreCase) ||
-                particlePath.Contains(sourceModelName, StringComparison.OrdinalIgnoreCase) ||
-                particlePath.Contains(targetFileName, StringComparison.OrdinalIgnoreCase))
+            if (bodyGroups.Count > 0)
             {
-                return true;
+                try
+                {
+                    vmdl = ModelDocEditor.SelectBodyGroupChoices(vmdl, bodyGroups, details);
+                }
+                catch (Exception e)
+                {
+                    progress.Report($"  ! {model}: body groups were not picked: {e.Message}");
+                }
             }
 
-            // 2. Сравнение по ключевым токенам путей (папки сетов, стили и названия предметов)
-            var commonIgnored = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "particles", "models", "econ", "items", "dota", "heroes", "equipment", "attachments", "character", "vmdl", "vpcf"
-            };
-
-            var particleTokens = particlePath.Split(['/', '\\', '_'], StringSplitOptions.RemoveEmptyEntries)
-                .Where(t => t.Length > 2 && !commonIgnored.Contains(t))
-                .ToList();
-
-            var modelTokens = (sourceModelName + "/" + targetModelPath).Split(['/', '\\', '_'], StringSplitOptions.RemoveEmptyEntries)
-                .Where(t => t.Length > 2 && !commonIgnored.Contains(t))
-                .ToList();
-
-            // Поиск пересечений токенов сета (например: ti9, arcana, totem, head)
-            var matchingTokens = particleTokens
-                .Where(pt => modelTokens.Any(mt => mt.Equals(pt, StringComparison.OrdinalIgnoreCase) ||
-                                                   mt.Contains(pt, StringComparison.OrdinalIgnoreCase) ||
-                                                   pt.Contains(mt, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-
-            return matchingTokens.Count > 0;
+            return vmdl;
         }
 
         private static string GetExportedPath(string outputRoot, string sourcePath, string extension)
@@ -491,46 +446,6 @@ namespace GUI.Types.Exporter.CharacterAssets
             var path = GetOutputPath(outputRoot, Path.ChangeExtension(sourcePath, extension));
 
             return File.Exists(path) ? path : throw new FileNotFoundException($"\"{Path.ChangeExtension(sourcePath, extension)}\" was not exported");
-        }
-
-        private static int ExportMaterials(List<string> materials, string outputRoot, GameFileLoader fileLoader,
-            IProgress<string> progress, HashSet<string> writtenFiles, CancellationToken cancellationToken)
-        {
-            if (materials.Count == 0)
-            {
-                return 0;
-            }
-
-            progress.Report($"Exporting {materials.Count} materials with the custom VMAT exporter...");
-
-            var failed = 0;
-
-            foreach (var material in materials)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                try
-                {
-                    using var resource = fileLoader.LoadFile(material) ?? throw new FileNotFoundException("Could not be read");
-
-                    var vmatPath = GetOutputPath(outputRoot, Path.ChangeExtension(StripCompiledSuffix(material), "vmat"));
-                    progress.Report(material);
-
-                    CustomVmatExporter.ExportMaterial(resource, vmatPath, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception e)
-                {
-                    failed++;
-                    progress.Report($"  FAILED {material}: {e.Message}");
-                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to export '{material}': {e}");
-                }
-            }
-
-            return failed;
         }
 
         private static int ExportResources(List<string> resources, string outputRoot, GameFileLoader fileLoader,
@@ -541,7 +456,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 return 0;
             }
 
-            progress.Report($"Decompiling {resources.Count} particles, sounds, textures and other resources...");
+            progress.Report($"Decompiling {resources.Count} particles, sound events and sounds...");
 
             var failed = 0;
 
@@ -573,14 +488,6 @@ namespace GUI.Types.Exporter.CharacterAssets
         private static void ExportResource(Resource resource, string sourcePath, string outputRoot, IFileLoader fileLoader,
             IProgress<string> progress, HashSet<string> writtenFiles)
         {
-            if (resource.DataBlock is Texture texture
-                && (texture.IsRawAnyImage || IsPanoramaImage(sourcePath, texture))
-                && GetImageData(resource, texture) is { Length: > 0 } imageData)
-            {
-                WriteFile(outputRoot, GetImagePath(sourcePath, texture), imageData, progress, writtenFiles);
-                return;
-            }
-
             using var contentFile = FileExtract.Extract(resource, fileLoader);
 
             var mainPath = Path.ChangeExtension(sourcePath, FileExtract.GetExtension(resource));
@@ -636,11 +543,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                 try
                 {
-                    using var stream = fileLoader.GetFileStream(path) ?? throw new FileNotFoundException("Could not be read");
-                    using var buffer = new MemoryStream();
-                    stream.CopyTo(buffer);
-
-                    WriteFile(outputRoot, path, buffer.ToArray(), progress, writtenFiles);
+                    WriteFile(outputRoot, path, ReadRaw(fileLoader, path), progress, writtenFiles);
                 }
                 catch (OperationCanceledException)
                 {
@@ -655,6 +558,60 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return failed;
+        }
+
+        /// <summary>
+        /// Copies the compiled icons into the game folder under the names of the ones they replace. The game only reads
+        /// panorama images compiled, and these already are.
+        /// </summary>
+        private static int ExportIcons(List<IconReplacement> icons, string? gameRoot, GameFileLoader fileLoader,
+            IProgress<string> progress, CancellationToken cancellationToken)
+        {
+            if (icons.Count == 0)
+            {
+                return 0;
+            }
+
+            if (gameRoot == null)
+            {
+                progress.Report($"  ! {icons.Count} icon{(icons.Count == 1 ? " was" : "s were")} not replaced, no game folder was chosen");
+                return 0;
+            }
+
+            progress.Report($"Replacing {icons.Count} icons in \"{gameRoot}\"...");
+
+            var failed = 0;
+
+            foreach (var icon in icons)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    var outputPath = GetOutputPath(gameRoot, icon.Target);
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                    File.WriteAllBytes(outputPath, ReadRaw(fileLoader, icon.Source));
+
+                    progress.Report($"  {icon.Target} <- {icon.Source}");
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED {icon.Target} <- {icon.Source}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to replace '{icon.Target}': {e}");
+                }
+            }
+
+            return failed;
+        }
+
+        private static byte[] ReadRaw(GameFileLoader fileLoader, string path)
+        {
+            using var stream = fileLoader.GetFileStream(path) ?? throw new FileNotFoundException("Could not be read");
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+
+            return buffer.ToArray();
         }
 
         private static void WriteFile(string outputRoot, string relativePath, byte[] data, IProgress<string> progress, HashSet<string> writtenFiles)
@@ -681,42 +638,6 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return outputPath;
-        }
-
-        private static bool IsPanoramaImage(string sourcePath, Texture texture)
-            => sourcePath.StartsWith("panorama/images/", StringComparison.OrdinalIgnoreCase)
-                && (texture.Flags & VTexFlags.CUBE_TEXTURE) == 0
-                && texture.Depth <= 1;
-
-        private static byte[]? GetImageData(Resource resource, Texture texture)
-        {
-            if (texture.IsRawAnyImage)
-            {
-                using var contentFile = new TextureExtract(resource).ToContentFile();
-                return contentFile.Data;
-            }
-
-            using var bitmap = texture.GenerateBitmap();
-            return TextureExtract.ToPngImage(bitmap);
-        }
-
-        private static string GetImagePath(string sourcePath, Texture texture)
-        {
-            var extension = texture.IsRawJpeg ? ".jpg" : texture.IsRawWebp ? ".webp" : ".png";
-            var name = Path.GetFileNameWithoutExtension(sourcePath);
-
-            foreach (var suffix in ImageSuffixes)
-            {
-                if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-                {
-                    name = name[..^suffix.Length];
-                    break;
-                }
-            }
-
-            var folder = GetFolder(sourcePath);
-
-            return folder.Length == 0 ? name + extension : $"{folder}/{name}{extension}";
         }
 
         private static string GetFolder(string path) => Path.GetDirectoryName(path)?.Replace('\\', '/') ?? string.Empty;

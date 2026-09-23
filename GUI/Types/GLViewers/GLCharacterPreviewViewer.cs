@@ -14,7 +14,8 @@ namespace GUI.Types.GLViewers
     /// </summary>
     /// <param name="Path">The model as named in scripts, e.g. "models/heroes/axe/axe.vmdl".</param>
     /// <param name="Skin">Index of the material group to show it with.</param>
-    sealed record PreviewModel(string Path, int Skin);
+    /// <param name="BodyGroups">The choice to show of body groups, by name, e.g. the arcana one the equipped arcana sets.</param>
+    sealed record PreviewModel(string Path, int Skin, IReadOnlyDictionary<string, int>? BodyGroups = null);
 
     /// <summary>
     /// Previews a hero playing its idle while wearing a set of item models, which follow the hero's skeleton.
@@ -118,6 +119,11 @@ namespace GUI.Types.GLViewers
                     node.SetMaterialGroup(skin);
                 }
 
+                if (previewModel.BodyGroups is { Count: > 0 } bodyGroups)
+                {
+                    SetBodyGroups(node, model, bodyGroups);
+                }
+
                 if (modelNodes.Count == 0)
                 {
                     PlayIdle(node);
@@ -131,6 +137,28 @@ namespace GUI.Types.GLViewers
                 Scene.Add(node, dynamic: true);
                 modelNodes.Add(node);
             }
+        }
+
+        /// <summary>
+        /// Switches body groups to the given choices, the way the game does for equipped items. Models with fewer
+        /// choices show their last one for higher choices.
+        /// </summary>
+        private static void SetBodyGroups(ModelSceneNode node, Model model, IReadOnlyDictionary<string, int> choices)
+        {
+            var active = new HashSet<string>(node.GetActiveMeshGroups());
+
+            foreach (var bodyGroup in model.MeshGroups.BodyGroups)
+            {
+                if (bodyGroup.Choices.Count < 2 || !choices.TryGetValue(bodyGroup.Name, out var choice))
+                {
+                    continue;
+                }
+
+                active.ExceptWith(bodyGroup.Choices.Select(static option => option.FullName));
+                active.Add(bodyGroup.Choices[Math.Clamp(choice, 0, bodyGroup.Choices.Count - 1)].FullName);
+            }
+
+            node.SetActiveMeshGroups(active);
         }
 
         /// <summary>

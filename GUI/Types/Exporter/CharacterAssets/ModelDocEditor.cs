@@ -40,41 +40,253 @@ namespace GUI.Types.Exporter.CharacterAssets
                 throw new InvalidDataException($"The model has no material group {skin}");
             }
 
-            var remaps = new List<(string Class, string From, string To)>();
+            var remaps = new List<MaterialRemap>();
 
             // The skin's remaps win over anything the default group already remapped the same material to
-            foreach (var group in new[] { groups[skin], groups[0] })
-            {
-                foreach (var remap in group.GetArray("remaps") ?? [])
-                {
-                    var from = remap.GetStringProperty("from");
+            AddRemaps(remaps, groups[skin]);
+            AddRemaps(remaps, groups[0]);
 
-                    if (!string.IsNullOrEmpty(from) && !remaps.Any(existing => existing.From.Equals(from, StringComparison.OrdinalIgnoreCase)))
+            return SetDefaultRemaps(vmdl, remaps);
+        }
+
+        /// <summary>
+        /// Picks body group choices, like the game does when it switches a body group, e.g. the arcana one to the
+        /// arcana level. The other choices are removed along with the meshes only they show, so the model shows the
+        /// picked meshes without anything having to switch the body group.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="choices">The index of the choice to pick, by body group name. Groups the model does not have are skipped.</param>
+        /// <param name="details">Receives a description of every choice that was picked.</param>
+        public static string SelectBodyGroupChoices(string vmdl, IReadOnlyDictionary<string, int> choices, ICollection<string>? details = null)
+        {
+            var bodyGroups = GetBodyGroups(GetRootChildren(vmdl));
+            var removedChoices = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var removedMeshes = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var (name, index) in choices)
+            {
+                var bodyGroup = bodyGroups.FirstOrDefault(group => group.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                if (bodyGroup == null || bodyGroup.Choices.Count < 2)
+                {
+                    continue;
+                }
+
+                // Items with fewer choices than there are arcana levels show their last choice for the higher levels
+                var picked = Math.Min(index, bodyGroup.Choices.Count - 1);
+
+                // The first choice is the one shown already
+                if (picked <= 0)
+                {
+                    continue;
+                }
+
+                var keptMeshes = bodyGroups
+                    .Where(group => group != bodyGroup)
+                    .SelectMany(static group => group.Choices)
+                    .Append(bodyGroup.Choices[picked])
+                    .SelectMany(static choice => choice.Meshes)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                var others = bodyGroup.Choices.Where((_, choiceIndex) => choiceIndex != picked).ToList();
+
+                removedChoices[bodyGroup.Name] = [.. others.Select(static choice => choice.Name)];
+                removedMeshes.UnionWith(others.SelectMany(static choice => choice.Meshes).Where(mesh => !keptMeshes.Contains(mesh)));
+
+                details?.Add($"{bodyGroup.Name} body group shows {bodyGroup.Choices[picked].Name}");
+            }
+
+            if (removedChoices.Count == 0)
+            {
+                return vmdl;
+            }
+
+            var objects = FindObjects(vmdl);
+            var spans = new List<(int Start, int End)>();
+
+            foreach (var (start, end) in objects)
+            {
+                if (MeshReferenceRegex().Match(vmdl, start) is { Success: true } reference)
+                {
+                    if (removedMeshes.Contains(reference.Groups["name"].Value))
                     {
-                        remaps.Add((remap.GetStringProperty("_class", "BaseMaterialRemap"), from, remap.GetStringProperty("to", string.Empty)));
+                        spans.Add((start, end));
+                    }
+
+                    continue;
+                }
+
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header)
+                {
+                    continue;
+                }
+
+                var nodeClass = header.Groups["class"].Value;
+                var nodeName = header.Groups["name"].Value;
+
+                if (nodeClass == "RenderMeshFile" && removedMeshes.Contains(nodeName))
+                {
+                    spans.Add((start, end));
+                }
+                else if (nodeClass == "BodyGroup" && removedChoices.TryGetValue(nodeName, out var removedChoiceNames))
+                {
+                    // Choices are only told apart within their own group, different groups often name them the same
+                    foreach (var (choiceStart, choiceEnd) in objects)
+                    {
+                        if (choiceStart > start && choiceEnd <= end
+                            && ObjectHeaderRegex().Match(vmdl, choiceStart) is { Success: true } choiceHeader
+                            && choiceHeader.Groups["class"].Value == "BodyGroupChoice"
+                            && removedChoiceNames.Contains(choiceHeader.Groups["name"].Value))
+                        {
+                            spans.Add((choiceStart, choiceEnd));
+                        }
                     }
                 }
             }
 
-            var text = new StringBuilder("[\n");
-
-            foreach (var (remapClass, from, to) in remaps)
+            foreach (var (start, end) in spans.OrderByDescending(static span => span.Start))
             {
-                text.Append(CultureInfo.InvariantCulture, $"\t\t\t\t\t\t\t{{\n\t\t\t\t\t\t\t\t_class = \"{remapClass}\"\n\t\t\t\t\t\t\t\tfrom = \"{from}\"\n\t\t\t\t\t\t\t\tto = \"{to}\"\n\t\t\t\t\t\t\t}},\n");
+                var lineStart = GetLineStart(vmdl, start);
+                vmdl = vmdl.Remove(lineStart, GetLineEnd(vmdl, end) - lineStart);
             }
 
-            text.Append("\t\t\t\t\t\t]");
+            return Validate(vmdl);
+        }
 
-            var match = DefaultMaterialGroupRemapsRegex().Match(vmdl);
+        /// <summary>
+        /// Adds another model's meshes to this one, for items that have no model of the hero's own to be written over
+        /// but should still show on it. Wearables share the hero's skeleton, so their meshes follow it once they are
+        /// part of it. Their attachments and the remaps of their default material group come along, so particles and
+        /// skins they use keep working. Meshes the other model hides by default are left out.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text of the model that gets the meshes.</param>
+        /// <param name="otherVmdl">The .vmdl text of the model whose meshes are added, already with its skin and body groups picked.</param>
+        /// <param name="prefix">Prepended to the names of meshes that clash with this model's meshes.</param>
+        public static string MergeModel(string vmdl, string otherVmdl, string prefix)
+        {
+            var children = GetRootChildren(vmdl);
+            var otherChildren = GetRootChildren(otherVmdl);
 
-            if (!match.Success)
+            var meshNames = GetNodeNames(children, "RenderMeshList");
+            var attachmentNames = GetNodeNames(children, "AttachmentList");
+            var lodGroups = GetLodGroups(children);
+            var otherLodGroups = GetLodGroups(otherChildren);
+
+            // Only the first choice of a body group is shown by default
+            var hiddenMeshes = GetBodyGroups(otherChildren)
+                .SelectMany(static group => group.Choices.Skip(1).SelectMany(static choice => choice.Meshes)
+                    .Except(group.Choices[0].Meshes, StringComparer.Ordinal))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var meshes = new StringBuilder();
+            var attachments = new StringBuilder();
+            var lodReferences = lodGroups.Select(static _ => new List<string>()).ToList();
+
+            foreach (var (start, end) in FindObjects(otherVmdl))
             {
-                throw new InvalidDataException("The model's default material group was not found");
+                if (ObjectHeaderRegex().Match(otherVmdl, start) is not { Success: true } header)
+                {
+                    continue;
+                }
+
+                var name = header.Groups["name"];
+
+                if (header.Groups["class"].Value == "RenderMeshFile" && !hiddenMeshes.Contains(name.Value))
+                {
+                    var newName = meshNames.Contains(name.Value) ? $"{prefix}_{name.Value}" : name.Value;
+
+                    meshes.Append('\n').Append(GetNodeText(otherVmdl, start, end, name, newName));
+
+                    foreach (var lod in GetLodTargets(lodGroups, otherLodGroups, name.Value))
+                    {
+                        lodReferences[lod].Add(newName);
+                    }
+                }
+                else if (header.Groups["class"].Value == "Attachment" && !attachmentNames.Contains(name.Value))
+                {
+                    attachments.Append('\n').Append(GetNodeText(otherVmdl, start, end, name, name.Value));
+                }
             }
 
-            var remapsArray = match.Groups["remaps"];
+            if (meshes.Length == 0)
+            {
+                throw new InvalidDataException("The model has no meshes to add");
+            }
 
-            return Validate(string.Concat(vmdl.AsSpan(0, remapsArray.Index), text.ToString(), vmdl.AsSpan(remapsArray.Index + remapsArray.Length)));
+            var renderMeshList = RenderMeshListChildrenRegex().Match(vmdl);
+
+            if (!renderMeshList.Success)
+            {
+                throw new InvalidDataException("The model's render mesh list was not found");
+            }
+
+            var insertions = new List<(int Index, string Text)>
+            {
+                (renderMeshList.Index + renderMeshList.Length, meshes.ToString()),
+            };
+
+            if (attachments.Length > 0 && AttachmentListChildrenRegex().Match(vmdl) is { Success: true } attachmentList)
+            {
+                insertions.Add((attachmentList.Index + attachmentList.Length, attachments.ToString()));
+            }
+
+            var lodIndex = 0;
+
+            foreach (var (start, end) in FindObjects(vmdl))
+            {
+                if (lodIndex >= lodGroups.Count
+                    || ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header
+                    || header.Groups["class"].Value is not ("LODGroup" or "LODGroupAll"))
+                {
+                    continue;
+                }
+
+                var references = lodReferences[lodIndex++];
+                var meshReferences = MeshReferencesRegex().Match(vmdl, start, end - start);
+
+                if (references.Count == 0 || !meshReferences.Success)
+                {
+                    continue;
+                }
+
+                var indent = new string('\t', GetIndentation(vmdl, start) + 2);
+                var text = new StringBuilder();
+
+                foreach (var reference in references)
+                {
+                    text.Append(CultureInfo.InvariantCulture, $"\n{indent}{{\n{indent}\tmesh_name = \"{reference}\"\n{indent}}},");
+                }
+
+                insertions.Add((meshReferences.Index + meshReferences.Length, text.ToString()));
+            }
+
+            foreach (var (index, text) in insertions.OrderByDescending(static insertion => insertion.Index))
+            {
+                vmdl = vmdl.Insert(index, text);
+            }
+
+            // Materials the other model's skin swaps have to be swapped on its meshes here too
+            var otherRemaps = new List<MaterialRemap>();
+
+            if (GetMaterialGroups(otherChildren) is [var otherDefaultGroup, ..])
+            {
+                AddRemaps(otherRemaps, otherDefaultGroup);
+            }
+
+            if (otherRemaps.Count > 0 && GetMaterialGroups(children) is [var defaultGroup, ..])
+            {
+                var remaps = new List<MaterialRemap>();
+                AddRemaps(remaps, defaultGroup);
+
+                foreach (var remap in otherRemaps)
+                {
+                    AddRemap(remaps, remap);
+                }
+
+                vmdl = SetDefaultRemaps(vmdl, remaps);
+            }
+
+            return Validate(vmdl);
         }
 
         /// <summary>
@@ -217,6 +429,241 @@ namespace GUI.Types.Exporter.CharacterAssets
             GetRootChildren(vmdl);
             return vmdl;
         }
+
+        private sealed record MaterialRemap(string Class, string From, string To);
+
+        private sealed record BodyGroupNode(string Name, List<BodyGroupChoiceNode> Choices);
+
+        private sealed record BodyGroupChoiceNode(string Name, string[] Meshes);
+
+        /// <param name="All">Whether this is the group of meshes shown at every level of detail.</param>
+        private sealed record LodGroupNode(bool All, HashSet<string> Meshes);
+
+        /// <summary>
+        /// Adds a group's remaps, unless an earlier remap already swaps the same material.
+        /// </summary>
+        private static void AddRemaps(List<MaterialRemap> remaps, KVObject group)
+        {
+            foreach (var remap in group.GetArray("remaps") ?? [])
+            {
+                var from = remap.GetStringProperty("from");
+
+                if (!string.IsNullOrEmpty(from))
+                {
+                    AddRemap(remaps, new MaterialRemap(remap.GetStringProperty("_class", "BaseMaterialRemap"), from, remap.GetStringProperty("to", string.Empty)));
+                }
+            }
+        }
+
+        private static void AddRemap(List<MaterialRemap> remaps, MaterialRemap remap)
+        {
+            if (!remaps.Any(existing => existing.From.Equals(remap.From, StringComparison.OrdinalIgnoreCase)))
+            {
+                remaps.Add(remap);
+            }
+        }
+
+        private static string SetDefaultRemaps(string vmdl, List<MaterialRemap> remaps)
+        {
+            var text = new StringBuilder("[\n");
+
+            foreach (var (remapClass, from, to) in remaps)
+            {
+                text.Append(CultureInfo.InvariantCulture, $"\t\t\t\t\t\t\t{{\n\t\t\t\t\t\t\t\t_class = \"{remapClass}\"\n\t\t\t\t\t\t\t\tfrom = \"{from}\"\n\t\t\t\t\t\t\t\tto = \"{to}\"\n\t\t\t\t\t\t\t}},\n");
+            }
+
+            text.Append("\t\t\t\t\t\t]");
+
+            var match = DefaultMaterialGroupRemapsRegex().Match(vmdl);
+
+            if (!match.Success)
+            {
+                throw new InvalidDataException("The model's default material group was not found");
+            }
+
+            var remapsArray = match.Groups["remaps"];
+
+            return Validate(string.Concat(vmdl.AsSpan(0, remapsArray.Index), text.ToString(), vmdl.AsSpan(remapsArray.Index + remapsArray.Length)));
+        }
+
+        /// <summary>
+        /// The nodes of a list node, e.g. the render meshes of the "RenderMeshList", looking into folders.
+        /// </summary>
+        private static IEnumerable<KVObject> GetListNodes(IReadOnlyList<KVObject> rootChildren, string listClass)
+        {
+            static IEnumerable<KVObject> Flatten(IEnumerable<KVObject> nodes)
+                => nodes.SelectMany(static node => node.GetStringProperty("_class") == "Folder"
+                    ? Flatten(node.GetArray("children") ?? [])
+                    : [node]);
+
+            return Flatten(rootChildren
+                .Where(node => node.GetStringProperty("_class") == listClass)
+                .SelectMany(static node => node.GetArray("children") ?? []));
+        }
+
+        private static HashSet<string> GetNodeNames(IReadOnlyList<KVObject> rootChildren, string listClass)
+            => GetListNodes(rootChildren, listClass)
+                .Select(static node => node.GetStringProperty("name", string.Empty))
+                .ToHashSet(StringComparer.Ordinal);
+
+        private static List<BodyGroupNode> GetBodyGroups(IReadOnlyList<KVObject> rootChildren)
+            => [.. GetListNodes(rootChildren, "BodyGroupList")
+                .Where(static node => node.GetStringProperty("_class") == "BodyGroup")
+                .Select(static node => new BodyGroupNode(
+                    node.GetStringProperty("name", string.Empty),
+                    [.. (node.GetArray("children") ?? [])
+                        .Where(static choice => choice.GetStringProperty("_class") == "BodyGroupChoice")
+                        .Select(static choice => new BodyGroupChoiceNode(choice.GetStringProperty("name", string.Empty), choice.GetArray<string>("meshes") ?? []))]))
+                .Where(static group => group.Choices.Count > 0)];
+
+        private static List<LodGroupNode> GetLodGroups(IReadOnlyList<KVObject> rootChildren)
+            => [.. GetListNodes(rootChildren, "LODGroupList")
+                .Where(static node => node.GetStringProperty("_class") is "LODGroup" or "LODGroupAll")
+                .Select(static node => new LodGroupNode(
+                    node.GetStringProperty("_class") == "LODGroupAll",
+                    (node.GetArray("mesh_references") ?? [])
+                        .Select(static reference => reference.GetStringProperty("mesh_name", string.Empty))
+                        .ToHashSet(StringComparer.Ordinal)))];
+
+        private static IReadOnlyList<KVObject> GetMaterialGroups(IReadOnlyList<KVObject> rootChildren)
+            => [.. GetListNodes(rootChildren, "MaterialGroupList")];
+
+        /// <summary>
+        /// Which of a model's levels of detail a mesh from another model goes into: the same level it is in there, or
+        /// every level when it is shown at all of them there.
+        /// </summary>
+        private static List<int> GetLodTargets(List<LodGroupNode> lodGroups, List<LodGroupNode> otherLodGroups, string mesh)
+        {
+            var levels = lodGroups.Select((group, index) => (group, index)).Where(static lod => !lod.group.All).Select(static lod => lod.index).ToList();
+            var allLevels = lodGroups.FindIndex(static group => group.All);
+            var otherLevel = otherLodGroups.Where(static group => !group.All).ToList().FindIndex(group => group.Meshes.Contains(mesh));
+
+            if (otherLevel >= 0 && levels.Count > 0)
+            {
+                return [levels[Math.Min(otherLevel, levels.Count - 1)]];
+            }
+
+            return allLevels >= 0 ? [allLevels] : levels;
+        }
+
+        /// <summary>
+        /// Where every object in the text starts and ends, the end being past its closing brace, outer objects first.
+        /// </summary>
+        private static List<(int Start, int End)> FindObjects(string text)
+        {
+            var objects = new List<(int Start, int End)>();
+            var open = new Stack<int>();
+
+            // The header comment holds braces of its own
+            var i = text.StartsWith("<!--", StringComparison.Ordinal) ? text.IndexOf("-->", StringComparison.Ordinal) + 3 : 0;
+
+            for (; i < text.Length; i++)
+            {
+                switch (text[i])
+                {
+                    case '"':
+                        if (string.CompareOrdinal(text, i, "\"\"\"", 0, 3) == 0)
+                        {
+                            var end = text.IndexOf("\"\"\"", i + 3, StringComparison.Ordinal);
+                            i = end < 0 ? text.Length : end + 2;
+                            break;
+                        }
+
+                        for (i++; i < text.Length && text[i] != '"'; i++)
+                        {
+                            if (text[i] == '\\')
+                            {
+                                i++;
+                            }
+                        }
+
+                        break;
+
+                    case '/' when i + 1 < text.Length && text[i + 1] == '/':
+                        i = text.IndexOf('\n', i);
+                        i = i < 0 ? text.Length : i;
+                        break;
+
+                    case '{':
+                        open.Push(i);
+                        break;
+
+                    case '}' when open.Count > 0:
+                        objects.Add((open.Pop(), i + 1));
+                        break;
+                }
+            }
+
+            objects.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+
+            return objects;
+        }
+
+        /// <summary>
+        /// Moves back over the indentation before a node.
+        /// </summary>
+        private static int GetLineStart(string text, int index)
+        {
+            while (index > 0 && text[index - 1] is ' ' or '\t')
+            {
+                index--;
+            }
+
+            return index;
+        }
+
+        /// <summary>
+        /// Moves past the comma separating a node from the next one and the rest of its line.
+        /// </summary>
+        private static int GetLineEnd(string text, int index)
+        {
+            while (index < text.Length && text[index] is ' ' or '\t')
+            {
+                index++;
+            }
+
+            if (index < text.Length && text[index] == ',')
+            {
+                index++;
+            }
+
+            while (index < text.Length && text[index] is ' ' or '\t' or '\r')
+            {
+                index++;
+            }
+
+            return index < text.Length && text[index] == '\n' ? index + 1 : index;
+        }
+
+        private static int GetIndentation(string text, int index) => index - GetLineStart(text, index);
+
+        /// <summary>
+        /// A node's text with its indentation, to be copied into another model, renamed on the way.
+        /// </summary>
+        private static string GetNodeText(string text, int start, int end, Group name, string newName)
+        {
+            var lineStart = GetLineStart(text, start);
+            var nodeText = name.Success
+                ? string.Concat(text.AsSpan(lineStart, name.Index - lineStart), newName, text.AsSpan(name.Index + name.Length, end - name.Index - name.Length))
+                : text[lineStart..end];
+
+            return nodeText + ",";
+        }
+
+        [GeneratedRegex(@"\G\{\s*_class\s*=\s*""(?<class>[^""]*)""(?:\s*name\s*=\s*""(?<name>[^""]*)"")?", RegexOptions.CultureInvariant)]
+        private static partial Regex ObjectHeaderRegex();
+
+        [GeneratedRegex(@"\G\{\s*mesh_name\s*=\s*""(?<name>[^""]*)""\s*\}", RegexOptions.CultureInvariant)]
+        private static partial Regex MeshReferenceRegex();
+
+        [GeneratedRegex(@"mesh_references\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex MeshReferencesRegex();
+
+        [GeneratedRegex(@"_class\s*=\s*""RenderMeshList""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex RenderMeshListChildrenRegex();
+
+        [GeneratedRegex(@"_class\s*=\s*""AttachmentList""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex AttachmentListChildrenRegex();
 
         [GeneratedRegex(@"_class\s*=\s*""DefaultMaterialGroup""[^\[\]{}]*?remaps\s*=\s*(?<remaps>\[[^\[\]]*\])", RegexOptions.CultureInvariant)]
         private static partial Regex DefaultMaterialGroupRemapsRegex();

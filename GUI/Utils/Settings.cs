@@ -115,6 +115,10 @@ namespace GUI.Utils
             public string CustomVmdlResourceCompilerPath { get; set; } = string.Empty;
             /// <summary>Gets or sets the remembered "-game" directory used by the custom VMDL extractor's auto-build option.</summary>
             public string CustomVmdlGameDir { get; set; } = string.Empty;
+            /// <summary>Gets or sets the addon content folder the character export last wrote sources to.</summary>
+            public string CharacterExportContentDir { get; set; } = string.Empty;
+            /// <summary>Gets or sets the addon game folder the character export last wrote compiled files to.</summary>
+            public string CharacterExportGameDir { get; set; } = string.Empty;
             /// <summary>Internal settings file version used to apply migrations when upgrading from older versions. Do not modify manually.</summary>
             public int _VERSION_DO_NOT_MODIFY { get; set; }
             /// <summary>Gets or sets the application update check state.</summary>

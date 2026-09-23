@@ -24,6 +24,8 @@ namespace GUI.Forms
             {
                 previewViewer?.Dispose();
                 previewViewer = null;
+                groupFont?.Dispose();
+                groupFont = null;
             }
 
             base.Dispose(disposing);
@@ -49,8 +51,13 @@ namespace GUI.Forms
             heroSearchTextBox = new ThemedTextBox();
             itemSetLabel = new System.Windows.Forms.Label();
             itemSetComboBox = new ThemedComboBox();
-            itemsGroupBox = new ThemedGroupBox();
+            loadoutTabControl = new ThemedTabControl();
+            itemsTabPage = new ThemedTabPage();
+            slotsPanel = new System.Windows.Forms.Panel();
             slotsTable = new System.Windows.Forms.TableLayoutPanel();
+            iconsTabPage = new ThemedTabPage();
+            iconsPanel = new System.Windows.Forms.Panel();
+            iconsTable = new System.Windows.Forms.TableLayoutPanel();
             includeGroupBox = new ThemedGroupBox();
             includeTable = new System.Windows.Forms.TableLayoutPanel();
             heroModelCheckBox = new System.Windows.Forms.CheckBox();
@@ -62,8 +69,17 @@ namespace GUI.Forms
             heroVoiceCheckBox = new System.Windows.Forms.CheckBox();
             iconsCheckBox = new System.Windows.Forms.CheckBox();
             includeAudioCheckBox = new System.Windows.Forms.CheckBox();
+            pedestalCheckBox = new System.Windows.Forms.CheckBox();
             replaceDefaultsCheckBox = new System.Windows.Forms.CheckBox();
             replaceSharedParticlesCheckBox = new System.Windows.Forms.CheckBox();
+            outputGroupBox = new ThemedGroupBox();
+            outputTable = new System.Windows.Forms.TableLayoutPanel();
+            contentFolderLabel = new System.Windows.Forms.Label();
+            contentFolderTextBox = new ThemedTextBox();
+            contentFolderButton = new ThemedButton();
+            gameFolderLabel = new System.Windows.Forms.Label();
+            gameFolderTextBox = new ThemedTextBox();
+            gameFolderButton = new ThemedButton();
             buttonsTable = new System.Windows.Forms.TableLayoutPanel();
             summaryLabel = new System.Windows.Forms.Label();
             cancelButton = new ThemedButton();
@@ -74,9 +90,15 @@ namespace GUI.Forms
             previewPanel.SuspendLayout();
             controlsTable.SuspendLayout();
             heroNavigationTable.SuspendLayout();
-            itemsGroupBox.SuspendLayout();
+            loadoutTabControl.SuspendLayout();
+            itemsTabPage.SuspendLayout();
+            slotsPanel.SuspendLayout();
+            iconsTabPage.SuspendLayout();
+            iconsPanel.SuspendLayout();
             includeGroupBox.SuspendLayout();
             includeTable.SuspendLayout();
+            outputGroupBox.SuspendLayout();
+            outputTable.SuspendLayout();
             buttonsTable.SuspendLayout();
             SuspendLayout();
             //
@@ -84,7 +106,7 @@ namespace GUI.Forms
             //
             mainTable.ColumnCount = 2;
             mainTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            mainTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 500F));
+            mainTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 540F));
             mainTable.Controls.Add(previewPanel, 0, 0);
             mainTable.Controls.Add(controlsTable, 1, 0);
             mainTable.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -93,7 +115,7 @@ namespace GUI.Forms
             mainTable.Padding = new System.Windows.Forms.Padding(8);
             mainTable.RowCount = 1;
             mainTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            mainTable.Size = new System.Drawing.Size(1184, 781);
+            mainTable.Size = new System.Drawing.Size(1224, 840);
             mainTable.TabIndex = 0;
             //
             // previewPanel
@@ -123,18 +145,20 @@ namespace GUI.Forms
             controlsTable.Controls.Add(heroSearchTextBox, 0, 1);
             controlsTable.Controls.Add(itemSetLabel, 0, 2);
             controlsTable.Controls.Add(itemSetComboBox, 0, 3);
-            controlsTable.Controls.Add(itemsGroupBox, 0, 4);
+            controlsTable.Controls.Add(loadoutTabControl, 0, 4);
             controlsTable.Controls.Add(includeGroupBox, 0, 5);
-            controlsTable.Controls.Add(buttonsTable, 0, 6);
+            controlsTable.Controls.Add(outputGroupBox, 0, 6);
+            controlsTable.Controls.Add(buttonsTable, 0, 7);
             controlsTable.Dock = System.Windows.Forms.DockStyle.Fill;
             controlsTable.Location = new System.Drawing.Point(739, 11);
             controlsTable.Name = "controlsTable";
-            controlsTable.RowCount = 7;
+            controlsTable.RowCount = 8;
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.Size = new System.Drawing.Size(434, 759);
@@ -224,30 +248,91 @@ namespace GUI.Forms
             itemSetComboBox.TabIndex = 3;
             itemSetComboBox.SelectedIndexChanged += ItemSetComboBox_SelectedIndexChanged;
             //
-            // itemsGroupBox
+            // loadoutTabControl
             //
-            itemsGroupBox.Controls.Add(slotsTable);
-            itemsGroupBox.Dock = System.Windows.Forms.DockStyle.Fill;
-            itemsGroupBox.Location = new System.Drawing.Point(3, 145);
-            itemsGroupBox.Name = "itemsGroupBox";
-            itemsGroupBox.Size = new System.Drawing.Size(428, 399);
-            itemsGroupBox.TabIndex = 4;
-            itemsGroupBox.TabStop = false;
-            itemsGroupBox.Text = "Individual items";
+            loadoutTabControl.BaseTabWidth = 120;
+            loadoutTabControl.Controls.Add(itemsTabPage);
+            loadoutTabControl.Controls.Add(iconsTabPage);
+            loadoutTabControl.Dock = System.Windows.Forms.DockStyle.Fill;
+            loadoutTabControl.DrawMode = System.Windows.Forms.TabDrawMode.OwnerDrawFixed;
+            loadoutTabControl.Location = new System.Drawing.Point(3, 145);
+            loadoutTabControl.Name = "loadoutTabControl";
+            loadoutTabControl.Padding = new System.Drawing.Point(12, 8);
+            loadoutTabControl.SelectedIndex = 0;
+            loadoutTabControl.SelectionLine = true;
+            loadoutTabControl.Size = new System.Drawing.Size(428, 330);
+            loadoutTabControl.TabHeight = 32;
+            loadoutTabControl.TabIndex = 4;
+            loadoutTabControl.TabTopRadius = 0;
+            //
+            // itemsTabPage
+            //
+            itemsTabPage.Controls.Add(slotsPanel);
+            itemsTabPage.Location = new System.Drawing.Point(4, 36);
+            itemsTabPage.Name = "itemsTabPage";
+            itemsTabPage.Size = new System.Drawing.Size(460, 290);
+            itemsTabPage.TabIndex = 0;
+            itemsTabPage.Text = "Items";
+            //
+            // slotsPanel
+            //
+            slotsPanel.AutoScroll = true;
+            slotsPanel.Controls.Add(slotsTable);
+            slotsPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            slotsPanel.Location = new System.Drawing.Point(0, 0);
+            slotsPanel.Name = "slotsPanel";
+            slotsPanel.Size = new System.Drawing.Size(460, 290);
+            slotsPanel.TabIndex = 0;
             //
             // slotsTable
             //
-            slotsTable.AutoScroll = true;
-            slotsTable.ColumnCount = 3;
+            slotsTable.AutoSize = true;
+            slotsTable.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            slotsTable.ColumnCount = 4;
             slotsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
             slotsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             slotsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
-            slotsTable.Dock = System.Windows.Forms.DockStyle.Fill;
-            slotsTable.Location = new System.Drawing.Point(3, 21);
+            slotsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            slotsTable.Dock = System.Windows.Forms.DockStyle.Top;
+            slotsTable.Location = new System.Drawing.Point(0, 0);
             slotsTable.Name = "slotsTable";
             slotsTable.RowCount = 0;
-            slotsTable.Size = new System.Drawing.Size(422, 375);
+            slotsTable.Size = new System.Drawing.Size(460, 0);
             slotsTable.TabIndex = 0;
+            //
+            // iconsTabPage
+            //
+            iconsTabPage.Controls.Add(iconsPanel);
+            iconsTabPage.Location = new System.Drawing.Point(4, 36);
+            iconsTabPage.Name = "iconsTabPage";
+            iconsTabPage.Size = new System.Drawing.Size(460, 290);
+            iconsTabPage.TabIndex = 1;
+            iconsTabPage.Text = "Icons";
+            //
+            // iconsPanel
+            //
+            iconsPanel.AutoScroll = true;
+            iconsPanel.Controls.Add(iconsTable);
+            iconsPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            iconsPanel.Location = new System.Drawing.Point(0, 0);
+            iconsPanel.Name = "iconsPanel";
+            iconsPanel.Size = new System.Drawing.Size(460, 290);
+            iconsPanel.TabIndex = 0;
+            //
+            // iconsTable
+            //
+            iconsTable.AutoSize = true;
+            iconsTable.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            iconsTable.ColumnCount = 3;
+            iconsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            iconsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            iconsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            iconsTable.Dock = System.Windows.Forms.DockStyle.Top;
+            iconsTable.Location = new System.Drawing.Point(0, 0);
+            iconsTable.Name = "iconsTable";
+            iconsTable.RowCount = 0;
+            iconsTable.Size = new System.Drawing.Size(460, 0);
+            iconsTable.TabIndex = 0;
             //
             // includeGroupBox
             //
@@ -265,26 +350,28 @@ namespace GUI.Forms
             // includeTable
             //
             includeTable.AutoSize = true;
-            includeTable.ColumnCount = 2;
-            includeTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 50F));
-            includeTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 50F));
+            includeTable.ColumnCount = 3;
+            includeTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.33F));
+            includeTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.33F));
+            includeTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.34F));
             includeTable.Controls.Add(heroModelCheckBox, 0, 0);
             includeTable.Controls.Add(itemModelsCheckBox, 1, 0);
+            includeTable.Controls.Add(pedestalCheckBox, 2, 0);
             includeTable.Controls.Add(itemParticlesCheckBox, 0, 1);
             includeTable.Controls.Add(heroParticlesCheckBox, 1, 1);
+            includeTable.Controls.Add(iconsCheckBox, 2, 1);
             includeTable.Controls.Add(itemSoundsCheckBox, 0, 2);
             includeTable.Controls.Add(heroSoundsCheckBox, 1, 2);
-            includeTable.Controls.Add(heroVoiceCheckBox, 0, 3);
-            includeTable.Controls.Add(iconsCheckBox, 1, 3);
-            includeTable.Controls.Add(includeAudioCheckBox, 0, 4);
-            includeTable.SetColumnSpan(includeAudioCheckBox, 2);
-            includeTable.Controls.Add(replaceDefaultsCheckBox, 0, 5);
-            includeTable.Controls.Add(replaceSharedParticlesCheckBox, 1, 5);
+            includeTable.Controls.Add(heroVoiceCheckBox, 2, 2);
+            includeTable.Controls.Add(includeAudioCheckBox, 0, 3);
+            includeTable.SetColumnSpan(includeAudioCheckBox, 3);
+            includeTable.Controls.Add(replaceDefaultsCheckBox, 0, 4);
+            includeTable.SetColumnSpan(replaceDefaultsCheckBox, 2);
+            includeTable.Controls.Add(replaceSharedParticlesCheckBox, 2, 4);
             includeTable.Dock = System.Windows.Forms.DockStyle.Top;
             includeTable.Location = new System.Drawing.Point(3, 21);
             includeTable.Name = "includeTable";
-            includeTable.RowCount = 6;
-            includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            includeTable.RowCount = 5;
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
@@ -368,7 +455,7 @@ namespace GUI.Forms
             iconsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
             iconsCheckBox.Name = "iconsCheckBox";
             iconsCheckBox.TabIndex = 7;
-            iconsCheckBox.Text = "Panorama icons";
+            iconsCheckBox.Text = "Replace icons";
             iconsCheckBox.UseVisualStyleBackColor = true;
             //
             // includeAudioCheckBox
@@ -378,6 +465,14 @@ namespace GUI.Forms
             includeAudioCheckBox.TabIndex = 8;
             includeAudioCheckBox.Text = "Include the sounds they play (.mp3, .wav)";
             includeAudioCheckBox.UseVisualStyleBackColor = true;
+            //
+            // pedestalCheckBox
+            //
+            pedestalCheckBox.AutoSize = true;
+            pedestalCheckBox.Name = "pedestalCheckBox";
+            pedestalCheckBox.TabIndex = 11;
+            pedestalCheckBox.Text = "Pedestal";
+            pedestalCheckBox.UseVisualStyleBackColor = true;
             //
             // replaceDefaultsCheckBox
             //
@@ -398,6 +493,89 @@ namespace GUI.Forms
             replaceSharedParticlesCheckBox.Text = "Also shared particles";
             replaceSharedParticlesCheckBox.UseVisualStyleBackColor = true;
             //
+            // outputGroupBox
+            //
+            outputGroupBox.AutoSize = true;
+            outputGroupBox.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            outputGroupBox.Controls.Add(outputTable);
+            outputGroupBox.Dock = System.Windows.Forms.DockStyle.Fill;
+            outputGroupBox.Name = "outputGroupBox";
+            outputGroupBox.TabIndex = 6;
+            outputGroupBox.TabStop = false;
+            outputGroupBox.Text = "Addon folders";
+            //
+            // outputTable
+            //
+            outputTable.AutoSize = true;
+            outputTable.ColumnCount = 3;
+            outputTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            outputTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            outputTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            outputTable.Controls.Add(contentFolderLabel, 0, 0);
+            outputTable.Controls.Add(contentFolderTextBox, 1, 0);
+            outputTable.Controls.Add(contentFolderButton, 2, 0);
+            outputTable.Controls.Add(gameFolderLabel, 0, 1);
+            outputTable.Controls.Add(gameFolderTextBox, 1, 1);
+            outputTable.Controls.Add(gameFolderButton, 2, 1);
+            outputTable.Dock = System.Windows.Forms.DockStyle.Top;
+            outputTable.Name = "outputTable";
+            outputTable.RowCount = 2;
+            outputTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            outputTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            outputTable.TabIndex = 0;
+            //
+            // contentFolderLabel
+            //
+            contentFolderLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
+            contentFolderLabel.AutoSize = true;
+            contentFolderLabel.Name = "contentFolderLabel";
+            contentFolderLabel.TabIndex = 0;
+            contentFolderLabel.Text = "Content";
+            //
+            // contentFolderTextBox
+            //
+            contentFolderTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+            contentFolderTextBox.Name = "contentFolderTextBox";
+            contentFolderTextBox.PlaceholderText = "dota 2 beta\\content\\dota_addons\\<addon>";
+            contentFolderTextBox.TabIndex = 1;
+            contentFolderTextBox.WordWrap = false;
+            contentFolderTextBox.TextChanged += ContentFolderTextBox_TextChanged;
+            //
+            // contentFolderButton
+            //
+            contentFolderButton.Name = "contentFolderButton";
+            contentFolderButton.Size = new System.Drawing.Size(36, 27);
+            contentFolderButton.TabIndex = 2;
+            contentFolderButton.Text = "...";
+            contentFolderButton.UseVisualStyleBackColor = false;
+            contentFolderButton.Click += ContentFolderButton_Click;
+            //
+            // gameFolderLabel
+            //
+            gameFolderLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
+            gameFolderLabel.AutoSize = true;
+            gameFolderLabel.Name = "gameFolderLabel";
+            gameFolderLabel.TabIndex = 3;
+            gameFolderLabel.Text = "Game";
+            //
+            // gameFolderTextBox
+            //
+            gameFolderTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+            gameFolderTextBox.Name = "gameFolderTextBox";
+            gameFolderTextBox.PlaceholderText = "dota 2 beta\\game\\dota_addons\\<addon>";
+            gameFolderTextBox.TabIndex = 4;
+            gameFolderTextBox.TextChanged += GameFolderTextBox_TextChanged;
+            gameFolderTextBox.WordWrap = false;
+            //
+            // gameFolderButton
+            //
+            gameFolderButton.Name = "gameFolderButton";
+            gameFolderButton.Size = new System.Drawing.Size(36, 27);
+            gameFolderButton.TabIndex = 5;
+            gameFolderButton.Text = "...";
+            gameFolderButton.UseVisualStyleBackColor = false;
+            gameFolderButton.Click += GameFolderButton_Click;
+            //
             // buttonsTable
             //
             buttonsTable.AutoSize = true;
@@ -414,7 +592,7 @@ namespace GUI.Forms
             buttonsTable.RowCount = 1;
             buttonsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             buttonsTable.Size = new System.Drawing.Size(428, 43);
-            buttonsTable.TabIndex = 6;
+            buttonsTable.TabIndex = 7;
             //
             // summaryLabel
             //
@@ -453,10 +631,10 @@ namespace GUI.Forms
             AutoScaleDimensions = new System.Drawing.SizeF(7F, 17F);
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             CancelButton = cancelButton;
-            ClientSize = new System.Drawing.Size(1184, 781);
+            ClientSize = new System.Drawing.Size(1224, 840);
             Controls.Add(mainTable);
             Font = new System.Drawing.Font("Segoe UI", 10F);
-            MinimumSize = new System.Drawing.Size(900, 640);
+            MinimumSize = new System.Drawing.Size(900, 700);
             Name = "CharacterSelectForm";
             ShowIcon = false;
             ShowInTaskbar = false;
@@ -467,11 +645,21 @@ namespace GUI.Forms
             controlsTable.ResumeLayout(false);
             controlsTable.PerformLayout();
             heroNavigationTable.ResumeLayout(false);
-            itemsGroupBox.ResumeLayout(false);
+            loadoutTabControl.ResumeLayout(false);
+            itemsTabPage.ResumeLayout(false);
+            slotsPanel.ResumeLayout(false);
+            slotsPanel.PerformLayout();
+            iconsTabPage.ResumeLayout(false);
+            iconsPanel.ResumeLayout(false);
+            iconsPanel.PerformLayout();
             includeGroupBox.ResumeLayout(false);
             includeGroupBox.PerformLayout();
             includeTable.ResumeLayout(false);
             includeTable.PerformLayout();
+            outputGroupBox.ResumeLayout(false);
+            outputGroupBox.PerformLayout();
+            outputTable.ResumeLayout(false);
+            outputTable.PerformLayout();
             buttonsTable.ResumeLayout(false);
             ResumeLayout(false);
         }
@@ -489,8 +677,13 @@ namespace GUI.Forms
         private ThemedTextBox heroSearchTextBox;
         private System.Windows.Forms.Label itemSetLabel;
         private ThemedComboBox itemSetComboBox;
-        private ThemedGroupBox itemsGroupBox;
+        private ThemedTabControl loadoutTabControl;
+        private ThemedTabPage itemsTabPage;
+        private System.Windows.Forms.Panel slotsPanel;
         private System.Windows.Forms.TableLayoutPanel slotsTable;
+        private ThemedTabPage iconsTabPage;
+        private System.Windows.Forms.Panel iconsPanel;
+        private System.Windows.Forms.TableLayoutPanel iconsTable;
         private ThemedGroupBox includeGroupBox;
         private System.Windows.Forms.TableLayoutPanel includeTable;
         private System.Windows.Forms.CheckBox heroModelCheckBox;
@@ -502,8 +695,17 @@ namespace GUI.Forms
         private System.Windows.Forms.CheckBox heroVoiceCheckBox;
         private System.Windows.Forms.CheckBox iconsCheckBox;
         private System.Windows.Forms.CheckBox includeAudioCheckBox;
+        private System.Windows.Forms.CheckBox pedestalCheckBox;
         private System.Windows.Forms.CheckBox replaceDefaultsCheckBox;
         private System.Windows.Forms.CheckBox replaceSharedParticlesCheckBox;
+        private ThemedGroupBox outputGroupBox;
+        private System.Windows.Forms.TableLayoutPanel outputTable;
+        private System.Windows.Forms.Label contentFolderLabel;
+        private ThemedTextBox contentFolderTextBox;
+        private ThemedButton contentFolderButton;
+        private System.Windows.Forms.Label gameFolderLabel;
+        private ThemedTextBox gameFolderTextBox;
+        private ThemedButton gameFolderButton;
         private System.Windows.Forms.TableLayoutPanel buttonsTable;
         private System.Windows.Forms.Label summaryLabel;
         private ThemedButton cancelButton;
