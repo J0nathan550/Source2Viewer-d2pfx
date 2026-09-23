@@ -1,7 +1,3 @@
-using GUI.Forms;
-using GUI.Types.PackageViewer;
-using GUI.Types.Viewers;
-using GUI.Utils;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -10,6 +6,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using GUI.Forms;
+using GUI.Types.PackageViewer;
+using GUI.Utils;
 using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;

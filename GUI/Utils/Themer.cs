@@ -54,6 +54,7 @@ namespace GUI.Utils
             System = 0,
             Light = 1,
             Dark = 2,
+            Gray = 3,
         }
 
         private static readonly ThemeColors DarkTheme = new()
@@ -98,6 +99,27 @@ namespace GUI.Utils
             ColorMode = SystemColorMode.Classic,
         };
 
+        private static readonly ThemeColors GrayTheme = new()
+        {
+            App = Color.FromArgb(20, 20, 20),           // Глубокий нейтрально-серый фон (#141414)
+            AppMiddle = Color.FromArgb(32, 32, 32),     // Панели и контейнеры (#202020)
+            AppSoft = Color.FromArgb(45, 45, 45),       // Подсветка элементов и активные зоны (#2D2D2D)
+
+            Border = Color.FromArgb(60, 60, 60),        // Границы (#3C3C3C)
+
+            Contrast = Color.White,
+            ContrastSoft = Color.FromArgb(160, 160, 160),
+
+            ControlBoxHighlight = Color.FromArgb(67, 67, 67),
+            ControlBoxHighlightCloseButton = Color.FromArgb(240, 20, 20),
+
+            HoverAccent = Color.FromArgb(70, 70, 70),   // Серый ховер
+            Accent = Color.FromArgb(110, 110, 110),     // Нейтрально-серый акцент
+            Attention = Color.FromArgb(214, 55, 55),
+
+            ColorMode = SystemColorMode.Dark,
+        };
+
         public static AppTheme CurrentTheme { get; private set; } = AppTheme.Light;
         public static ThemeColors CurrentThemeColors { get; private set; } = LightTheme;
 
@@ -111,7 +133,12 @@ namespace GUI.Utils
             }
 
             CurrentTheme = theme;
-            CurrentThemeColors = theme == AppTheme.Dark ? DarkTheme : LightTheme;
+            CurrentThemeColors = theme switch
+            {
+                AppTheme.Dark => DarkTheme,
+                AppTheme.Gray => GrayTheme,
+                _ => LightTheme,
+            };
 
             Application.SetColorMode(CurrentThemeColors.ColorMode);
         }
