@@ -14,6 +14,7 @@ With "Replace default assets" on, the export also writes the chosen look over th
 
 - [Source 2 Viewer / ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat) and its original authors and contributors, whose work this fork is built entirely on top of.
 - [fvckmindself](https://github.com/fvckmindself) for [VmdlExtractor](https://github.com/fvckmindself/VmdlExtractor), the custom VMDL extraction pipeline this fork integrates.
+- [ibcsz12](https://github.com/ibcsz12) for improving Export character assets (items_game.txt).
 - [J0nathan550](https://github.com/J0nathan550) for this fork.
 
 ## License
