@@ -20,6 +20,37 @@ namespace GUI
     {
         public void ShowVpkContextMenu(Control control, Point position, bool isRootNode, bool isFolderNode, bool deletedFilesRecovered)
         {
+            // 1. Принудительно выделяем узел/элемент под курсором перед проверкой
+            if (control is BetterTreeView treeView)
+            {
+                var nodeAtMouse = treeView.GetNodeAt(treeView.PointToClient(Cursor.Position));
+                if (nodeAtMouse != null)
+                {
+                    treeView.SelectedNode = nodeAtMouse;
+                }
+            }
+            else if (control is BetterListView listView)
+            {
+                var pt = listView.PointToClient(Cursor.Position);
+                var itemAtMouse = listView.GetItemAt(pt.X, pt.Y);
+                if (itemAtMouse != null)
+                {
+                    if (listView.VirtualMode)
+                    {
+                        if (!listView.SelectedIndices.Contains(itemAtMouse.Index))
+                        {
+                            listView.SelectedIndices.Clear();
+                            listView.SelectedIndices.Add(itemAtMouse.Index);
+                        }
+                    }
+                    else if (!itemAtMouse.Selected)
+                    {
+                        listView.SelectedItems.Clear();
+                        itemAtMouse.Selected = true;
+                    }
+                }
+            }
+
             copyFileNameToolStripMenuItem.Visible = !isRootNode;
             openWithDefaultAppToolStripMenuItem.Visible = !isRootNode && !isFolderNode;
             openWithoutViewerToolStripMenuItem.Visible = !isRootNode && !isFolderNode;
