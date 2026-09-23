@@ -352,7 +352,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                             foreach (var particle in particles)
                             {
-                                details.Add($"creates {particle.Name} on {(particle.AttachmentPoint.Length > 0 ? particle.AttachmentPoint : "origin")}");
+                                details.Add($"creates {particle.Name}{(particle.Config.Length > 0 ? $" with its {particle.Config} config" : string.Empty)}");
                             }
                         }
                         catch (Exception e)

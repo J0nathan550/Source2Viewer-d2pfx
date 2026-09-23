@@ -11,13 +11,11 @@ using ValveResourceFormat.Serialization.KeyValues;
 namespace GUI.Types.Exporter.CharacterAssets
 {
     /// <summary>
-    /// A particle a model creates itself, as its "particles_list" game data.
+    /// A particle a model creates itself, as its "particle_cfg_list" game data.
     /// </summary>
-    /// <param name="Name">The particle system.</param>
-    /// <param name="AttachmentPoint">The attachment it follows, empty to follow the model's origin.</param>
-    /// <param name="AttachmentType">How it is attached, e.g. "point_follow".</param>
-    /// <param name="Offset">Offset from the attachment.</param>
-    sealed record ModelParticle(string Name, string AttachmentPoint, string AttachmentType, Vector3 Offset);
+    /// <param name="Name">Full path of the particle system.</param>
+    /// <param name="Config">The particle's control point configuration that places it on the model, empty when it has none.</param>
+    sealed record ModelParticle(string Name, string Config);
 
     /// <summary>
     /// Edits decompiled .vmdl files in place, keeping the rest of the text exactly as the model extractor wrote it.
@@ -303,13 +301,11 @@ namespace GUI.Types.Exporter.CharacterAssets
                     {
                         _class = "GenericGameData"
                         name = "{{Path.GetFileNameWithoutExtension(particle.Name)}}"
-                        game_class = "particle"
+                        game_class = "particle_cfg"
                         game_keys =
                         {
                             name = resource:"{{particle.Name}}"
-                            attachment_point = "{{particle.AttachmentPoint}}"
-                            attachment_type = "{{particle.AttachmentType}}"
-                            attachment_offset = [ {{FormatFloat(particle.Offset.X)}}, {{FormatFloat(particle.Offset.Y)}}, {{FormatFloat(particle.Offset.Z)}} ]
+                            config = "{{particle.Config}}"
                         }
                     },
                     """);
@@ -349,43 +345,30 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
-        /// Works out how a particle attaches to its model from the control point configuration it plays under in game:
-        /// following the attachment control point 0 is driven by, or the model's origin when it has none.
+        /// Picks the control point configuration a particle plays under in game, which drives all of its control points
+        /// from the model's attachments: the "game" one, else one made for something other than the preview, else the
+        /// preview one, which most item particles only have.
         /// </summary>
         public static ModelParticle ResolveParticle(IFileLoader fileLoader, string particle)
         {
-            var attachmentPoint = string.Empty;
-            var offset = Vector3.Zero;
+            var config = string.Empty;
 
             using var resource = fileLoader.LoadFileCompiled(particle);
 
             if (resource?.DataBlock is ParticleSystem particleSystem)
             {
-                var configurations = particleSystem.GetUpgradedData().GetArray("m_controlPointConfigurations") ?? [];
+                var names = (particleSystem.GetUpgradedData().GetArray("m_controlPointConfigurations") ?? [])
+                    .Select(static configuration => configuration.GetStringProperty("m_name", string.Empty))
+                    .Where(static name => name.Length > 0)
+                    .ToList();
 
-                var configuration = configurations.FirstOrDefault(static configuration =>
-                        string.Equals(configuration.GetStringProperty("m_name"), "game", StringComparison.OrdinalIgnoreCase))
-                    ?? configurations.FirstOrDefault(static configuration =>
-                        !string.Equals(configuration.GetStringProperty("m_name"), "preview", StringComparison.OrdinalIgnoreCase));
-
-                var driver = configuration?.GetArray("m_drivers")?.FirstOrDefault(static driver =>
-                    !driver.ContainsKey("m_iControlPoint") || driver.GetInt32Property("m_iControlPoint") == 0);
-
-                if (driver != null)
-                {
-                    attachmentPoint = driver.GetStringProperty("m_attachmentName", string.Empty);
-
-                    if (driver.ContainsKey("m_vecOffset") && driver.GetFloatArray("m_vecOffset") is [var x, var y, var z])
-                    {
-                        offset = new Vector3(x, y, z);
-                    }
-                }
+                config = names.FirstOrDefault(static name => name.Equals("game", StringComparison.OrdinalIgnoreCase))
+                    ?? names.FirstOrDefault(static name => !name.Equals("preview", StringComparison.OrdinalIgnoreCase))
+                    ?? names.FirstOrDefault()
+                    ?? string.Empty;
             }
 
-            // Anything else would place the particle once instead of keeping it on the model as it moves
-            var attachmentType = attachmentPoint.Length > 0 ? "point_follow" : "absorigin_follow";
-
-            return new ModelParticle(particle, attachmentPoint, attachmentType, offset);
+            return new ModelParticle(particle, config);
         }
 
         /// <summary>
@@ -410,8 +393,6 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             return string.Join('\n', lines);
         }
-
-        private static string FormatFloat(float value) => value.ToString("0.0#####", CultureInfo.InvariantCulture);
 
         private static IReadOnlyList<KVObject> GetRootChildren(string vmdl)
         {
