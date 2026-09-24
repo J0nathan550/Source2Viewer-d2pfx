@@ -19,7 +19,14 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <param name="Style">The item style this applies to, or null when it applies to every style.</param>
     /// <param name="LoadoutOnly">Whether this only applies while the hero is shown in the loadout screen.</param>
     /// <param name="Value">The number some types carry, e.g. the level of "arcana_level" or the choice of "bodygroup_visibility".</param>
-    sealed record AssetModifier(string Type, string? Asset, string? Modifier, int? Style, bool LoadoutOnly, int? Value = null);
+    sealed record AssetModifier(string Type, string? Asset, string? Modifier, int? Style, bool LoadoutOnly, int? Value = null)
+    {
+        /// <summary>
+        /// The arcana level this is made for, e.g. an arm's effect that only lights the arm the arcana leaves as it is,
+        /// or null when it applies at every level.
+        /// </summary>
+        public int? RequiredArcanaLevel { get; init; }
+    }
 
     /// <summary>
     /// One of an item's styles, which picks which of its asset modifiers apply.
@@ -80,12 +87,19 @@ namespace GUI.Types.Exporter.CharacterAssets
         public required string Name { get; init; }
 
         public required string DisplayName { get; init; }
+
+        /// <summary>The hero's number, which scripts like the chat wheel's refer to it by.</summary>
+        public int? Id { get; init; }
+
         public string? Model { get; init; }
         public string? GameSoundsFile { get; init; }
         public string? VoiceFile { get; init; }
         public string? ParticleFolder { get; init; }
         public List<string> Abilities { get; } = [];
         public List<HeroSlot> Slots { get; } = [];
+
+        /// <summary>The voice lines the hero's chat wheel plays.</summary>
+        public List<ChatWheelLine> ChatWheel { get; } = [];
 
         /// <summary>The entity name without the "npc_dota_hero_" prefix, e.g. "earthshaker".</summary>
         public string ShortName => Name.StartsWith(NamePrefix, StringComparison.Ordinal) ? Name[NamePrefix.Length..] : Name;
@@ -113,6 +127,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         public const string ItemsGamePath = "scripts/items/items_game.txt";
         public const string HeroesPath = "scripts/npc/npc_heroes.txt";
         public const string UnitsPath = "scripts/npc/npc_units.txt";
+        public const string ChatWheelPath = "scripts/chat_wheel_heroes.txt";
 
         private static readonly string[] LocalizationPaths =
         [
@@ -225,6 +240,10 @@ namespace GUI.Types.Exporter.CharacterAssets
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report("Reading hero scripts...");
             var heroes = LoadHeroes(package, localization);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report($"Reading {ChatWheelPath}...");
+            LoadChatWheel(package, heroes);
 
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {ItemsGamePath}...");
@@ -365,7 +384,10 @@ namespace GUI.Types.Exporter.CharacterAssets
                     NullIfEmpty(GetValue(modifier, "modifier")),
                     style,
                     GetValue(modifier, "spawn_in_loadout_only") == "1" || GetValue(modifier, "spawn_in_alternate_loadout_only") == "1",
-                    ParseInt(GetValue(modifier, "level") ?? GetValue(modifier, "value"))));
+                    ParseInt(GetValue(modifier, "level") ?? GetValue(modifier, "value")))
+                {
+                    RequiredArcanaLevel = ParseInt(GetValue(modifier, "required_arcana_level")),
+                });
             }
 
             if (visuals.GetSubCollection("styles") is { ValueType: KVValueType.Collection } styles)
@@ -507,6 +529,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     DisplayName = Localize(localization, name)
                         ?? NullIfEmpty(GetValue(heroData, "workshop_guide_name"))
                         ?? CultureInfo.InvariantCulture.TextInfo.ToTitleCase(name[HeroDefinition.NamePrefix.Length..].Replace('_', ' ')),
+                    Id = ParseInt(GetValue(heroData, "HeroID")),
                     Model = GetValue(heroData, "Model"),
                     GameSoundsFile = NullIfEmpty(GetValue(heroData, "GameSoundsFile")),
                     VoiceFile = NullIfEmpty(GetValue(heroData, "VoiceFile")),
@@ -608,6 +631,48 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return models;
+        }
+
+        /// <summary>
+        /// Reads the voice lines each hero's chat wheel plays, which are listed under the hero's number.
+        /// </summary>
+        private static void LoadChatWheel(Package package, List<HeroDefinition> heroes)
+        {
+            KVObject? root;
+
+            try
+            {
+                root = ReadKeyValues(package, ChatWheelPath);
+            }
+            catch (Exception e)
+            {
+                // Only the voice replacement depends on it
+                Log.Warn(nameof(ItemsGameCatalog), $"Failed to read \"{ChatWheelPath}\": {e.Message}");
+                return;
+            }
+
+            if (root?.GetSubCollection("hero_messages") is not { ValueType: KVValueType.Collection } heroMessages)
+            {
+                return;
+            }
+
+            foreach (var (id, messages) in heroMessages)
+            {
+                if (messages.ValueType != KVValueType.Collection
+                    || ParseInt(id) is not { } heroId
+                    || heroes.Find(hero => hero.Id == heroId) is not { } hero)
+                {
+                    continue;
+                }
+
+                foreach (var (key, message) in messages)
+                {
+                    if (message.ValueType == KVValueType.Collection && GetValue(message, "sound") is { Length: > 0 } sound)
+                    {
+                        hero.ChatWheel.Add(new ChatWheelLine(key, sound, GetValue(message, "persona") == "1"));
+                    }
+                }
+            }
         }
 
         private static Dictionary<string, string> LoadLocalization(Package package)

@@ -56,8 +56,24 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <param name="Criteria">The response criteria an item sets to switch the hero to other lines, null for the hero's own voice.</param>
     sealed record VoiceChoice(string? Criteria, string DisplayName)
     {
+        /// <summary>
+        /// The lines the chat wheel plays instead of the hero's own with this voice, as the items that set it swap them.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> ChatWheelSwaps { get; init; } = new Dictionary<string, string>();
+
         public override string ToString() => DisplayName;
     }
+
+    /// <summary>
+    /// A message of the hero's chat wheel.
+    /// </summary>
+    /// <param name="Key">The message's name, e.g. "earthshaker_laugh".</param>
+    /// <param name="Sound">The voice line it plays.</param>
+    /// <param name="Persona">
+    /// Whether it replaces the message of the same name without "_persona" while the hero's persona is equipped, e.g.
+    /// "antimage_persona_laugh" for "antimage_laugh".
+    /// </param>
+    sealed record ChatWheelLine(string Key, string Sound, bool Persona);
 
     /// <summary>
     /// Which of the hero's voice lines are written over with which lines of another voice.
@@ -216,8 +232,15 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// takes the lines of the closest one it has, a more general one when it can, so the hero keeps speaking with
         /// that voice. The voice's lines are handed out in turn when it has fewer lines for a situation.
         /// </summary>
+        /// <remarks>
+        /// The chat wheel plays its lines by name next to their text, so its lines are never matched by situation. They
+        /// become the lines the voice's items swap them for, or the persona's own chat wheel lines when the voice is a
+        /// persona's, and otherwise stay as they are, like they do in game.
+        /// </remarks>
         /// <param name="criteria">The criteria the item sets, e.g. "arcana".</param>
-        public VoiceMapping MapVoice(string criteria)
+        /// <param name="chatWheel">The hero's chat wheel.</param>
+        /// <param name="chatWheelSwaps">The lines the voice's items swap chat wheel lines for, see <see cref="VoiceChoice.ChatWheelSwaps"/>.</param>
+        public VoiceMapping MapVoice(string criteria, IReadOnlyList<ChatWheelLine> chatWheel, IReadOnlyDictionary<string, string> chatWheelSwaps)
         {
             var voiceCriteria = customCriteria
                 .Where(pair => pair.Value.Equals(criteria, StringComparison.OrdinalIgnoreCase))
@@ -262,6 +285,8 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             var voiceLines = situations.SelectMany(static situation => situation.Lines).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var chatWheelLines = chatWheel.Where(static line => !line.Persona).ToList();
+            var chatWheelSounds = chatWheelLines.Select(static line => line.Sound).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             foreach (var (requirements, groupLines) in heroGroups)
             {
@@ -289,14 +314,46 @@ namespace GUI.Types.Exporter.CharacterAssets
                 for (var i = 0; i < groupLines.Length; i++)
                 {
                     // Some voices reuse lines of the hero's own, which have to stay as they are
-                    if (!voiceLines.Contains(groupLines[i]))
+                    if (!voiceLines.Contains(groupLines[i]) && !chatWheelSounds.Contains(groupLines[i]))
                     {
                         lines.TryAdd(groupLines[i], match[i % match.Count]);
                     }
                 }
             }
 
+            // A persona's voice has chat wheel lines of its own, which contain some of the voice's lines
+            var personaLines = chatWheel
+                .Where(static line => line.Persona)
+                .GroupBy(static line => line.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(static group => group.Key, static group => group.First().Sound, StringComparer.OrdinalIgnoreCase);
+            var isPersona = personaLines.Values.Any(voiceLines.Contains);
+
+            foreach (var line in chatWheelLines)
+            {
+                if (chatWheelSwaps.TryGetValue(line.Sound, out var swap)
+                    || (isPersona && personaLines.TryGetValue(GetPersonaKey(line.Key), out swap)))
+                {
+                    if (!swap.Equals(line.Sound, StringComparison.OrdinalIgnoreCase))
+                    {
+                        lines[line.Sound] = swap;
+                    }
+                }
+            }
+
+            // Some chat wheel lines are spoken nowhere else
+            heroLines.UnionWith(chatWheelSounds);
+
             return new VoiceMapping(lines, heroLines.Count);
+        }
+
+        /// <summary>
+        /// The name of the persona's version of a chat wheel message, e.g. "antimage_persona_laugh" for "antimage_laugh".
+        /// </summary>
+        private static string GetPersonaKey(string key)
+        {
+            var separator = key.LastIndexOf('_');
+
+            return separator > 0 ? $"{key[..separator]}_persona{key[separator..]}" : key;
         }
 
         private HashSet<string> GetSituation(string[] requirements)
@@ -460,7 +517,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 return voices;
             }
 
-            var itemsByCriteria = new List<(string Criteria, List<string> Items)>();
+            var itemsByCriteria = new List<(string Criteria, List<string> Items, Dictionary<string, string> ChatWheelSwaps)>();
 
             foreach (var item in catalog.GetItems(hero))
             {
@@ -475,26 +532,40 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                     if (index < 0)
                     {
-                        itemsByCriteria.Add((criteria, []));
+                        itemsByCriteria.Add((criteria, [], new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)));
                         index = itemsByCriteria.Count - 1;
                     }
 
+                    var (_, items, chatWheelSwaps) = itemsByCriteria[index];
                     var itemName = GetItemName(item, modifier.Style);
 
-                    if (!itemsByCriteria[index].Items.Contains(itemName))
+                    if (!items.Contains(itemName))
                     {
-                        itemsByCriteria[index].Items.Add(itemName);
+                        items.Add(itemName);
+                    }
+
+                    // The chat wheel lines the item swaps in the same style as it sets the voice
+                    foreach (var swap in item.AssetModifiers)
+                    {
+                        if (swap is { Type: "chatwheel", Asset: { Length: > 0 } line, Modifier: { Length: > 0 } voiceLine }
+                            && (swap.Style == null || modifier.Style == null || swap.Style == modifier.Style))
+                        {
+                            chatWheelSwaps.TryAdd(line, voiceLine);
+                        }
                     }
                 }
             }
 
-            foreach (var (criteria, items) in itemsByCriteria)
+            foreach (var (criteria, items, chatWheelSwaps) in itemsByCriteria)
             {
-                var mapping = rules.MapVoice(criteria);
+                var mapping = rules.MapVoice(criteria, hero.ChatWheel, chatWheelSwaps);
 
                 if (mapping.Lines.Count > 0)
                 {
-                    voices.Add(new VoiceChoice(criteria, $"{string.Join(", ", items)} ({mapping.Lines.Count} of {mapping.HeroLines} lines)"));
+                    voices.Add(new VoiceChoice(criteria, $"{string.Join(", ", items)} ({mapping.Lines.Count} of {mapping.HeroLines} lines)")
+                    {
+                        ChatWheelSwaps = chatWheelSwaps,
+                    });
                 }
             }
 

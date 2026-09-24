@@ -25,6 +25,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Particles the selected items create or swap in.</summary>
         public bool ItemParticles { get; set; } = true;
 
+        /// <summary>
+        /// Whether each of the particles the equipped items create is exported, see <see cref="CharacterLoadout.CreatedEffects"/>,
+        /// by package source path. The ones left out are exported when the game shows them with the equipped items.
+        /// </summary>
+        public IReadOnlyDictionary<string, bool> ItemEffects { get; set; } = new Dictionary<string, bool>();
+
         /// <summary>Every particle in the hero's particle folder, which covers its abilities.</summary>
         public bool HeroParticles { get; set; }
 
@@ -62,10 +68,10 @@ namespace GUI.Types.Exporter.CharacterAssets
         public IReadOnlyList<SoundReplacement> SoundReplacements { get; set; } = [];
 
         /// <summary>
-        /// The response criteria of the voice whose lines are written over the hero's own when <see cref="Sounds"/> is
-        /// set, see <see cref="HeroResponseRules.MapVoice"/>, or null to keep the hero's voice.
+        /// The voice whose lines are written over the hero's own when <see cref="Sounds"/> is set, see
+        /// <see cref="HeroResponseRules.MapVoice"/>, or null to keep the hero's voice.
         /// </summary>
-        public string? Voice { get; set; }
+        public VoiceChoice? Voice { get; set; }
 
         /// <summary>
         /// The models the hero stands on in the loadout screen, and the particles items only play there.
@@ -337,6 +343,16 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                         break;
 
+                    case "particle_create" when options.ItemParticles && !modifier.LoadoutOnly:
+                        var effect = new CreatedEffect(item, modifier);
+
+                        if (IsParticlePath(modifier.Modifier) && IsEffectEnabled(loadout, options, effect))
+                        {
+                            Enqueue(effect.Particle);
+                        }
+
+                        break;
+
                     case "particle_create" or "particle_snapshot" when options.ItemParticles && IsAssetPath(modifier.Modifier):
                         Enqueue(modifier.Modifier);
                         break;
@@ -422,9 +438,9 @@ namespace GUI.Types.Exporter.CharacterAssets
             foreach (var item in loadout.Items)
             {
                 var createdParticles = options.ItemParticles && !item.Item.IsDefault
-                    ? item.Modifiers
-                        .Where(static modifier => modifier is { Type: "particle_create", LoadoutOnly: false } && IsAssetPath(modifier.Modifier))
-                        .Select(static modifier => NormalizePath(modifier.Modifier!))
+                    ? loadout.CreatedEffects
+                        .Where(effect => effect.Item == item && IsEffectEnabled(loadout, options, effect))
+                        .Select(static effect => effect.Particle)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList()
                     : [];
@@ -685,6 +701,9 @@ namespace GUI.Types.Exporter.CharacterAssets
             return particles;
         }
 
+        private static bool IsEffectEnabled(CharacterLoadout loadout, CharacterExportOptions options, CreatedEffect effect)
+            => options.ItemEffects.TryGetValue(effect.Particle, out var enabled) ? enabled : loadout.IsShown(effect);
+
         private static bool IsEconParticle(string path) => path.StartsWith("particles/econ/", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
@@ -776,9 +795,9 @@ namespace GUI.Types.Exporter.CharacterAssets
                 Replace(target, source)?.Details.Add($"{target} <- {source}");
             }
 
-            if (options.Voice is { } criteria)
+            if (options.Voice is { Criteria: { } criteria } voice)
             {
-                var mapping = HeroResponseRules.Load(package, hero)?.MapVoice(criteria);
+                var mapping = HeroResponseRules.Load(package, hero)?.MapVoice(criteria, hero.ChatWheel, voice.ChatWheelSwaps);
 
                 if (mapping == null || mapping.Lines.Count == 0)
                 {
@@ -786,8 +805,10 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
                 else
                 {
+                    var chatWheelSounds = hero.ChatWheel.Where(static line => !line.Persona).Select(static line => line.Sound).ToHashSet(StringComparer.OrdinalIgnoreCase);
                     SoundEventEdit? voiceEdit = null;
                     var replaced = 0;
+                    var chatWheelReplaced = 0;
 
                     foreach (var (line, voiceLine) in mapping.Lines)
                     {
@@ -795,10 +816,16 @@ namespace GUI.Types.Exporter.CharacterAssets
                         {
                             voiceEdit = edit;
                             replaced++;
+
+                            if (chatWheelSounds.Contains(line))
+                            {
+                                chatWheelReplaced++;
+                            }
                         }
                     }
 
-                    voiceEdit?.Details.Add($"{replaced} of the hero's {mapping.HeroLines} voice lines <- the {criteria} voice");
+                    voiceEdit?.Details.Add($"{replaced} of the hero's {mapping.HeroLines} voice lines <- the {criteria} voice, " +
+                        $"{chatWheelReplaced} of the {chatWheelSounds.Count} chat wheel lines as the voice swaps them");
                 }
             }
 

@@ -30,6 +30,15 @@ namespace GUI.Types.Exporter.CharacterAssets
     }
 
     /// <summary>
+    /// A particle an equipped item creates on the hero or on its own model, like an ambient effect.
+    /// </summary>
+    sealed record CreatedEffect(EquippedItem Item, AssetModifier Modifier)
+    {
+        /// <summary>The particle, as a package source path.</summary>
+        public string Particle => CharacterLoadout.NormalizePath(Modifier.Modifier!);
+    }
+
+    /// <summary>
     /// A hero with the items it wears, and what that makes it look like: which model the hero ends up with, and which
     /// model each item shows once other items have swapped it.
     /// </summary>
@@ -133,6 +142,36 @@ namespace GUI.Types.Exporter.CharacterAssets
             .Select(static modifier => modifier.Value ?? 0)
             .DefaultIfEmpty(0)
             .Max();
+
+        /// <summary>
+        /// The particles the equipped items create in game, leaving out the ones only shown in the loadout screen.
+        /// </summary>
+        public IEnumerable<CreatedEffect> CreatedEffects => Items
+            .SelectMany(static item => item.Modifiers
+                .Where(static modifier => modifier is { Type: "particle_create", LoadoutOnly: false, Modifier: { } particle }
+                    && particle.EndsWith(".vpcf", StringComparison.OrdinalIgnoreCase))
+                .Select(modifier => new CreatedEffect(item, modifier)))
+            .DistinctBy(static effect => (effect.Item, effect.Particle));
+
+        /// <summary>
+        /// Whether the game shows an effect with the equipped items. Items made to go with an arcana come with a version
+        /// of the effect for each arcana level, and the one for the closest level at or below the equipped one shows,
+        /// e.g. an arm's glow for arcana level 1 also shows at level 2 when there is none made for it.
+        /// </summary>
+        public bool IsShown(CreatedEffect effect)
+        {
+            if (effect.Modifier.RequiredArcanaLevel is not { } required)
+            {
+                return true;
+            }
+
+            var arcanaLevel = ArcanaLevel;
+            var shownLevel = effect.Item.Modifiers
+                .Where(modifier => modifier.Type == effect.Modifier.Type && modifier.RequiredArcanaLevel <= arcanaLevel)
+                .Max(static modifier => modifier.RequiredArcanaLevel);
+
+            return required == shownLevel;
+        }
 
         /// <summary>
         /// The body group choices the equipped items set on a model, by body group name. The arcana body group is

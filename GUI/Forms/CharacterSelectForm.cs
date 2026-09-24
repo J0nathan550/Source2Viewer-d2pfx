@@ -40,6 +40,8 @@ namespace GUI.Forms
         private readonly HashSet<IconSlot> pickedIcons = [];
         private readonly List<(SoundSlot Slot, ComboBox ComboBox)> soundRows = [];
         private readonly HashSet<SoundSlot> pickedSounds = [];
+        private readonly List<(CreatedEffect Effect, CheckBox CheckBox)> effectRows = [];
+        private readonly Dictionary<string, bool> pickedEffects = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Image?> thumbnails = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string>? soundEventFiles;
 #pragma warning disable CA2213 // Disposed with the sounds table it is added to
@@ -47,6 +49,7 @@ namespace GUI.Forms
 #pragma warning restore CA2213
         private bool pickedVoice;
         private bool updatingSounds;
+        private bool updatingEffects;
         private GLCharacterPreviewViewer? previewViewer;
         private int heroIndex = -1;
         private bool updatingSelection;
@@ -70,6 +73,7 @@ namespace GUI.Forms
             HeroModel = heroModelCheckBox.Checked,
             ItemModels = itemModelsCheckBox.Checked,
             ItemParticles = itemParticlesCheckBox.Checked,
+            ItemEffects = GetItemEffects(),
             HeroParticles = heroParticlesCheckBox.Checked,
             ItemSounds = itemSoundsCheckBox.Checked,
             HeroSounds = heroSoundsCheckBox.Checked,
@@ -79,7 +83,7 @@ namespace GUI.Forms
             IconReplacements = GetIconReplacements(),
             Sounds = soundsCheckBox.Checked,
             SoundReplacements = GetSoundReplacements(),
-            Voice = (voiceComboBox?.SelectedItem as VoiceChoice)?.Criteria,
+            Voice = voiceComboBox?.SelectedItem is VoiceChoice { Criteria: not null } voice ? voice : null,
             Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
@@ -357,6 +361,7 @@ namespace GUI.Forms
                 BuildItemSets(hero);
                 BuildIconRows(hero);
                 BuildSoundRows(hero);
+                pickedEffects.Clear();
                 ResetLoadout(persona: false);
             }
             finally
@@ -1024,6 +1029,122 @@ namespace GUI.Forms
             pedestalCheckBox.Enabled = loadout.Pedestals.Any();
             UpdateIconChoices(loadout);
             UpdateSoundChoices(loadout);
+            BuildEffectRows(loadout);
+        }
+
+        /// <summary>
+        /// Lists the effects the equipped items create, by item, ticked when the game shows them with the equipped items
+        /// unless they were ticked or unticked by hand. What default items create is left out, the game shows it anyway.
+        /// </summary>
+        private void BuildEffectRows(CharacterLoadout loadout)
+        {
+            effectsTable.SuspendLayout();
+
+            foreach (var control in effectsTable.Controls.Cast<Control>().ToList())
+            {
+                control.Dispose();
+            }
+
+            effectsTable.Controls.Clear();
+            effectsTable.RowStyles.Clear();
+            effectsTable.RowCount = 0;
+            effectRows.Clear();
+
+            void AddRow(Control control)
+            {
+                var row = effectsTable.RowCount++;
+                effectsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                effectsTable.Controls.Add(control, 0, row);
+            }
+
+            var effects = loadout.CreatedEffects.Where(static effect => !effect.Item.Item.IsDefault).ToList();
+
+            if (effects.Count == 0)
+            {
+                AddRow(new Label
+                {
+                    AutoSize = true,
+                    Text = "No equipped item creates effects.",
+                    Margin = new Padding(3, 8, 3, 3),
+                });
+            }
+
+            updatingEffects = true;
+
+            try
+            {
+                EquippedItem? item = null;
+
+                foreach (var effect in effects)
+                {
+                    if (effect.Item != item)
+                    {
+                        item = effect.Item;
+
+                        AddRow(new Label
+                        {
+                            AutoSize = true,
+                            Text = item.StyleName is { } styleName ? $"{item.Item.Name} ({styleName})" : item.Item.Name,
+                            Font = groupFont ??= new Font(Font, FontStyle.Bold),
+                            Margin = new Padding(3, 8, 3, 3),
+                        });
+                    }
+
+                    var shown = loadout.IsShown(effect);
+                    var required = effect.Modifier.RequiredArcanaLevel switch
+                    {
+                        null => string.Empty,
+                        0 => " (without an arcana)",
+                        var level => $" (arcana level {level})",
+                    };
+
+                    var checkBox = new CheckBox
+                    {
+                        AutoSize = true,
+                        Text = Path.GetFileNameWithoutExtension(effect.Particle) + required,
+                        Checked = pickedEffects.TryGetValue(effect.Particle, out var picked) ? picked : shown,
+                        Margin = new Padding(12, 2, 3, 2),
+                        Tag = effect,
+                    };
+
+                    toolTip.SetToolTip(checkBox, shown
+                        ? effect.Particle
+                        : $"{effect.Particle}\nThe game does not show it with the equipped items, it is made for another arcana level");
+
+                    checkBox.CheckedChanged += EffectCheckBox_CheckedChanged;
+
+                    AddRow(checkBox);
+                    effectRows.Add((effect, checkBox));
+                }
+            }
+            finally
+            {
+                updatingEffects = false;
+            }
+
+            Themer.ThemeControl(effectsTable);
+            effectsTable.ResumeLayout(true);
+        }
+
+        private void EffectCheckBox_CheckedChanged(object? sender, EventArgs e)
+        {
+            if (!updatingEffects && sender is CheckBox { Tag: CreatedEffect effect } checkBox)
+            {
+                pickedEffects[effect.Particle] = checkBox.Checked;
+            }
+        }
+
+        private Dictionary<string, bool> GetItemEffects()
+        {
+            var effects = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+            // An effect two items create is exported when either of them has it ticked
+            foreach (var (effect, checkBox) in effectRows)
+            {
+                effects[effect.Particle] = checkBox.Checked || effects.GetValueOrDefault(effect.Particle);
+            }
+
+            return effects;
         }
 
         /// <summary>

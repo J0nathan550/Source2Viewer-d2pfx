@@ -66,6 +66,9 @@ namespace GUI.Forms
             soundsTabPage = new ThemedTabPage();
             soundsPanel = new System.Windows.Forms.Panel();
             soundsTable = new System.Windows.Forms.TableLayoutPanel();
+            effectsTabPage = new ThemedTabPage();
+            effectsPanel = new System.Windows.Forms.Panel();
+            effectsTable = new System.Windows.Forms.TableLayoutPanel();
             includeGroupBox = new ThemedGroupBox();
             includeTable = new System.Windows.Forms.TableLayoutPanel();
             heroModelCheckBox = new System.Windows.Forms.CheckBox();
@@ -109,6 +112,8 @@ namespace GUI.Forms
             iconsPanel.SuspendLayout();
             soundsTabPage.SuspendLayout();
             soundsPanel.SuspendLayout();
+            effectsTabPage.SuspendLayout();
+            effectsPanel.SuspendLayout();
             includeGroupBox.SuspendLayout();
             includeTable.SuspendLayout();
             outputGroupBox.SuspendLayout();
@@ -276,6 +281,7 @@ namespace GUI.Forms
             loadoutTabControl.Controls.Add(itemsTabPage);
             loadoutTabControl.Controls.Add(iconsTabPage);
             loadoutTabControl.Controls.Add(soundsTabPage);
+            loadoutTabControl.Controls.Add(effectsTabPage);
             loadoutTabControl.Dock = System.Windows.Forms.DockStyle.Fill;
             loadoutTabControl.DrawMode = System.Windows.Forms.TabDrawMode.OwnerDrawFixed;
             loadoutTabControl.Location = new System.Drawing.Point(3, 145);
@@ -389,6 +395,38 @@ namespace GUI.Forms
             soundsTable.RowCount = 0;
             soundsTable.Size = new System.Drawing.Size(460, 0);
             soundsTable.TabIndex = 0;
+            //
+            // effectsTabPage
+            //
+            effectsTabPage.Controls.Add(effectsPanel);
+            effectsTabPage.Location = new System.Drawing.Point(4, 36);
+            effectsTabPage.Name = "effectsTabPage";
+            effectsTabPage.Size = new System.Drawing.Size(460, 290);
+            effectsTabPage.TabIndex = 3;
+            effectsTabPage.Text = "Effects";
+            //
+            // effectsPanel
+            //
+            effectsPanel.AutoScroll = true;
+            effectsPanel.Controls.Add(effectsTable);
+            effectsPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            effectsPanel.Location = new System.Drawing.Point(0, 0);
+            effectsPanel.Name = "effectsPanel";
+            effectsPanel.Size = new System.Drawing.Size(460, 290);
+            effectsPanel.TabIndex = 0;
+            //
+            // effectsTable
+            //
+            effectsTable.AutoSize = true;
+            effectsTable.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            effectsTable.ColumnCount = 1;
+            effectsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            effectsTable.Dock = System.Windows.Forms.DockStyle.Top;
+            effectsTable.Location = new System.Drawing.Point(0, 0);
+            effectsTable.Name = "effectsTable";
+            effectsTable.RowCount = 0;
+            effectsTable.Size = new System.Drawing.Size(460, 0);
+            effectsTable.TabIndex = 0;
             //
             // includeGroupBox
             //
@@ -726,6 +764,9 @@ namespace GUI.Forms
             soundsTabPage.ResumeLayout(false);
             soundsPanel.ResumeLayout(false);
             soundsPanel.PerformLayout();
+            effectsTabPage.ResumeLayout(false);
+            effectsPanel.ResumeLayout(false);
+            effectsPanel.PerformLayout();
             includeGroupBox.ResumeLayout(false);
             includeGroupBox.PerformLayout();
             includeTable.ResumeLayout(false);
@@ -761,6 +802,9 @@ namespace GUI.Forms
         private ThemedTabPage soundsTabPage;
         private System.Windows.Forms.Panel soundsPanel;
         private System.Windows.Forms.TableLayoutPanel soundsTable;
+        private ThemedTabPage effectsTabPage;
+        private System.Windows.Forms.Panel effectsPanel;
+        private System.Windows.Forms.TableLayoutPanel effectsTable;
         private ThemedGroupBox includeGroupBox;
         private System.Windows.Forms.TableLayoutPanel includeTable;
         private System.Windows.Forms.CheckBox heroModelCheckBox;
