@@ -209,7 +209,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                 var plan = new CharacterDependencyCollector(package, fileLoader, progress).Collect(loadout, options, cancellationToken);
 
-                progress.Report($"Found {plan.Models.Count} models, {plan.Resources.Count} particles and sound events, {plan.RawFiles.Count} other files and {plan.IconReplacements.Count} icons");
+                progress.Report($"Found {plan.Models.Count} models, {plan.Materials.Count} materials, {plan.Resources.Count} particles and sound events, {plan.RawFiles.Count} other files and {plan.IconReplacements.Count} icons");
 
                 foreach (var missing in plan.Missing)
                 {
@@ -220,6 +220,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var failed = 0;
 
                 failed += ExportModels(plan.Models, vpkPath, contentRoot, fileLoader, progress, cancellationToken);
+                failed += ExportMaterials(plan.Materials, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportRawFiles(plan.RawFiles, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ApplyReplacements(plan, contentRoot, fileLoader, progress);
@@ -318,13 +319,22 @@ namespace GUI.Types.Exporter.CharacterAssets
             progress.Report("Replacing the hero's default assets...");
 
             var failed = 0;
+            var renamed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var replacement in plan.ModelReplacements)
             {
                 try
                 {
                     var details = new List<string>();
-                    var vmdl = ReadModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, progress, details);
+
+                    if (replacement.Rename && !CharacterLoadout.IsSamePath(replacement.Source, replacement.Target))
+                    {
+                        details.Add("renamed");
+                    }
+
+                    var vmdl = replacement.Rename
+                        ? ReadRenamedModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, progress, details)
+                        : ReadModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, plan.StyleMaterialRemaps.GetValueOrDefault(replacement.Source), progress, details);
 
                     if (replacement.ActivityModifiers.Count > 0)
                     {
@@ -342,7 +352,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     {
                         try
                         {
-                            var mergedVmdl = ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, progress, details: null);
+                            var mergedVmdl = ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, plan.StyleMaterialRemaps.GetValueOrDefault(merged.Model), progress, details: null);
 
                             vmdl = ModelDocEditor.MergeModel(vmdl, mergedVmdl, Path.GetFileNameWithoutExtension(merged.Model));
                             details.Add($"with the meshes of {merged.Model}");
@@ -378,6 +388,11 @@ namespace GUI.Types.Exporter.CharacterAssets
                     Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
                     File.WriteAllText(targetPath, vmdl);
 
+                    if (replacement.Rename && !CharacterLoadout.IsSamePath(replacement.Source, replacement.Target))
+                    {
+                        renamed.Add(replacement.Source);
+                    }
+
                     progress.Report($"  {replacement.Target} <- {replacement.Source}{(details.Count > 0 ? $" ({string.Join(", ", details)})" : string.Empty)}");
                 }
                 catch (Exception e)
@@ -385,6 +400,20 @@ namespace GUI.Types.Exporter.CharacterAssets
                     failed++;
                     progress.Report($"  FAILED {replacement.Target} <- {replacement.Source}: {e.Message}");
                     Log.Error(nameof(CharacterAssetsExporter), $"Failed to replace '{replacement.Target}': {e}");
+                }
+            }
+
+            // Only once every replacement is written, another one may have been made from the same model
+            foreach (var source in renamed.Except(plan.ModelReplacements.Select(static replacement => replacement.Target), StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    File.Delete(GetExportedPath(outputRoot, source, "vmdl"));
+                    progress.Report($"  - removed {source}, it was renamed");
+                }
+                catch (Exception e)
+                {
+                    progress.Report($"  ! {source} was not removed after being renamed: {e.Message}");
                 }
             }
 
@@ -465,7 +494,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>
         /// Reads an exported model, with the skin and body group choices the loadout shows it with made its defaults.
         /// </summary>
-        private static string ReadModel(string outputRoot, string model, int skin, Dictionary<string, int> bodyGroups, IProgress<string> progress, List<string>? details)
+        private static string ReadModel(string outputRoot, string model, int skin, Dictionary<string, int> bodyGroups,
+            IReadOnlyDictionary<string, string>? materialRemaps, IProgress<string> progress, List<string>? details)
         {
             var vmdl = File.ReadAllText(GetExportedPath(outputRoot, model, "vmdl"));
 
@@ -494,6 +524,56 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
             }
 
+            if (materialRemaps is { Count: > 0 })
+            {
+                try
+                {
+                    vmdl = ModelDocEditor.AddDefaultMaterialRemaps(vmdl, materialRemaps);
+                    details?.Add($"shown with the style's materials ({string.Join(", ", materialRemaps.Values.Select(Path.GetFileNameWithoutExtension))})");
+                }
+                catch (Exception e)
+                {
+                    progress.Report($"  ! {model}: the style's materials were not applied: {e.Message}");
+                }
+            }
+
+            return vmdl;
+        }
+
+        /// <summary>
+        /// Reads an exported model to be renamed over another, with the skin the loadout shows it with made its default
+        /// and only the body group choices the loadout picks enabled, see <see cref="CharacterExportOptions.RenameModels"/>.
+        /// </summary>
+        private static string ReadRenamedModel(string outputRoot, string model, int skin, Dictionary<string, int> bodyGroups,
+            IProgress<string> progress, List<string> details)
+        {
+            var vmdl = File.ReadAllText(GetExportedPath(outputRoot, model, "vmdl"));
+
+            if (skin != 0)
+            {
+                try
+                {
+                    vmdl = ModelDocEditor.MakeMaterialGroupDefault(vmdl, skin);
+                    details.Add($"skin {skin} as default");
+                }
+                catch (Exception e)
+                {
+                    progress.Report($"  ! {model}: skin {skin} was not made the default: {e.Message}");
+                }
+            }
+
+            if (bodyGroups.Count > 0)
+            {
+                try
+                {
+                    vmdl = ModelDocEditor.DisableBodyGroupChoices(vmdl, bodyGroups, details);
+                }
+                catch (Exception e)
+                {
+                    progress.Report($"  ! {model}: body group choices were not disabled: {e.Message}");
+                }
+            }
+
             return vmdl;
         }
 
@@ -502,6 +582,50 @@ namespace GUI.Types.Exporter.CharacterAssets
             var path = GetOutputPath(outputRoot, Path.ChangeExtension(sourcePath, extension));
 
             return File.Exists(path) ? path : throw new FileNotFoundException($"\"{Path.ChangeExtension(sourcePath, extension)}\" was not exported");
+        }
+
+        /// <summary>
+        /// Decompiles the materials with their textures, so the addon compiles its own copies rather than using the
+        /// game's, which some item materials render semi-transparent with.
+        /// </summary>
+        private static int ExportMaterials(List<string> materials, string outputRoot, GameFileLoader fileLoader,
+            IProgress<string> progress, HashSet<string> writtenFiles, CancellationToken cancellationToken)
+        {
+            if (materials.Count == 0)
+            {
+                return 0;
+            }
+
+            progress.Report($"Exporting {materials.Count} materials with the custom VMAT exporter...");
+
+            var failed = 0;
+
+            foreach (var material in materials)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    using var resource = fileLoader.LoadFile(material) ?? throw new FileNotFoundException("Could not be read");
+
+                    var vmatPath = GetOutputPath(outputRoot, Path.ChangeExtension(StripCompiledSuffix(material), "vmat"));
+                    progress.Report($"  {material}");
+
+                    CustomVmatExporter.ExportMaterial(resource, vmatPath, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED {material}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to export '{material}': {e}");
+                }
+            }
+
+            return failed;
         }
 
         private static int ExportResources(List<string> resources, string outputRoot, GameFileLoader fileLoader,

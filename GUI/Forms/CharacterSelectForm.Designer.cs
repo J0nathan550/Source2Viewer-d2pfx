@@ -85,6 +85,9 @@ namespace GUI.Forms
             pedestalCheckBox = new System.Windows.Forms.CheckBox();
             replaceDefaultsCheckBox = new System.Windows.Forms.CheckBox();
             replaceSharedParticlesCheckBox = new System.Windows.Forms.CheckBox();
+            materialsCheckBox = new System.Windows.Forms.CheckBox();
+            mergeWearablesCheckBox = new System.Windows.Forms.CheckBox();
+            renameModelsCheckBox = new System.Windows.Forms.CheckBox();
             outputGroupBox = new ThemedGroupBox();
             outputTable = new System.Windows.Forms.TableLayoutPanel();
             contentFolderLabel = new System.Windows.Forms.Label();
@@ -478,16 +481,23 @@ namespace GUI.Forms
             includeTable.Controls.Add(replaceDefaultsCheckBox, 0, 4);
             includeTable.SetColumnSpan(replaceDefaultsCheckBox, 2);
             includeTable.Controls.Add(replaceSharedParticlesCheckBox, 2, 4);
+            includeTable.Controls.Add(materialsCheckBox, 0, 5);
+            includeTable.SetColumnSpan(materialsCheckBox, 2);
+            includeTable.Controls.Add(mergeWearablesCheckBox, 2, 5);
+            includeTable.Controls.Add(renameModelsCheckBox, 0, 6);
+            includeTable.SetColumnSpan(renameModelsCheckBox, 3);
             includeTable.Dock = System.Windows.Forms.DockStyle.Top;
             includeTable.Location = new System.Drawing.Point(3, 21);
             includeTable.Name = "includeTable";
-            includeTable.RowCount = 5;
+            includeTable.RowCount = 7;
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            includeTable.Size = new System.Drawing.Size(422, 116);
+            includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            includeTable.Size = new System.Drawing.Size(422, 139);
             includeTable.TabIndex = 0;
             //
             // heroModelCheckBox
@@ -612,6 +622,36 @@ namespace GUI.Forms
             replaceSharedParticlesCheckBox.TabIndex = 10;
             replaceSharedParticlesCheckBox.Text = "Also shared particles";
             replaceSharedParticlesCheckBox.UseVisualStyleBackColor = true;
+            //
+            // materialsCheckBox
+            //
+            materialsCheckBox.AutoSize = true;
+            materialsCheckBox.Checked = true;
+            materialsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            materialsCheckBox.Name = "materialsCheckBox";
+            materialsCheckBox.TabIndex = 13;
+            materialsCheckBox.Text = "Materials and textures";
+            materialsCheckBox.UseVisualStyleBackColor = true;
+            //
+            // mergeWearablesCheckBox
+            //
+            mergeWearablesCheckBox.AutoSize = true;
+            mergeWearablesCheckBox.Checked = true;
+            mergeWearablesCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            mergeWearablesCheckBox.Name = "mergeWearablesCheckBox";
+            mergeWearablesCheckBox.TabIndex = 14;
+            mergeWearablesCheckBox.Text = "Extra meshes";
+            mergeWearablesCheckBox.UseVisualStyleBackColor = true;
+            //
+            // renameModelsCheckBox
+            //
+            renameModelsCheckBox.AutoSize = true;
+            renameModelsCheckBox.Checked = true;
+            renameModelsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            renameModelsCheckBox.Name = "renameModelsCheckBox";
+            renameModelsCheckBox.TabIndex = 15;
+            renameModelsCheckBox.Text = "Rename models over the defaults, disabling unused styles";
+            renameModelsCheckBox.UseVisualStyleBackColor = true;
             //
             // outputGroupBox
             //
@@ -836,6 +876,9 @@ namespace GUI.Forms
         private System.Windows.Forms.CheckBox pedestalCheckBox;
         private System.Windows.Forms.CheckBox replaceDefaultsCheckBox;
         private System.Windows.Forms.CheckBox replaceSharedParticlesCheckBox;
+        private System.Windows.Forms.CheckBox materialsCheckBox;
+        private System.Windows.Forms.CheckBox mergeWearablesCheckBox;
+        private System.Windows.Forms.CheckBox renameModelsCheckBox;
         private ThemedGroupBox outputGroupBox;
         private System.Windows.Forms.TableLayoutPanel outputTable;
         private System.Windows.Forms.Label contentFolderLabel;

@@ -47,6 +47,7 @@ namespace GUI.Forms
         private readonly HashSet<SoundSlot> pickedSounds = [];
         private readonly List<(CreatedEffect Effect, CheckBox CheckBox)> effectRows = [];
         private readonly Dictionary<string, bool> pickedEffects = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, bool> loadoutStagedEffects = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<EconItem, UnusualEffect> pickedUnusuals = [];
         private readonly Dictionary<string, Image?> thumbnails = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string>? soundEventFiles;
@@ -78,6 +79,8 @@ namespace GUI.Forms
         {
             HeroModel = heroModelCheckBox.Checked,
             ItemModels = itemModelsCheckBox.Checked,
+            Materials = materialsCheckBox.Checked,
+            MergeAdditionalWearables = mergeWearablesCheckBox.Checked,
             ItemParticles = itemParticlesCheckBox.Checked,
             ItemEffects = GetItemEffects(),
             HeroParticles = heroParticlesCheckBox.Checked,
@@ -93,6 +96,7 @@ namespace GUI.Forms
             Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
+            RenameModels = renameModelsCheckBox.Checked,
         };
 
         public CharacterSelectForm(ItemsGameCatalog catalog, VrfGuiContext guiContext, Package package)
@@ -121,7 +125,17 @@ namespace GUI.Forms
                 "Write the chosen look over the hero's default assets, so it shows without the items being equipped:\n" +
                 "the arcana or persona model as the hero's model, chosen items over the default items' models,\n" +
                 "particles the items swap in over the ones they replace, and particles items create added to their models");
+            toolTip.SetToolTip(materialsCheckBox,
+                "Decompile the materials the exported models use, with their textures, so the addon compiles its own copies.\n" +
+                "Some item materials, e.g. of arcanas, render semi-transparent in game when the addon uses the game's own.");
+            toolTip.SetToolTip(mergeWearablesCheckBox, "When replacing default assets, add the meshes of the extra models items wear, e.g. an arcana's frost overlay,\n" +
+                "to the hero's model. They are exported as models of their own either way.");
             toolTip.SetToolTip(replaceSharedParticlesCheckBox, "Also replace particles every hero uses, like the blink dagger, stun and status effects");
+            toolTip.SetToolTip(renameModelsCheckBox,
+                "When replacing default assets, move each item's exported model over the default model it replaces,\n" +
+                "like renaming drow_arcana_weapon to drow_weapon. Body group choices of styles not picked are disabled, not removed,\n" +
+                "so they can be turned back on in ModelDoc, and the _dummy choices are removed. The style's skin becomes the default one.\n" +
+                "No extra meshes are merged. Particles items create and activity modifiers are still added.");
 
             if (lastOptions != null)
             {
@@ -134,6 +148,7 @@ namespace GUI.Forms
                 "not everything particles do is supported.");
 
             replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
+            renameModelsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
 
             // The game folder goes first, so one chosen by hand is not replaced by the one that goes with the content folder
             gameFolderTextBox.Text = Settings.Config.CharacterExportGameDir;
@@ -184,6 +199,8 @@ namespace GUI.Forms
         {
             heroModelCheckBox.Checked = options.HeroModel;
             itemModelsCheckBox.Checked = options.ItemModels;
+            materialsCheckBox.Checked = options.Materials;
+            mergeWearablesCheckBox.Checked = options.MergeAdditionalWearables;
             itemParticlesCheckBox.Checked = options.ItemParticles;
             heroParticlesCheckBox.Checked = options.HeroParticles;
             itemSoundsCheckBox.Checked = options.ItemSounds;
@@ -195,11 +212,13 @@ namespace GUI.Forms
             pedestalCheckBox.Checked = options.Pedestal;
             replaceDefaultsCheckBox.Checked = options.ReplaceDefaults;
             replaceSharedParticlesCheckBox.Checked = options.ReplaceSharedParticles;
+            renameModelsCheckBox.Checked = options.RenameModels;
         }
 
         private void ReplaceDefaultsCheckBox_CheckedChanged(object? sender, EventArgs e)
         {
             replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
+            renameModelsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
         }
 
         protected override void OnLoad(EventArgs e)
@@ -1231,7 +1250,8 @@ namespace GUI.Forms
 
         private CheckBox CreateEffectCheckBox(CharacterLoadout loadout, CreatedEffect effect)
         {
-            var shown = loadout.IsShown(effect);
+            var stagedForLoadout = IsStagedForLoadout(effect.Particle);
+            var shown = loadout.IsShown(effect) && !stagedForLoadout;
             var required = effect.Modifier.RequiredArcanaLevel switch
             {
                 null => string.Empty,
@@ -1250,12 +1270,36 @@ namespace GUI.Forms
 
             toolTip.SetToolTip(checkBox, shown
                 ? effect.Particle
-                : $"{effect.Particle}\nThe game does not show it with the equipped items, it is made for another arcana level");
+                : stagedForLoadout
+                    ? $"{effect.Particle}\nIt is set up for the loadout screen at the world origin and left out by default. Ticked, it is exported to follow the model"
+                    : $"{effect.Particle}\nThe game does not show it with the equipped items, it is made for another arcana level");
 
             checkBox.CheckedChanged += EffectCheckBox_CheckedChanged;
             effectRows.Add((effect, checkBox));
 
             return checkBox;
+        }
+
+        /// <summary>
+        /// See <see cref="ModelDocEditor.IsStagedForLoadout"/>.
+        /// </summary>
+        private bool IsStagedForLoadout(string particle)
+        {
+            if (!loadoutStagedEffects.TryGetValue(particle, out var stagedForLoadout))
+            {
+                try
+                {
+                    stagedForLoadout = ModelDocEditor.IsStagedForLoadout(guiContext.FileLoaderNoCache, particle);
+                }
+                catch (Exception e)
+                {
+                    Log.Error(nameof(CharacterSelectForm), $"Failed to read '{particle}': {e.Message}");
+                }
+
+                loadoutStagedEffects[particle] = stagedForLoadout;
+            }
+
+            return stagedForLoadout;
         }
 
         private void EffectCheckBox_CheckedChanged(object? sender, EventArgs e)

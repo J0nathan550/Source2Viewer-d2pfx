@@ -22,6 +22,18 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Models the selected items wear or swap in.</summary>
         public bool ItemModels { get; set; } = true;
 
+        /// <summary>
+        /// The materials the exported models use, with their textures, so the addon compiles its own copies. Some item
+        /// materials, e.g. of arcanas, render semi-transparent in game when the addon uses the game's compiled ones.
+        /// </summary>
+        public bool Materials { get; set; } = true;
+
+        /// <summary>
+        /// Adds the meshes of the models items wear besides their own, e.g. an arcana's frost overlay, to the hero's model
+        /// when the default assets are replaced. They are exported as models of their own either way.
+        /// </summary>
+        public bool MergeAdditionalWearables { get; set; } = true;
+
         /// <summary>Particles the selected items create or swap in.</summary>
         public bool ItemParticles { get; set; } = true;
 
@@ -90,6 +102,15 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// Also replaces particles every hero uses, like the blink dagger or stun effects, which then change for all heroes.
         /// </summary>
         public bool ReplaceSharedParticles { get; set; }
+
+        /// <summary>
+        /// With <see cref="ReplaceDefaults"/>, moves each model over the default one it replaces as it was exported,
+        /// like renaming drow_arcana_weapon to drow_weapon by hand. Body group choices the items pick are kept enabled
+        /// and the others are disabled rather than removed, see <see cref="ModelDocEditor.DisableBodyGroupChoices"/>.
+        /// The picked style's skin is made the default material group, extra wearables are not merged, and the
+        /// particles items create and the activity modifiers are still added.
+        /// </summary>
+        public bool RenameModels { get; set; } = true;
     }
 
     /// <summary>
@@ -109,6 +130,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>The activity modifiers to apply, since nothing sets them without the items equipped.</summary>
         public List<ActivityModifier> ActivityModifiers { get; init; } = [];
+
+        /// <summary>Whether the source model is moved rather than copied, see <see cref="CharacterExportOptions.RenameModels"/>.</summary>
+        public bool Rename { get; init; }
     }
 
     /// <summary>
@@ -130,6 +154,9 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Models, decompiled with the custom model extractor, which also writes their meshes, animations and physics.</summary>
         public List<string> Models { get; } = [];
 
+        /// <summary>Materials the models use, decompiled with the custom material exporter, which also writes their textures.</summary>
+        public List<string> Materials { get; } = [];
+
         /// <summary>Everything else that is compiled, decompiled with the built-in decompiler.</summary>
         public List<string> Resources { get; } = [];
 
@@ -138,6 +165,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>Models written over the default ones once everything is exported.</summary>
         public List<ModelReplacement> ModelReplacements { get; } = [];
+
+        /// <summary>
+        /// The materials to swap for the picked arcana style's versions of them, by the source model they are made for,
+        /// see <see cref="ModelDocEditor.SelectBodyGroupChoices"/>.
+        /// </summary>
+        public Dictionary<string, Dictionary<string, string>> StyleMaterialRemaps { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Particles written over the default ones once everything is exported.</summary>
         public List<ParticleReplacement> ParticleReplacements { get; } = [];
@@ -178,6 +211,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         private readonly Queue<(string Path, bool IncludeSounds)> queue = new();
         private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, string>> styleMaterialRemaps = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, (string File, KVObject Data)>? soundEvents;
 
         public CharacterDependencyCollector(Package package, GameFileLoader fileLoader, IProgress<string>? progress)
@@ -244,7 +278,87 @@ namespace GUI.Types.Exporter.CharacterAssets
                 Visit(next.Path, next.IncludeSounds, plan);
             }
 
+            if (options.Materials)
+            {
+                AddMaterials(plan, cancellationToken);
+            }
+
+            foreach (var (model, remaps) in styleMaterialRemaps)
+            {
+                plan.StyleMaterialRemaps[model] = remaps;
+            }
+
             return plan;
+        }
+
+        /// <summary>
+        /// Adds the materials the models use, including those of their reference meshes and material groups.
+        /// </summary>
+        private void AddMaterials(CharacterExportPlan plan, CancellationToken cancellationToken)
+        {
+            var materials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddReferences(Resource? resource)
+            {
+                foreach (var reference in resource?.ExternalReferences?.ResourceRefInfoList ?? [])
+                {
+                    if (reference.Name?.EndsWith(".vmat", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        materials.Add(NormalizePath(reference.Name));
+                    }
+                }
+            }
+
+            foreach (var modelPath in plan.Models)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    using var resource = fileLoader.LoadFile(modelPath);
+                    AddReferences(resource);
+
+                    if (resource?.DataBlock is not Model model)
+                    {
+                        continue;
+                    }
+
+                    foreach (var (_, groupMaterials) in model.GetMaterialGroups())
+                    {
+                        foreach (var material in groupMaterials)
+                        {
+                            if (!string.IsNullOrEmpty(material))
+                            {
+                                materials.Add(NormalizePath(material));
+                            }
+                        }
+                    }
+
+                    foreach (var reference in model.GetReferenceMeshNamesAndLoD())
+                    {
+                        using var mesh = fileLoader.LoadFileCompiled(reference.MeshName);
+                        AddReferences(mesh);
+                    }
+                }
+                catch (Exception e)
+                {
+                    progress?.Report($"  ! failed to read the materials of \"{modelPath}\": {e.Message}");
+                }
+            }
+
+            foreach (var material in materials.Order(StringComparer.OrdinalIgnoreCase))
+            {
+                var compiledPath = material + GameFileLoader.CompiledFileSuffix;
+
+                if (Exists(compiledPath))
+                {
+                    plan.Materials.Add(compiledPath);
+                }
+                else
+                {
+                    plan.Missing.Add(material);
+                }
+            }
         }
 
         private void AddHeroRoots(CharacterLoadout loadout, CharacterExportOptions options)
@@ -430,6 +544,10 @@ namespace GUI.Types.Exporter.CharacterAssets
             var replacedParticles = new Dictionary<string, ParticleReplacement>(StringComparer.OrdinalIgnoreCase);
             var usedParticles = GetUsedParticles(loadout, equippedAssets);
             var unitSwaps = options.ItemModels ? loadout.UnitModelSwaps.ToList() : [];
+            var rename = options.RenameModels;
+
+            (int Skin, Dictionary<string, int> BodyGroups) GetLook(string model, int skin)
+                => GetModelLook(loadout, model, skin, styleRemaps: !rename);
 
             if (options.ItemModels)
             {
@@ -457,7 +575,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     // Dresses a unit the hero creates, its own model is only what the loadout screen shows
                     foreach (var (_, unitModel, defaultModel) in itemUnitSwaps)
                     {
-                        var (skin, bodyGroups) = GetModelLook(loadout, unitModel, item.Skin);
+                        var (skin, bodyGroups) = GetLook(unitModel, item.Skin);
 
                         Enqueue(unitModel);
 
@@ -467,6 +585,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                             plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(unitModel), NormalizePath(defaultModel), skin, createdParticles)
                             {
                                 BodyGroups = bodyGroups,
+                                Rename = rename,
                             });
                         }
                     }
@@ -484,7 +603,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                     if (loadout.GetDefaultModel(item.Item.Slot) is { } defaultModel)
                     {
-                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
+                        var (skin, bodyGroups) = GetLook(model, item.Skin);
 
                         // Also covers default items that another item swaps for a refit, or whose parts an arcana hides
                         if (!CharacterLoadout.IsSamePath(model, defaultModel) || skin != 0 || createdParticles.Count > 0 || bodyGroups.Count > 0)
@@ -492,8 +611,13 @@ namespace GUI.Types.Exporter.CharacterAssets
                             plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(model), NormalizePath(defaultModel), skin, createdParticles)
                             {
                                 BodyGroups = bodyGroups,
+                                Rename = rename,
                             });
                         }
+                    }
+                    else if (!item.Item.IsDefault && loadout.IsWornByHero(item.Item.Slot) && rename)
+                    {
+                        plan.Notes.Add($"{NormalizePath(model)} has no default model to be renamed over, it was exported as is");
                     }
                     else if (!item.Item.IsDefault && loadout.IsWornByHero(item.Item.Slot))
                     {
@@ -510,7 +634,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                 if (options.ItemModels)
                 {
-                    AddTransformationReplacements(loadout, item, plan);
+                    AddTransformationReplacements(loadout, item, rename, plan);
                 }
 
                 if (!options.ItemParticles || item.Item.IsDefault)
@@ -568,8 +692,16 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 foreach (var (item, wearable) in loadout.AdditionalWearables.Where(static wearable => !wearable.Item.Item.IsDefault))
                 {
-                    var (skin, bodyGroups) = GetModelLook(loadout, wearable, item.Skin);
-                    merged.Add(new MergedModel(NormalizePath(wearable), skin, bodyGroups));
+                    if (rename)
+                    {
+                        plan.Notes.Add($"{NormalizePath(wearable)} is an extra model items wear and has no default model to be renamed over, it was exported as is");
+                    }
+                    else if (options.MergeAdditionalWearables)
+                    {
+                        var (skin, bodyGroups) = GetModelLook(loadout, wearable, item.Skin);
+                        merged.Add(new MergedModel(NormalizePath(wearable), skin, bodyGroups));
+                    }
+
                     Enqueue(wearable);
                 }
             }
@@ -586,7 +718,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             var heroModel = loadout.HeroModel ?? hero.Model;
-            var (heroSkin, heroBodyGroups) = GetModelLook(loadout, heroModel, loadout.HeroSkin);
+            var (heroSkin, heroBodyGroups) = GetLook(heroModel, loadout.HeroSkin);
             var activityModifiers = loadout.ActivityModifiers;
 
             Enqueue(heroModel);
@@ -603,6 +735,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     BodyGroups = heroBodyGroups,
                     Merged = merged,
                     ActivityModifiers = activityModifiers,
+                    Rename = rename,
                 });
             }
         }
@@ -610,7 +743,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>
         /// Models of forms the hero transforms into, which items can swap like the hero's own.
         /// </summary>
-        private void AddTransformationReplacements(CharacterLoadout loadout, EquippedItem item, CharacterExportPlan plan)
+        private void AddTransformationReplacements(CharacterLoadout loadout, EquippedItem item, bool rename, CharacterExportPlan plan)
         {
             foreach (var modifier in item.Modifiers)
             {
@@ -619,7 +752,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     continue;
                 }
 
-                var (skin, bodyGroups) = GetModelLook(loadout, modifier.Modifier, item.Skin);
+                var (skin, bodyGroups) = GetModelLook(loadout, modifier.Modifier, item.Skin, styleRemaps: !rename);
                 var activityModifiers = loadout.ActivityModifiers;
 
                 if (CharacterLoadout.IsSamePath(modifier.Asset, modifier.Modifier) && skin == 0 && bodyGroups.Count == 0 && activityModifiers.Count == 0)
@@ -631,6 +764,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 {
                     BodyGroups = bodyGroups,
                     ActivityModifiers = activityModifiers,
+                    Rename = rename,
                 });
 
                 Enqueue(modifier.Modifier);
@@ -642,7 +776,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// also applies to models that come without skins, and the body group choices it sets that change what the
         /// model shows, i.e. of body groups the model has and to other choices than the one it shows by default.
         /// </summary>
-        private (int Skin, Dictionary<string, int> BodyGroups) GetModelLook(CharacterLoadout loadout, string model, int skin)
+        /// <param name="styleRemaps">Whether to work out the <see cref="CharacterExportPlan.StyleMaterialRemaps"/> of the model too.</param>
+        private (int Skin, Dictionary<string, int> BodyGroups) GetModelLook(CharacterLoadout loadout, string model, int skin, bool styleRemaps = true)
         {
             var choices = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -669,6 +804,18 @@ namespace GUI.Types.Exporter.CharacterAssets
                         choices[name] = choice;
                     }
                 }
+
+                if (styleRemaps && choices.TryGetValue(CharacterLoadout.ArcanaBodyGroup, out var arcanaChoice)
+                    && bodyGroups.FirstOrDefault(static group => group.Name.Equals(CharacterLoadout.ArcanaBodyGroup, StringComparison.OrdinalIgnoreCase)) is { } arcanaGroup)
+                {
+                    var picked = arcanaGroup.Choices[Math.Min(arcanaChoice, arcanaGroup.Choices.Count - 1)];
+                    var remaps = GetStyleMaterialRemaps(modelData, arcanaGroup.Choices[0].FullName, picked.FullName);
+
+                    if (remaps.Count > 0)
+                    {
+                        styleMaterialRemaps[NormalizePath(model)] = remaps;
+                    }
+                }
             }
             catch (Exception e)
             {
@@ -676,6 +823,85 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return (skin, choices);
+        }
+
+        /// <summary>
+        /// Swaps the materials of an arcana body group's first choice and picked style for the style's versions of them,
+        /// e.g. drow_arcana_cape for drow_arcana_cape_style1. The first choice is the one shown while nothing switches
+        /// the body group, and it is a full mesh of the item made to be shown with the style's materials.
+        /// </summary>
+        private Dictionary<string, string> GetStyleMaterialRemaps(Model model, string defaultMeshGroup, string pickedMeshGroup)
+        {
+            var remaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (defaultMeshGroup == pickedMeshGroup)
+            {
+                return remaps;
+            }
+
+            var styleMaterials = GetMeshGroupMaterials(model, pickedMeshGroup);
+
+            // The style's own meshes can use a plain material too, e.g. a level of detail made before its style version
+            foreach (var material in GetMeshGroupMaterials(model, defaultMeshGroup).Union(styleMaterials))
+            {
+                var name = Path.GetFileNameWithoutExtension(material);
+                var versions = styleMaterials
+                    .Where(style => Path.GetFileNameWithoutExtension(style).StartsWith(name + "_", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                // Materials the style has no version of stay as they are
+                if (versions.Count == 1)
+                {
+                    remaps[material] = versions[0];
+                }
+            }
+
+            return remaps;
+        }
+
+        private HashSet<string> GetMeshGroupMaterials(Model model, string meshGroup)
+        {
+            var materials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string[] groups = [meshGroup];
+
+            void AddMaterials(Mesh mesh)
+            {
+                foreach (var sceneObject in mesh.Data.GetArray("m_sceneObjects") ?? [])
+                {
+                    foreach (var drawCall in sceneObject.GetArray("m_drawCalls") ?? [])
+                    {
+                        if (drawCall.GetStringProperty("m_material") is { Length: > 0 } material)
+                        {
+                            materials.Add(NormalizePath(material));
+                        }
+                    }
+                }
+            }
+
+            foreach (var embedded in model.GetEmbeddedMeshes())
+            {
+                if (model.MeshGroups.IsMeshInAnyGroup(embedded.MeshIndex, groups))
+                {
+                    AddMaterials(embedded.Mesh);
+                }
+            }
+
+            foreach (var reference in model.GetReferenceMeshNamesAndLoD())
+            {
+                if (!model.MeshGroups.IsMeshInAnyGroup(reference.MeshIndex, groups))
+                {
+                    continue;
+                }
+
+                using var resource = fileLoader.LoadFileCompiled(reference.MeshName);
+
+                if (resource?.DataBlock is Mesh mesh)
+                {
+                    AddMaterials(mesh);
+                }
+            }
+
+            return materials;
         }
 
         /// <summary>
@@ -710,8 +936,27 @@ namespace GUI.Types.Exporter.CharacterAssets
             return particles;
         }
 
-        private static bool IsEffectEnabled(CharacterLoadout loadout, CharacterExportOptions options, CreatedEffect effect)
-            => options.ItemEffects.TryGetValue(effect.Particle, out var enabled) ? enabled : loadout.IsShown(effect);
+        /// <summary>
+        /// Whether an effect is exported: as ticked, else when the game shows it with the equipped items, leaving out the
+        /// ones staged for the loadout screen, see <see cref="ModelDocEditor.IsStagedForLoadout"/>.
+        /// </summary>
+        private bool IsEffectEnabled(CharacterLoadout loadout, CharacterExportOptions options, CreatedEffect effect)
+        {
+            if (options.ItemEffects.TryGetValue(effect.Particle, out var enabled))
+            {
+                return enabled;
+            }
+
+            try
+            {
+                return loadout.IsShown(effect) && !ModelDocEditor.IsStagedForLoadout(fileLoader, effect.Particle);
+            }
+            catch (Exception e)
+            {
+                progress?.Report($"  ! failed to read \"{effect.Particle}\": {e.Message}");
+                return loadout.IsShown(effect);
+            }
+        }
 
         private static bool IsEconParticle(string path) => path.StartsWith("particles/econ/", StringComparison.OrdinalIgnoreCase);
 

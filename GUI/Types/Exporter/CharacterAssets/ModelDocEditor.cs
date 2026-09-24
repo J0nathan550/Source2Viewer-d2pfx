@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using ValveKeyValue;
 using ValveResourceFormat.IO;
+using ValveResourceFormat.Particles;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
 
@@ -55,9 +56,84 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// Adds material swaps to the model's default material group, creating the group when the model has none. Swaps
+        /// the group already has for the same material are kept.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="materialRemaps">The material each material is swapped for.</param>
+        public static string AddDefaultMaterialRemaps(string vmdl, IReadOnlyDictionary<string, string> materialRemaps)
+        {
+            if (materialRemaps.Count == 0)
+            {
+                return vmdl;
+            }
+
+            var remaps = new List<MaterialRemap>();
+            var groups = GetRootChildren(vmdl)
+                .FirstOrDefault(static node => node.GetStringProperty("_class") == "MaterialGroupList")?
+                .GetArray("children");
+
+            if (groups is { Count: > 0 })
+            {
+                AddRemaps(remaps, groups[0]);
+            }
+
+            foreach (var (from, to) in materialRemaps.OrderBy(static remap => remap.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                AddRemap(remaps, new MaterialRemap("BaseMaterialRemap", from, to));
+            }
+
+            if (groups is { Count: > 0 })
+            {
+                return SetDefaultRemaps(vmdl, remaps);
+            }
+
+            var entries = new StringBuilder();
+
+            foreach (var (remapClass, from, to) in remaps)
+            {
+                entries.Append(CultureInfo.InvariantCulture, $$"""
+
+                    {
+                        _class = "{{remapClass}}"
+                        from = "{{from}}"
+                        to = "{{to}}"
+                    },
+                    """);
+            }
+
+            var node = $$"""
+
+                {
+                    _class = "MaterialGroupList"
+                    children =
+                    [
+                        {
+                            _class = "DefaultMaterialGroup"
+                            remaps =
+                            [{{Indent(entries.ToString(), 4)}}
+                            ]
+                        },
+                    ]
+                },
+                """;
+
+            var rootChildren = RootNodeChildrenRegex().Match(vmdl);
+
+            if (!rootChildren.Success)
+            {
+                throw new InvalidDataException("The model's root node was not found");
+            }
+
+            return Validate(vmdl.Insert(rootChildren.Index + rootChildren.Length, Indent(node, 3)));
+        }
+
+        /// <summary>
         /// Picks body group choices, like the game does when it switches a body group, e.g. the arcana one to the
         /// arcana level. The other choices are removed along with the meshes only they show, so the model shows the
-        /// picked meshes without anything having to switch the body group.
+        /// picked meshes without anything having to switch the body group. The arcana body group keeps its first choice
+        /// too: a full mesh of the item the model shows by default, which <see cref="AddDefaultMaterialRemaps"/> gives
+        /// the style's materials. Models reduced to the picked style alone render partly transparent in game.
         /// </summary>
         /// <param name="vmdl">The .vmdl text.</param>
         /// <param name="choices">The index of the choice to pick, by body group name. Groups the model does not have are skipped.</param>
@@ -86,14 +162,22 @@ namespace GUI.Types.Exporter.CharacterAssets
                     continue;
                 }
 
+                var keepFirst = bodyGroup.Name.Equals(CharacterLoadout.ArcanaBodyGroup, StringComparison.OrdinalIgnoreCase);
+                var kept = bodyGroup.Choices.Where((_, choiceIndex) => choiceIndex == picked || (keepFirst && choiceIndex == 0));
+
                 var keptMeshes = bodyGroups
                     .Where(group => group != bodyGroup)
                     .SelectMany(static group => group.Choices)
-                    .Append(bodyGroup.Choices[picked])
+                    .Concat(kept)
                     .SelectMany(static choice => choice.Meshes)
                     .ToHashSet(StringComparer.Ordinal);
 
-                var others = bodyGroup.Choices.Where((_, choiceIndex) => choiceIndex != picked).ToList();
+                var others = bodyGroup.Choices.Where((_, choiceIndex) => choiceIndex != picked && !(keepFirst && choiceIndex == 0)).ToList();
+
+                if (others.Count == 0)
+                {
+                    continue;
+                }
 
                 removedChoices[bodyGroup.Name] = [.. others.Select(static choice => choice.Name)];
                 removedMeshes.UnionWith(others.SelectMany(static choice => choice.Meshes).Where(mesh => !keptMeshes.Contains(mesh)));
@@ -157,6 +241,146 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             return Validate(vmdl);
         }
+
+        /// <summary>
+        /// Picks body group choices like <see cref="SelectBodyGroupChoices"/>, but disables the other choices and the
+        /// meshes only they show instead of removing them, so they can be turned back on in ModelDoc. Only their
+        /// levels of detail references go, which the compiler rejects for disabled meshes. The "_dummy" choices, which
+        /// hold another full copy of the item, are removed along with their meshes.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="choices">The index of the choice to pick, by body group name. Groups the model does not have are skipped.</param>
+        /// <param name="details">Receives a description of every choice that was picked.</param>
+        public static string DisableBodyGroupChoices(string vmdl, IReadOnlyDictionary<string, int> choices, ICollection<string>? details = null)
+        {
+            var bodyGroups = GetBodyGroups(GetRootChildren(vmdl));
+            var disabledChoices = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var removedChoices = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var otherMeshes = new HashSet<string>(StringComparer.Ordinal);
+            var keptMeshes = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var bodyGroup in bodyGroups)
+            {
+                var index = choices.FirstOrDefault(choice => choice.Key.Equals(bodyGroup.Name, StringComparison.OrdinalIgnoreCase)).Value;
+
+                if (index <= 0 || bodyGroup.Choices.Count < 2)
+                {
+                    keptMeshes.UnionWith(bodyGroup.Choices.SelectMany(static choice => choice.Meshes));
+                    continue;
+                }
+
+                // Items with fewer choices than there are arcana levels show their last choice for the higher levels
+                var picked = bodyGroup.Choices[Math.Min(index, bodyGroup.Choices.Count - 1)];
+                var others = bodyGroup.Choices.Where(choice => choice != picked).ToList();
+                var dummies = others.Where(IsDummy).ToList();
+
+                keptMeshes.UnionWith(picked.Meshes);
+                otherMeshes.UnionWith(others.SelectMany(static choice => choice.Meshes));
+                disabledChoices[bodyGroup.Name] = [.. others.Except(dummies).Select(static choice => choice.Name)];
+                removedChoices[bodyGroup.Name] = [.. dummies.Select(static choice => choice.Name)];
+
+                details?.Add($"{bodyGroup.Name} body group shows {picked.Name}" +
+                    (others.Count > dummies.Count ? $", {others.Count - dummies.Count} other choices disabled" : string.Empty) +
+                    (dummies.Count > 0 ? ", _dummy removed" : string.Empty));
+            }
+
+            if (disabledChoices.Count == 0)
+            {
+                return vmdl;
+            }
+
+            // Meshes of the choices that stay, even disabled, are only disabled
+            var disabledChoiceMeshes = bodyGroups
+                .Where(group => disabledChoices.ContainsKey(group.Name))
+                .SelectMany(group => group.Choices.Where(choice => disabledChoices[group.Name].Contains(choice.Name)))
+                .SelectMany(static choice => choice.Meshes)
+                .ToHashSet(StringComparer.Ordinal);
+            var removedMeshes = otherMeshes.Where(mesh => !keptMeshes.Contains(mesh) && !disabledChoiceMeshes.Contains(mesh)).ToHashSet(StringComparer.Ordinal);
+            var disabledMeshes = otherMeshes.Where(mesh => !keptMeshes.Contains(mesh) && !removedMeshes.Contains(mesh)).ToHashSet(StringComparer.Ordinal);
+
+            var objects = FindObjects(vmdl);
+            var removals = new List<(int Start, int End)>();
+            var disables = new List<Match>();
+
+            void AddChoiceEdits(int start, int end, HashSet<string> names, bool remove)
+            {
+                // Choices are only told apart within their own group, different groups often name them the same
+                foreach (var (choiceStart, choiceEnd) in objects)
+                {
+                    if (choiceStart > start && choiceEnd <= end
+                        && ObjectHeaderRegex().Match(vmdl, choiceStart) is { Success: true } choiceHeader
+                        && choiceHeader.Groups["class"].Value == "BodyGroupChoice"
+                        && names.Contains(choiceHeader.Groups["name"].Value))
+                    {
+                        if (remove)
+                        {
+                            removals.Add((choiceStart, choiceEnd));
+                        }
+                        else if (!IsDisabled(choiceStart, choiceEnd))
+                        {
+                            disables.Add(choiceHeader);
+                        }
+                    }
+                }
+            }
+
+            bool IsDisabled(int start, int end) => DisabledRegex().Match(vmdl, start, end - start).Success;
+
+            foreach (var (start, end) in objects)
+            {
+                // Levels of detail cannot reference disabled meshes, the compiler does not know them
+                if (MeshReferenceRegex().Match(vmdl, start) is { Success: true } reference)
+                {
+                    if (removedMeshes.Contains(reference.Groups["name"].Value) || disabledMeshes.Contains(reference.Groups["name"].Value))
+                    {
+                        removals.Add((start, end));
+                    }
+
+                    continue;
+                }
+
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header || !header.Groups["name"].Success)
+                {
+                    continue;
+                }
+
+                var nodeClass = header.Groups["class"].Value;
+                var nodeName = header.Groups["name"].Value;
+
+                if (nodeClass == "RenderMeshFile" && removedMeshes.Contains(nodeName))
+                {
+                    removals.Add((start, end));
+                }
+                else if (nodeClass == "RenderMeshFile" && disabledMeshes.Contains(nodeName) && !IsDisabled(start, end))
+                {
+                    disables.Add(header);
+                }
+                else if (nodeClass == "BodyGroup" && disabledChoices.TryGetValue(nodeName, out var disabledNames))
+                {
+                    AddChoiceEdits(start, end, disabledNames, remove: false);
+                    AddChoiceEdits(start, end, removedChoices[nodeName], remove: true);
+                }
+            }
+
+            var edits = removals
+                .Select(span => (Start: GetLineStart(vmdl, span.Start), End: GetLineEnd(vmdl, span.End), Text: string.Empty))
+                .Concat(disables.Select(header =>
+                {
+                    var index = header.Index + header.Length;
+                    return (Start: index, End: index, Text: $"\n{new string('\t', GetIndentation(vmdl, header.Index) + 1)}disabled = true");
+                }));
+
+            foreach (var (start, end, text) in edits.OrderByDescending(static edit => edit.Start))
+            {
+                vmdl = string.Concat(vmdl.AsSpan(0, start), text, vmdl.AsSpan(end));
+            }
+
+            return Validate(vmdl);
+        }
+
+        private static bool IsDummy(BodyGroupChoiceNode choice)
+            => choice.Name.Equals("_dummy", StringComparison.OrdinalIgnoreCase)
+                || (choice.Meshes.Length > 0 && choice.Meshes.All(static mesh => mesh.Equals("_dummy", StringComparison.OrdinalIgnoreCase)));
 
         /// <summary>
         /// Makes the model play what it plays with activity modifiers set, without anything setting them. Of the sequences
@@ -472,28 +696,57 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>
         /// Picks the control point configuration a particle plays under in game, which drives all of its control points
         /// from the model's attachments: the "game" one, else one made for something other than the preview, else the
-        /// preview one, which most item particles only have.
+        /// preview one, which most item particles only have. Configurations staged for the loadout screen are skipped,
+        /// see <see cref="IsStagedForLoadout"/>, so without another one the particle follows the model.
         /// </summary>
         public static ModelParticle ResolveParticle(IFileLoader fileLoader, string particle)
         {
-            var config = string.Empty;
+            var names = GetControlPointConfigurations(fileLoader, particle)
+                .Where(static configuration => !configuration.StagedForLoadout && configuration.Name.Length > 0)
+                .Select(static configuration => configuration.Name)
+                .ToList();
 
-            using var resource = fileLoader.LoadFileCompiled(particle);
-
-            if (resource?.DataBlock is ParticleSystem particleSystem)
-            {
-                var names = (particleSystem.GetUpgradedData().GetArray("m_controlPointConfigurations") ?? [])
-                    .Select(static configuration => configuration.GetStringProperty("m_name", string.Empty))
-                    .Where(static name => name.Length > 0)
-                    .ToList();
-
-                config = names.FirstOrDefault(static name => name.Equals("game", StringComparison.OrdinalIgnoreCase))
-                    ?? names.FirstOrDefault(static name => !name.Equals("preview", StringComparison.OrdinalIgnoreCase))
-                    ?? names.FirstOrDefault()
-                    ?? string.Empty;
-            }
+            var config = names.FirstOrDefault(static name => name.Equals("game", StringComparison.OrdinalIgnoreCase))
+                ?? names.FirstOrDefault(static name => !name.Equals("preview", StringComparison.OrdinalIgnoreCase))
+                ?? names.FirstOrDefault()
+                ?? string.Empty;
 
             return new ModelParticle(particle, config);
+        }
+
+        /// <summary>
+        /// Whether a particle only comes with control point configurations for the loadout screen that put all of its
+        /// control points at the world origin, where the hero stands in it. Created on a model in game, it stays behind
+        /// at the map's origin, e.g. the ground glow of Drow Ranger's arcana.
+        /// </summary>
+        public static bool IsStagedForLoadout(IFileLoader fileLoader, string particle)
+        {
+            var configurations = GetControlPointConfigurations(fileLoader, particle);
+
+            return configurations.Count > 0 && configurations.All(static configuration => configuration.StagedForLoadout);
+        }
+
+        private static List<(string Name, bool StagedForLoadout)> GetControlPointConfigurations(IFileLoader fileLoader, string particle)
+        {
+            using var resource = fileLoader.LoadFileCompiled(particle);
+
+            if (resource?.DataBlock is not ParticleSystem particleSystem)
+            {
+                return [];
+            }
+
+            static bool IsAtWorldOrigin(KVObject driver)
+                => driver.ContainsKey("m_iAttachType")
+                    && driver.GetEnumValue<ParticleAttachment>("m_iAttachType") == ParticleAttachment.PATTACH_WORLDORIGIN;
+
+            return [.. (particleSystem.GetUpgradedData().GetArray("m_controlPointConfigurations") ?? [])
+                .Select(static configuration =>
+                {
+                    var name = configuration.GetStringProperty("m_name", string.Empty);
+                    var drivers = configuration.GetArray("m_drivers") ?? [];
+
+                    return (name, name.Contains("loadout", StringComparison.OrdinalIgnoreCase) && drivers.Count > 0 && drivers.All(IsAtWorldOrigin));
+                })];
         }
 
         /// <summary>
@@ -758,6 +1011,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"\G\{\s*_class\s*=\s*""(?<class>[^""]*)""(?:\s*name\s*=\s*""(?<name>[^""]*)"")?", RegexOptions.CultureInvariant)]
         private static partial Regex ObjectHeaderRegex();
+
+        [GeneratedRegex(@"\bdisabled\s*=\s*true\b", RegexOptions.CultureInvariant)]
+        private static partial Regex DisabledRegex();
 
         [GeneratedRegex(@"activity_name\s*=\s*""(?<name>[^""]*)""", RegexOptions.CultureInvariant)]
         private static partial Regex ActivityNameRegex();
