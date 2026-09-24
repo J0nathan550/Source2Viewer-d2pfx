@@ -6,12 +6,23 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// An item equipped in one of the hero's slots, in one of its styles.
     /// </summary>
     /// <param name="SkinOverride">The material group picked by hand instead of the one the item and its style show.</param>
-    sealed record EquippedItem(EconItem Item, int Style, int? SkinOverride = null)
+    /// <param name="Unusual">The unusual effect the item plays on its model, for items that come in unusual versions.</param>
+    sealed record EquippedItem(EconItem Item, int Style, int? SkinOverride = null, UnusualEffect? Unusual = null)
     {
         /// <summary>
-        /// The item's asset modifiers that apply in the chosen style.
+        /// The item's asset modifiers that apply in the chosen style, followed by the one that creates its unusual effect.
         /// </summary>
-        public IEnumerable<AssetModifier> Modifiers => Item.AssetModifiers.Where(modifier => modifier.Style == null || modifier.Style == Style);
+        public IEnumerable<AssetModifier> Modifiers
+        {
+            get
+            {
+                var modifiers = Item.AssetModifiers.Where(modifier => modifier.Style == null || modifier.Style == Style);
+
+                return Unusual == null
+                    ? modifiers
+                    : modifiers.Append(new AssetModifier("particle_create", null, Unusual.Particle, null, LoadoutOnly: false) { IsUnusual = true });
+            }
+        }
 
         /// <summary>
         /// The material group the item's model is shown with.
@@ -36,6 +47,9 @@ namespace GUI.Types.Exporter.CharacterAssets
     {
         /// <summary>The particle, as a package source path.</summary>
         public string Particle => CharacterLoadout.NormalizePath(Modifier.Modifier!);
+
+        /// <summary>Whether this is the item's unusual effect, see <see cref="EquippedItem.Unusual"/>.</summary>
+        public bool IsUnusual => Modifier.IsUnusual;
     }
 
     /// <summary>

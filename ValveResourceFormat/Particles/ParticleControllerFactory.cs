@@ -57,6 +57,7 @@ namespace ValveResourceFormat.Particles
                 ["C_INIT_AgeNoise"] = initializerInfo => new AgeNoise(initializerInfo),
                 ["C_INIT_CreateAlongPath"] = initializerInfo => new CreateAlongPath(initializerInfo),
                 ["C_INIT_CreateOnGrid"] = initializerInfo => new CreateOnGrid(initializerInfo),
+                ["C_INIT_CreateOnModel"] = initializerInfo => new CreateOnModel(initializerInfo),
                 ["C_INIT_CreateSequentialPath"] = initializerInfo => new CreateSequentialPath(initializerInfo),
                 ["C_INIT_CreateSequentialPathV2"] = initializerInfo => new CreateSequentialPathV2(initializerInfo),
                 ["C_INIT_CreateWithinBox"] = initializerInfo => new CreateWithinBox(initializerInfo),

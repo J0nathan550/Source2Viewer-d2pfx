@@ -69,6 +69,7 @@ namespace GUI.Forms
             effectsTabPage = new ThemedTabPage();
             effectsPanel = new System.Windows.Forms.Panel();
             effectsTable = new System.Windows.Forms.TableLayoutPanel();
+            previewEffectsCheckBox = new System.Windows.Forms.CheckBox();
             includeGroupBox = new ThemedGroupBox();
             includeTable = new System.Windows.Forms.TableLayoutPanel();
             heroModelCheckBox = new System.Windows.Forms.CheckBox();
@@ -409,6 +410,7 @@ namespace GUI.Forms
             //
             effectsPanel.AutoScroll = true;
             effectsPanel.Controls.Add(effectsTable);
+            effectsPanel.Controls.Add(previewEffectsCheckBox);
             effectsPanel.Dock = System.Windows.Forms.DockStyle.Fill;
             effectsPanel.Location = new System.Drawing.Point(0, 0);
             effectsPanel.Name = "effectsPanel";
@@ -426,7 +428,20 @@ namespace GUI.Forms
             effectsTable.Name = "effectsTable";
             effectsTable.RowCount = 0;
             effectsTable.Size = new System.Drawing.Size(460, 0);
-            effectsTable.TabIndex = 0;
+            effectsTable.TabIndex = 1;
+            //
+            // previewEffectsCheckBox
+            //
+            previewEffectsCheckBox.AutoSize = true;
+            previewEffectsCheckBox.Checked = true;
+            previewEffectsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            previewEffectsCheckBox.Dock = System.Windows.Forms.DockStyle.Top;
+            previewEffectsCheckBox.Name = "previewEffectsCheckBox";
+            previewEffectsCheckBox.Padding = new System.Windows.Forms.Padding(6, 6, 0, 0);
+            previewEffectsCheckBox.TabIndex = 0;
+            previewEffectsCheckBox.Text = "Show effects in the preview";
+            previewEffectsCheckBox.UseVisualStyleBackColor = true;
+            previewEffectsCheckBox.CheckedChanged += PreviewEffectsCheckBox_CheckedChanged;
             //
             // includeGroupBox
             //
@@ -805,6 +820,7 @@ namespace GUI.Forms
         private ThemedTabPage effectsTabPage;
         private System.Windows.Forms.Panel effectsPanel;
         private System.Windows.Forms.TableLayoutPanel effectsTable;
+        private System.Windows.Forms.CheckBox previewEffectsCheckBox;
         private ThemedGroupBox includeGroupBox;
         private System.Windows.Forms.TableLayoutPanel includeTable;
         private System.Windows.Forms.CheckBox heroModelCheckBox;

@@ -23,6 +23,7 @@ namespace GUI.Forms
     partial class CharacterSelectForm : ThemedForm
     {
         private const string PersonaSelectorSlot = "persona_selector";
+        private const string NoUnusualEffect = "(none)";
 
         // Width of the controls next to the preview at 96 DPI, until the divider is dragged
         private const int DefaultControlsWidth = 540;
@@ -30,6 +31,7 @@ namespace GUI.Forms
         // Remembered for the next time the dialog opens
         private static string? lastHeroName;
         private static CharacterExportOptions? lastOptions;
+        private static bool lastPreviewEffects = true;
 
         private readonly ItemsGameCatalog catalog;
         private readonly VrfGuiContext guiContext;
@@ -45,6 +47,7 @@ namespace GUI.Forms
         private readonly HashSet<SoundSlot> pickedSounds = [];
         private readonly List<(CreatedEffect Effect, CheckBox CheckBox)> effectRows = [];
         private readonly Dictionary<string, bool> pickedEffects = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<EconItem, UnusualEffect> pickedUnusuals = [];
         private readonly Dictionary<string, Image?> thumbnails = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string>? soundEventFiles;
 #pragma warning disable CA2213 // Disposed with the sounds table it is added to
@@ -125,6 +128,11 @@ namespace GUI.Forms
                 ApplyOptions(lastOptions);
             }
 
+            previewEffectsCheckBox.Checked = lastPreviewEffects;
+            toolTip.SetToolTip(previewEffectsCheckBox,
+                "Play the ticked effects and the unusual effects on the preview. Only roughly how the game shows them,\n" +
+                "not everything particles do is supported.");
+
             replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
 
             // The game folder goes first, so one chosen by hand is not replaced by the one that goes with the content folder
@@ -156,7 +164,7 @@ namespace GUI.Forms
                     continue;
                 }
 
-                var equipped = new EquippedItem(item, (styleComboBox.SelectedItem as ItemStyle)?.Index ?? 0);
+                var equipped = new EquippedItem(item, (styleComboBox.SelectedItem as ItemStyle)?.Index ?? 0, Unusual: pickedUnusuals.GetValueOrDefault(item));
 
                 if (skinComboBox.SelectedItem is SkinChoice skin && skin.Index != equipped.DefaultSkin)
                 {
@@ -235,6 +243,7 @@ namespace GUI.Forms
             }
 
             lastOptions = Options;
+            lastPreviewEffects = previewEffectsCheckBox.Checked;
 
             var controlsWidth = (int)MathF.Round(mainSplitContainer.Panel2.Width * 96f / DeviceDpi);
 
@@ -365,6 +374,7 @@ namespace GUI.Forms
                 BuildIconRows(hero);
                 BuildSoundRows(hero);
                 pickedEffects.Clear();
+                pickedUnusuals.Clear();
                 pickedSlots.Clear();
                 ResetLoadout(persona: false);
             }
@@ -1073,7 +1083,8 @@ namespace GUI.Forms
 
         /// <summary>
         /// Lists the effects the equipped items create, by item, ticked when the game shows them with the equipped items
-        /// unless they were ticked or unticked by hand. What default items create is left out, the game shows it anyway.
+        /// unless they were ticked or unticked by hand, and the unusual effect of items that come in unusual versions.
+        /// What default items create is left out, the game shows it anyway.
         /// </summary>
         private void BuildEffectRows(CharacterLoadout loadout)
         {
@@ -1096,9 +1107,13 @@ namespace GUI.Forms
                 effectsTable.Controls.Add(control, 0, row);
             }
 
-            var effects = loadout.CreatedEffects.Where(static effect => !effect.Item.Item.IsDefault).ToList();
+            // The unusual effect is picked from its own list rather than ticked
+            var effects = loadout.CreatedEffects.Where(static effect => !effect.Item.Item.IsDefault && !effect.IsUnusual).ToList();
+            var items = loadout.Items
+                .Where(item => !item.Item.IsDefault && (catalog.GetUnusualEffects(item.Item).Count > 0 || effects.Any(effect => effect.Item == item)))
+                .ToList();
 
-            if (effects.Count == 0)
+            if (items.Count == 0)
             {
                 AddRow(new Label
                 {
@@ -1112,48 +1127,25 @@ namespace GUI.Forms
 
             try
             {
-                EquippedItem? item = null;
-
-                foreach (var effect in effects)
+                foreach (var item in items)
                 {
-                    if (effect.Item != item)
-                    {
-                        item = effect.Item;
-
-                        AddRow(new Label
-                        {
-                            AutoSize = true,
-                            Text = item.StyleName is { } styleName ? $"{item.Item.Name} ({styleName})" : item.Item.Name,
-                            Font = groupFont ??= new Font(Font, FontStyle.Bold),
-                            Margin = new Padding(3, 8, 3, 3),
-                        });
-                    }
-
-                    var shown = loadout.IsShown(effect);
-                    var required = effect.Modifier.RequiredArcanaLevel switch
-                    {
-                        null => string.Empty,
-                        0 => " (without an arcana)",
-                        var level => $" (arcana level {level})",
-                    };
-
-                    var checkBox = new CheckBox
+                    AddRow(new Label
                     {
                         AutoSize = true,
-                        Text = Path.GetFileNameWithoutExtension(effect.Particle) + required,
-                        Checked = pickedEffects.TryGetValue(effect.Particle, out var picked) ? picked : shown,
-                        Margin = new Padding(12, 2, 3, 2),
-                        Tag = effect,
-                    };
+                        Text = item.StyleName is { } styleName ? $"{item.Item.Name} ({styleName})" : item.Item.Name,
+                        Font = groupFont ??= new Font(Font, FontStyle.Bold),
+                        Margin = new Padding(3, 8, 3, 3),
+                    });
 
-                    toolTip.SetToolTip(checkBox, shown
-                        ? effect.Particle
-                        : $"{effect.Particle}\nThe game does not show it with the equipped items, it is made for another arcana level");
+                    if (catalog.GetUnusualEffects(item.Item) is { Count: > 0 } unusualEffects)
+                    {
+                        AddRow(CreateUnusualRow(item, unusualEffects));
+                    }
 
-                    checkBox.CheckedChanged += EffectCheckBox_CheckedChanged;
-
-                    AddRow(checkBox);
-                    effectRows.Add((effect, checkBox));
+                    foreach (var effect in effects.Where(effect => effect.Item == item))
+                    {
+                        AddRow(CreateEffectCheckBox(loadout, effect));
+                    }
                 }
             }
             finally
@@ -1165,13 +1157,117 @@ namespace GUI.Forms
             effectsTable.ResumeLayout(true);
         }
 
+        /// <summary>
+        /// A choice of the unusual effect the item plays, none by default like the item's plain version.
+        /// </summary>
+        private FlowLayoutPanel CreateUnusualRow(EquippedItem item, IReadOnlyList<UnusualEffect> unusualEffects)
+        {
+            var label = new Label
+            {
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Text = "Unusual effect",
+                Margin = new Padding(0, 6, 6, 3),
+            };
+
+            var comboBox = new ThemedComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = this.AdjustForDPI(180),
+                DropDownWidth = this.AdjustForDPI(240),
+                MaxDropDownItems = 20,
+                Tag = item.Item,
+            };
+
+            comboBox.Items.Add(NoUnusualEffect);
+
+            foreach (var effect in unusualEffects)
+            {
+                comboBox.Items.Add(effect);
+            }
+
+            comboBox.SelectedItem = item.Unusual ?? (object)NoUnusualEffect;
+            comboBox.SelectedIndexChanged += UnusualComboBox_SelectedIndexChanged;
+
+            SetUnusualToolTip(comboBox);
+
+            var row = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Margin = new Padding(12, 2, 3, 2),
+            };
+
+            row.Controls.Add(label);
+            row.Controls.Add(comboBox);
+
+            return row;
+        }
+
+        private void UnusualComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (sender is not ComboBox { Tag: EconItem item } comboBox)
+            {
+                return;
+            }
+
+            if (comboBox.SelectedItem is UnusualEffect effect)
+            {
+                pickedUnusuals[item] = effect;
+            }
+            else
+            {
+                pickedUnusuals.Remove(item);
+            }
+
+            SetUnusualToolTip(comboBox);
+            SchedulePreviewUpdate();
+        }
+
+        private void SetUnusualToolTip(ComboBox comboBox)
+            => toolTip.SetToolTip(comboBox, "The effect the item's unusual version plays on it, which is exported like the item's other effects" +
+                (comboBox.SelectedItem is UnusualEffect effect ? $"\n{effect.Particle}" : string.Empty));
+
+        private CheckBox CreateEffectCheckBox(CharacterLoadout loadout, CreatedEffect effect)
+        {
+            var shown = loadout.IsShown(effect);
+            var required = effect.Modifier.RequiredArcanaLevel switch
+            {
+                null => string.Empty,
+                0 => " (without an arcana)",
+                var level => $" (arcana level {level})",
+            };
+
+            var checkBox = new CheckBox
+            {
+                AutoSize = true,
+                Text = Path.GetFileNameWithoutExtension(effect.Particle) + required,
+                Checked = pickedEffects.TryGetValue(effect.Particle, out var picked) ? picked : shown,
+                Margin = new Padding(12, 2, 3, 2),
+                Tag = effect,
+            };
+
+            toolTip.SetToolTip(checkBox, shown
+                ? effect.Particle
+                : $"{effect.Particle}\nThe game does not show it with the equipped items, it is made for another arcana level");
+
+            checkBox.CheckedChanged += EffectCheckBox_CheckedChanged;
+            effectRows.Add((effect, checkBox));
+
+            return checkBox;
+        }
+
         private void EffectCheckBox_CheckedChanged(object? sender, EventArgs e)
         {
             if (!updatingEffects && sender is CheckBox { Tag: CreatedEffect effect } checkBox)
             {
                 pickedEffects[effect.Particle] = checkBox.Checked;
+                SchedulePreviewUpdate();
             }
         }
+
+        private void PreviewEffectsCheckBox_CheckedChanged(object? sender, EventArgs e) => SchedulePreviewUpdate();
 
         private Dictionary<string, bool> GetItemEffects()
         {
@@ -1581,7 +1677,8 @@ namespace GUI.Forms
 
         /// <summary>
         /// The hero's model, or the one an equipped item swaps it for, followed by the models the equipped items show,
-        /// with the body groups the items switch.
+        /// with the body groups the items switch, and the effects the items play on them when those are shown: ticked
+        /// ones on the Effects tab, the ones the game shows for items not listed there, and unusual effects.
         /// </summary>
         private List<PreviewModel> GetPreviewModels()
         {
@@ -1591,27 +1688,35 @@ namespace GUI.Forms
             }
 
             var loadout = CreateLoadout();
-            var models = new List<PreviewModel>();
+            var models = new List<(string Path, int Skin, List<string>? Particles)>();
+            var tickedEffects = GetItemEffects();
+            var showEffects = previewEffectsCheckBox.Checked;
 
-            void Add(string model, int skin)
+            List<string>? Add(string model, int skin)
             {
-                if (!models.Any(existing => CharacterLoadout.IsSamePath(existing.Path, model)))
+                var index = models.FindIndex(existing => CharacterLoadout.IsSamePath(existing.Path, model));
+
+                if (index < 0)
                 {
-                    models.Add(new PreviewModel(model, skin, loadout.GetBodyGroupChoices(model)));
+                    models.Add((model, skin, showEffects ? [] : null));
+                    index = models.Count - 1;
                 }
+
+                return models[index].Particles;
             }
 
-            if (loadout.HeroModel != null)
-            {
-                Add(loadout.HeroModel, loadout.HeroSkin);
-            }
+            var heroParticles = loadout.HeroModel != null ? Add(loadout.HeroModel, loadout.HeroSkin) : null;
 
             foreach (var item in loadout.Items)
             {
-                if (loadout.GetItemModel(item) is { } model)
-                {
-                    Add(model, item.Skin);
-                }
+                var particles = loadout.GetItemModel(item) is { } model
+                    ? Add(model, item.Skin)
+                    : loadout.IsWornByHero(item.Item.Slot) ? heroParticles : null;
+
+                particles?.AddRange(loadout.CreatedEffects
+                    .Where(effect => effect.Item == item
+                        && (tickedEffects.TryGetValue(effect.Particle, out var ticked) ? ticked : loadout.IsShown(effect)))
+                    .Select(static effect => effect.Particle));
             }
 
             foreach (var (item, wearable) in loadout.AdditionalWearables)
@@ -1619,7 +1724,7 @@ namespace GUI.Forms
                 Add(wearable, item.Skin);
             }
 
-            return models;
+            return [.. models.Select(model => new PreviewModel(model.Path, model.Skin, loadout.GetBodyGroupChoices(model.Path), model.Particles))];
         }
 
         [GeneratedRegex(@"_persona_\d+$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

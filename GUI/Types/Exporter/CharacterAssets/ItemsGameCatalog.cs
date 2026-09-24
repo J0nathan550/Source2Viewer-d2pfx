@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using GUI.Utils;
 using ValveKeyValue;
@@ -29,6 +30,23 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// or null when it applies at every level.
         /// </summary>
         public int? RequiredArcanaLevel { get; init; }
+
+        /// <summary>
+        /// Whether this is the unusual effect picked for the item rather than one of the item's own, see
+        /// <see cref="EquippedItem.Unusual"/>.
+        /// </summary>
+        public bool IsUnusual { get; init; }
+    }
+
+    /// <summary>
+    /// An effect an unusual item plays on its model, from items_game.txt's "attribute_controlled_attached_particles".
+    /// </summary>
+    /// <param name="Id">The effect's number, which unusual items refer to it by.</param>
+    /// <param name="Name">The localized name, e.g. "Snowdrift".</param>
+    /// <param name="Particle">The particle, as a package source path.</param>
+    sealed record UnusualEffect(int Id, string Name, string Particle)
+    {
+        public override string ToString() => Name;
     }
 
     /// <summary>
@@ -59,6 +77,9 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// only differ in it, e.g. the golden version of an item.
         /// </summary>
         public int Skin { get; init; }
+
+        /// <summary>Whether the item comes in unusual versions, which play one of the unusual effects on it.</summary>
+        public bool CanBeUnusual { get; init; }
 
         /// <summary>The item's styles, empty when it has only the one look.</summary>
         public List<ItemStyle> Styles { get; } = [];
@@ -125,7 +146,7 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <summary>
     /// Heroes and the cosmetic items they can equip, read from a Dota 2 package's items_game.txt and npc hero scripts.
     /// </summary>
-    sealed class ItemsGameCatalog
+    sealed partial class ItemsGameCatalog
     {
         public const string ItemsGamePath = "scripts/items/items_game.txt";
         public const string HeroesPath = "scripts/npc/npc_heroes.txt";
@@ -144,18 +165,25 @@ namespace GUI.Types.Exporter.CharacterAssets
         private readonly Dictionary<string, List<ItemSet>> setsByHero;
         private readonly Dictionary<string, string> localization;
         private readonly Dictionary<string, string> unitModels;
+        private readonly List<UnusualEffect> unusualEffects;
 
         public IReadOnlyList<HeroDefinition> Heroes => heroes;
 
         private ItemsGameCatalog(List<HeroDefinition> heroes, Dictionary<string, List<EconItem>> itemsByHero, Dictionary<string, List<ItemSet>> setsByHero,
-            Dictionary<string, string> localization, Dictionary<string, string> unitModels)
+            Dictionary<string, string> localization, Dictionary<string, string> unitModels, List<UnusualEffect> unusualEffects)
         {
             this.heroes = heroes;
             this.itemsByHero = itemsByHero;
             this.setsByHero = setsByHero;
             this.localization = localization;
             this.unitModels = unitModels;
+            this.unusualEffects = unusualEffects;
         }
+
+        /// <summary>
+        /// The unusual effects the item can come with, empty for items that have no unusual versions.
+        /// </summary>
+        public IReadOnlyList<UnusualEffect> GetUnusualEffects(EconItem item) => item.CanBeUnusual ? unusualEffects : [];
 
         /// <summary>
         /// The model a unit has when no item dresses it, e.g. Beastmaster's boar, or null for units that only get one
@@ -296,12 +324,55 @@ namespace GUI.Types.Exporter.CharacterAssets
             progress?.Report("Collecting item sets...");
 
             var setsByHero = ReadItemSets(itemsGame, itemsByName, localization);
+            var unusualEffects = ReadUnusualEffects(itemsGame, localization);
 
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {UnitsPath}...");
             var unitModels = LoadUnitModels(package);
 
-            return new ItemsGameCatalog(heroes, itemsByHero, setsByHero, localization, unitModels);
+            return new ItemsGameCatalog(heroes, itemsByHero, setsByHero, localization, unitModels, unusualEffects);
+        }
+
+        /// <summary>
+        /// The effects unusual items roll from. Most of the attached particles are made for couriers and wards, the
+        /// ones for cosmetic items are the ones the unusual lists hand out.
+        /// </summary>
+        private static List<UnusualEffect> ReadUnusualEffects(KVObject itemsGame, Dictionary<string, string> localization)
+        {
+            var effects = new List<UnusualEffect>();
+
+            if (itemsGame.GetSubCollection("items_unusual_lists") is not { ValueType: KVValueType.Collection } unusualLists
+                || itemsGame.GetSubCollection("attribute_controlled_attached_particles") is not { ValueType: KVValueType.Collection } particles)
+            {
+                return effects;
+            }
+
+            // e.g. "socket { required_type: 1 gem_def_index: 3045 } effect: 826"
+            var ids = unusualLists
+                .Select(static list => list.Value)
+                .Where(static list => list.ValueType == KVValueType.Collection)
+                .SelectMany(static list => list.Select(static entry => entry.Value))
+                .Where(static entry => entry.ValueType == KVValueType.Collection)
+                .Select(static entry => UnusualEffectRegex().Match(GetValue(entry, "value") ?? string.Empty))
+                .Where(static match => match.Success)
+                .Select(static match => int.Parse(match.Groups[1].ValueSpan, CultureInfo.InvariantCulture))
+                .Distinct()
+                .Order();
+
+            foreach (var id in ids)
+            {
+                var key = id.ToString(CultureInfo.InvariantCulture);
+
+                if (particles.GetSubCollection(key) is not { ValueType: KVValueType.Collection } effect
+                    || GetValue(effect, "system") is not { Length: > 0 } particle)
+                {
+                    continue;
+                }
+
+                effects.Add(new UnusualEffect(id, Localize(localization, $"Attrib_Particle{key}") ?? $"Effect {key}", particle));
+            }
+
+            return effects;
         }
 
         private static EconItem? ReadItem(string defIndex, KVObject itemData, KVObject? prefabs, HashSet<string> heroNames, Dictionary<string, string> localization)
@@ -335,6 +406,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                 Rarity = GetValue(itemData, "item_rarity") ?? GetPrefabValue(prefabs, prefab, "item_rarity", 0),
                 IsDefault = isDefault,
                 Skin = visuals is { ValueType: KVValueType.Collection } ? ParseInt(GetValue(visuals, "skin")) ?? 0 : 0,
+                CanBeUnusual = itemData.GetSubCollection("static_attributes") is { ValueType: KVValueType.Collection } staticAttributes
+                    && GetValue(staticAttributes, "can roll unusual") == "1",
             };
 
             foreach (var (heroName, value) in usedByHeroes)
@@ -752,6 +825,9 @@ namespace GUI.Types.Exporter.CharacterAssets
             => value.ValueType is KVValueType.Collection or KVValueType.Array or KVValueType.Null ? null : value.ToString();
 
         private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+        [GeneratedRegex(@"\beffect:\s*(\d+)", RegexOptions.CultureInvariant)]
+        private static partial Regex UnusualEffectRegex();
 
         /// <summary>
         /// Resolves "#base" includes relative to the folder of the script that declares them.

@@ -413,6 +413,12 @@ namespace ValveResourceFormat.Particles
         public ParticleAttachment AttachType { get; set; }
 
         /// <summary>
+        /// The model this control point is attached to, which functions that create particles on a model use, or null
+        /// when it follows no model.
+        /// </summary>
+        public IParticleModel? Model { get; set; }
+
+        /// <summary>
         /// Write potentially non positional data to the control point, for the particle to read.
         /// </summary>
         /// <param name="component">0, 1, 2</param>

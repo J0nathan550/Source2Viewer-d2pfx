@@ -34,7 +34,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// The parent anchor for an attached child: the attachment point's world transform, a bone's when
         /// no attachment matches, or the model's own transform. Rigid, with no scale.
         /// </summary>
-        private Matrix4x4 GetAttachmentOrSelfTransform(string attachmentName)
+        internal Matrix4x4 GetAttachmentOrSelfTransform(string attachmentName)
         {
             if (!string.IsNullOrEmpty(attachmentName))
             {

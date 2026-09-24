@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.Logging;
 using ValveKeyValue;
 using ValveResourceFormat.Blocks;
@@ -16,6 +17,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
     public class ParticleSceneNode : SceneNode
     {
         private readonly ParticleRenderer particleRenderer;
+        private readonly ParticleSystem definition;
 
         /// <summary>Gets whether this system samples the resolved opaque depth.</summary>
         public bool WantsSceneDepth { get; }
@@ -74,6 +76,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         public ParticleSceneNode(Scene scene, ParticleSystem particleSystem, ParticleSnapshot? particleSnapshot = null, bool preview = false, bool playedByEntity = false)
             : base(scene)
         {
+            definition = particleSystem;
             particleRenderer = new ParticleRenderer(particleSystem, Scene.RendererContext, scene, particleSnapshot)
             {
                 OwnerNode = this,
@@ -214,6 +217,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     };
 
                     AttachOnModel(modelNode, particleNode, attachmentType, attachmentPoint, offset);
+                    particleNode.GetControlPoint(0).Model = modelNode.ParticleSurface;
                     nodes.Add(particleNode);
                 }
                 catch (Exception e)
@@ -249,6 +253,79 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     break;
             }
         }
+
+        /// <summary>
+        /// Plays the effect on a model the way an entity plays an effect it creates on itself, like a cosmetic item's
+        /// ambient effect: the control points follow the model, or the attachments the effect's control point
+        /// configuration names, and particles made to be created on a model are created on it.
+        /// </summary>
+        /// <param name="modelNode">The model the effect plays on.</param>
+        /// <param name="parentNode">
+        /// The model <paramref name="modelNode"/> is worn by, which drivers of the "parent" entity follow. Without one,
+        /// every driver follows <paramref name="modelNode"/>.
+        /// </param>
+        public void AttachToModel(ModelSceneNode modelNode, ModelSceneNode? parentNode = null)
+        {
+            var configurations = definition.GetUpgradedData().GetArray("m_controlPointConfigurations") ?? [];
+
+            // The one the game plays it under, else any, most item effects only come with the one to preview them
+            var configuration = configurations.FirstOrDefault(static c => string.Equals(c.GetStringProperty("m_name"), "game", StringComparison.OrdinalIgnoreCase))
+                ?? configurations.FirstOrDefault(static c => !string.Equals(c.GetStringProperty("m_name"), "preview", StringComparison.OrdinalIgnoreCase))
+                ?? (configurations.Count > 0 ? configurations[0] : null);
+
+            var placed = false;
+
+            foreach (var driver in configuration?.GetArray("m_drivers") ?? [])
+            {
+                var index = driver.ContainsKey("m_iControlPoint") ? driver.GetInt32Property("m_iControlPoint") : 0;
+
+                // Left out when it is the default, the entity's origin
+                var attachType = driver.ContainsKey("m_iAttachType")
+                    ? driver.GetEnumValue<ParticleAttachment>("m_iAttachType")
+                    : ParticleAttachment.PATTACH_ABSORIGIN;
+                var offset = ReadDriverVector(driver, "m_vecOffset");
+
+                // A constant the effect reads, rather than a place
+                if (attachType == ParticleAttachment.PATTACH_WORLDORIGIN)
+                {
+                    if (index != 0)
+                    {
+                        GetControlPoint(index).Position = offset;
+                    }
+
+                    continue;
+                }
+
+                var entity = parentNode != null && string.Equals(driver.GetStringProperty("m_entityName"), "parent", StringComparison.OrdinalIgnoreCase)
+                    ? parentNode
+                    : modelNode;
+                var attachment = attachType is ParticleAttachment.PATTACH_POINT or ParticleAttachment.PATTACH_POINT_FOLLOW
+                    ? driver.GetStringProperty("m_attachmentName") ?? string.Empty
+                    : string.Empty;
+
+                GetControlPoint(index).Model = entity.ParticleSurface;
+
+                if (index == 0)
+                {
+                    entity.AttachNode(this, attachment, offset);
+                    placed = true;
+                    continue;
+                }
+
+                modelControlPoints ??= [];
+                modelControlPoints.Add(new ModelControlPoint(index, entity, attachment, offset));
+            }
+
+            if (!placed)
+            {
+                modelNode.AttachNode(this);
+                GetControlPoint(0).Model = modelNode.ParticleSurface;
+            }
+        }
+
+        private List<ModelControlPoint>? modelControlPoints;
+
+        private readonly record struct ModelControlPoint(int Index, ModelSceneNode Node, string Attachment, Vector3 Offset);
 
         /// <summary>
         /// Restarts the particle system at the start of its next update.
@@ -541,6 +618,14 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             if (controlPointBindings != null)
             {
                 UpdateBoundControlPoints();
+            }
+
+            if (modelControlPoints != null)
+            {
+                foreach (var (index, node, attachment, offset) in modelControlPoints)
+                {
+                    SetControlPoint(index, Matrix4x4.CreateTranslation(offset) * node.GetAttachmentOrSelfTransform(attachment));
+                }
             }
 
             SeedControlPointFromTransform();

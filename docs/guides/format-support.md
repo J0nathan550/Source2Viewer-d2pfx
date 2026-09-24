@@ -302,7 +302,9 @@ Particle systems round-trip exactly: extraction re-emits the original stored KV3
 VRF's upgraded in-memory version, so decompiled `.vpcf` files match the compiled source
 (pre-KV3 NTRO-era files are re-encoded as KV3 text instead). The viewer simulates a large
 subset of particle functions and lists any unsupported functions per system in red instead
-of failing.
+of failing. Effects that create their particles on a model spawn them on the posed mesh or
+hitboxes of the model they play on, such as a model's own effects in the model viewer, and
+at their control point when previewed on their own.
 
 Particle snapshots (`vsnap`) preview and extract. Bone name streams survive, but skinning
 streams are written into the extracted `.vsnap` as empty streams: their values show in the

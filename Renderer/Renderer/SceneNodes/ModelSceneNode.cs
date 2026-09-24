@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using ValveResourceFormat.Particles;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.ModelAnimation;
 using ValveResourceFormat.ResourceTypes.ModelAnimation2;
@@ -104,7 +105,14 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             // unmatched name - AnimationController.Transform is not it (see its doc comment), so route through here.
             AnimationController.ResolvePosition = attachmentName => GetAttachmentOrSelfTransform(attachmentName).Translation;
             AnimationController.AnimationLookup = animationName => Animations.GetValueOrDefault(animationName);
+
+            ParticleSurface = new ModelParticleSurface(this, model, Scene.RendererContext.FileLoader);
         }
+
+        /// <summary>
+        /// The model's meshes and hitboxes as they are posed, for effects played on the model to create their particles on.
+        /// </summary>
+        public IParticleModel ParticleSurface { get; }
 
         readonly struct CharacterEyeParameters
         {

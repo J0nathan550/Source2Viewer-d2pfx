@@ -15,14 +15,20 @@ namespace GUI.Types.GLViewers
     /// <param name="Path">The model as named in scripts, e.g. "models/heroes/axe/axe.vmdl".</param>
     /// <param name="Skin">Index of the material group to show it with.</param>
     /// <param name="BodyGroups">The choice to show of body groups, by name, e.g. the arcana one the equipped arcana sets.</param>
-    sealed record PreviewModel(string Path, int Skin, IReadOnlyDictionary<string, int>? BodyGroups = null);
+    /// <param name="Particles">
+    /// The effects to play on the model besides the ones the model creates itself, e.g. an item's ambient effect, or null
+    /// to show the model without any.
+    /// </param>
+    sealed record PreviewModel(string Path, int Skin, IReadOnlyDictionary<string, int>? BodyGroups = null, IReadOnlyList<string>? Particles = null);
 
     /// <summary>
-    /// Previews a hero playing its idle while wearing a set of item models, which follow the hero's skeleton.
+    /// Previews a hero playing its idle while wearing a set of item models, which follow the hero's skeleton, and the
+    /// effects they play.
     /// </summary>
     class GLCharacterPreviewViewer : GLSingleNodeViewer
     {
         private readonly List<ModelSceneNode> modelNodes = [];
+        private readonly List<ParticleSceneNode> particleNodes = [];
         private IReadOnlyList<PreviewModel> models = [];
         private int requestedVersion;
 
@@ -82,7 +88,14 @@ namespace GUI.Types.GLViewers
                         Scene.Remove(node, dynamic: true);
                     }
 
+                    foreach (var node in particleNodes)
+                    {
+                        Scene.Remove(node, dynamic: true);
+                        node.Delete();
+                    }
+
                     modelNodes.Clear();
+                    particleNodes.Clear();
 
                     AddModels(previewModels);
                     Scene.Initialize();
@@ -135,7 +148,53 @@ namespace GUI.Types.GLViewers
                 }
 
                 Scene.Add(node, dynamic: true);
+
+                if (previewModel.Particles != null)
+                {
+                    AddParticles(node, model, previewModel.Particles, modelNodes.Count > 0 ? modelNodes[0] : null);
+                }
+
                 modelNodes.Add(node);
+            }
+        }
+
+        /// <summary>
+        /// Plays the effects the model creates itself, and the given ones the way the game plays an effect an item
+        /// creates on its model.
+        /// </summary>
+        /// <param name="hero">The model the item is worn by, which some effects also follow, or null for the hero itself.</param>
+        private void AddParticles(ModelSceneNode node, Model model, IReadOnlyList<string> particles, ModelSceneNode? hero)
+        {
+            foreach (var particleNode in ParticleSceneNode.CreateModelParticles(Scene, model, node))
+            {
+                Scene.Add(particleNode, dynamic: true);
+                particleNodes.Add(particleNode);
+            }
+
+            foreach (var particle in particles.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    // Owned by the context's resource cache
+                    if (GuiContext.LoadFileCompiled(particle)?.DataBlock is not ParticleSystem particleSystem)
+                    {
+                        Log.Warn(nameof(GLCharacterPreviewViewer), $"Could not load \"{particle}\" for the preview");
+                        continue;
+                    }
+
+                    var particleNode = new ParticleSceneNode(Scene, particleSystem)
+                    {
+                        Name = particle,
+                    };
+
+                    particleNode.AttachToModel(node, hero);
+                    Scene.Add(particleNode, dynamic: true);
+                    particleNodes.Add(particleNode);
+                }
+                catch (Exception e)
+                {
+                    Log.Warn(nameof(GLCharacterPreviewViewer), $"Failed to play \"{particle}\" in the preview: {e.Message}");
+                }
             }
         }
 
