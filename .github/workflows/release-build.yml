@@ -5,8 +5,14 @@ permissions:
 
 on:
   push:
+    branches:
+    - master
     tags:
     - '*'
+    paths-ignore:
+    - '.github/*_TEMPLATE/**'
+    - 'docs/**'
+    - '*.md'
   workflow_dispatch:
 
 # Releases run one at a time, so each one sees the tag of the previous one when picking its build number
