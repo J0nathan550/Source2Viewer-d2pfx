@@ -18,6 +18,13 @@ namespace GUI.Types.Exporter.CharacterAssets
     sealed record ModelParticle(string Name, string Config);
 
     /// <summary>
+    /// An activity modifier set on a model, which makes it play the sequences made for it over the other ones of the activity.
+    /// </summary>
+    /// <param name="Activity">The activity it applies to, e.g. "ACT_DOTA_TAUNT", or null when it applies to every activity.</param>
+    /// <param name="Name">The modifier, e.g. "arcana".</param>
+    sealed record ActivityModifier(string? Activity, string Name);
+
+    /// <summary>
     /// Edits decompiled .vmdl files in place, keeping the rest of the text exactly as the model extractor wrote it.
     /// </summary>
     static partial class ModelDocEditor
@@ -147,6 +154,124 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var lineStart = GetLineStart(vmdl, start);
                 vmdl = vmdl.Remove(lineStart, GetLineEnd(vmdl, end) - lineStart);
             }
+
+            return Validate(vmdl);
+        }
+
+        /// <summary>
+        /// Makes the model play what it plays with activity modifiers set, without anything setting them. Of the sequences
+        /// of an activity that only differ in those modifiers, the ones with the most of them win like they do in game:
+        /// they lose the modifiers so they become the plain sequences, and the others no longer play for the activity.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="modifiers">The modifiers to apply.</param>
+        /// <param name="details">Receives a description of what now plays.</param>
+        public static string ApplyActivityModifiers(string vmdl, IReadOnlyCollection<ActivityModifier> modifiers, ICollection<string>? details = null)
+        {
+            if (modifiers.Count == 0)
+            {
+                return vmdl;
+            }
+
+            var objects = FindObjects(vmdl);
+            var sequences = new List<(Group Activity, List<(string Name, int Start, int End)> Modifiers)>();
+
+            foreach (var (start, end) in objects)
+            {
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header || header.Groups["class"].Value != "AnimFile")
+                {
+                    continue;
+                }
+
+                var children = objects.Where(child => child.Start > start && child.End <= end).ToList();
+                var sequenceModifiers = new List<(string Name, int Start, int End)>();
+                Group? activity = null;
+
+                foreach (var (childStart, childEnd) in children)
+                {
+                    if (ObjectHeaderRegex().Match(vmdl, childStart) is { Success: true } childHeader
+                        && childHeader.Groups["class"].Value == "ActivityModifier"
+                        && ActivityNameRegex().Match(vmdl, childStart, childEnd - childStart) is { Success: true } modifierName)
+                    {
+                        sequenceModifiers.Add((modifierName.Groups["name"].Value, childStart, childEnd));
+                    }
+                }
+
+                // The sequence's own activity, as opposed to its modifiers' names
+                for (var match = ActivityNameRegex().Match(vmdl, start, end - start); match.Success; match = match.NextMatch())
+                {
+                    if (!children.Any(child => match.Index > child.Start && match.Index < child.End))
+                    {
+                        activity = match.Groups["name"];
+                        break;
+                    }
+                }
+
+                if (activity is { Length: > 0 })
+                {
+                    sequences.Add((activity, sequenceModifiers));
+                }
+            }
+
+            var edits = new List<(int Start, int End)>();
+            var appliedNames = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var played = 0;
+            var replaced = 0;
+
+            var candidates = sequences.Select(sequence =>
+            {
+                var active = modifiers
+                    .Where(modifier => modifier.Activity == null || modifier.Activity.Equals(sequence.Activity.Value, StringComparison.OrdinalIgnoreCase))
+                    .Select(static modifier => modifier.Name)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var matched = sequence.Modifiers.Where(modifier => active.Contains(modifier.Name)).ToList();
+                var others = sequence.Modifiers
+                    .Where(modifier => !active.Contains(modifier.Name))
+                    .Select(static modifier => modifier.Name.ToUpperInvariant())
+                    .Order(StringComparer.Ordinal);
+
+                return (sequence.Activity, sequence.Modifiers, Matched: matched, Key: $"{sequence.Activity.Value.ToUpperInvariant()}|{string.Join('|', others)}");
+            });
+
+            foreach (var group in candidates.GroupBy(static candidate => candidate.Key, StringComparer.Ordinal))
+            {
+                var best = group.Max(static candidate => candidate.Matched.Count);
+
+                if (best == 0)
+                {
+                    continue;
+                }
+
+                foreach (var candidate in group)
+                {
+                    if (candidate.Matched.Count == best)
+                    {
+                        played++;
+                        appliedNames.UnionWith(candidate.Matched.Select(static modifier => modifier.Name));
+                        edits.AddRange(candidate.Matched.Select(modifier => (GetLineStart(vmdl, modifier.Start), GetLineEnd(vmdl, modifier.End))));
+                    }
+                    else
+                    {
+                        // Still there to be played by name, just not picked for the activity any more
+                        replaced++;
+                        edits.Add((candidate.Activity.Index, candidate.Activity.Index + candidate.Activity.Length));
+                        edits.AddRange(candidate.Modifiers.Select(modifier => (GetLineStart(vmdl, modifier.Start), GetLineEnd(vmdl, modifier.End))));
+                    }
+                }
+            }
+
+            if (edits.Count == 0)
+            {
+                return vmdl;
+            }
+
+            foreach (var (start, end) in edits.OrderByDescending(static edit => edit.Start))
+            {
+                vmdl = vmdl.Remove(start, end - start);
+            }
+
+            details?.Add($"{played} sequences made for the {string.Join(", ", appliedNames)} activity modifiers play by default" +
+                (replaced > 0 ? $" over {replaced} others" : string.Empty));
 
             return Validate(vmdl);
         }
@@ -633,6 +758,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"\G\{\s*_class\s*=\s*""(?<class>[^""]*)""(?:\s*name\s*=\s*""(?<name>[^""]*)"")?", RegexOptions.CultureInvariant)]
         private static partial Regex ObjectHeaderRegex();
+
+        [GeneratedRegex(@"activity_name\s*=\s*""(?<name>[^""]*)""", RegexOptions.CultureInvariant)]
+        private static partial Regex ActivityNameRegex();
 
         [GeneratedRegex(@"\G\{\s*mesh_name\s*=\s*""(?<name>[^""]*)""\s*\}", RegexOptions.CultureInvariant)]
         private static partial Regex MeshReferenceRegex();

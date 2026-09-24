@@ -35,6 +35,9 @@ namespace GUI.Forms
         private readonly VrfGuiContext guiContext;
         private readonly Package package;
         private readonly List<(HeroSlot Slot, ComboBox ComboBox, ComboBox StyleComboBox, ComboBox SkinComboBox)> slotRows = [];
+
+        // Slots whose item was picked by hand, which choosing a set leaves alone unless the set has an item for them
+        private readonly HashSet<string> pickedSlots = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, List<(string Name, string[] Materials)>> materialGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<(IconSlot Slot, ComboBox ComboBox, PictureBox Picture)> iconRows = [];
         private readonly HashSet<IconSlot> pickedIcons = [];
@@ -362,6 +365,7 @@ namespace GUI.Forms
                 BuildIconRows(hero);
                 BuildSoundRows(hero);
                 pickedEffects.Clear();
+                pickedSlots.Clear();
                 ResetLoadout(persona: false);
             }
             finally
@@ -574,7 +578,21 @@ namespace GUI.Forms
                 var set = itemSetComboBox.SelectedItem as ItemSet;
 
                 // A set made for the persona only makes sense with the persona equipped
-                ResetLoadout(persona: set?.Items.Any(static item => IsPersonaSlot(item.Slot)) == true);
+                var persona = set?.Items.Any(static item => IsPersonaSlot(item.Slot)) == true;
+
+                // Items picked by hand in slots the set has nothing for stay, e.g. an arcana chosen before the set
+                var keptRows = set == null
+                    ? []
+                    : slotRows
+                        .Where(row => pickedSlots.Contains(row.Slot.Name)
+                            && !set.Items.Any(item => item.Slot.Equals(row.Slot.Name, StringComparison.OrdinalIgnoreCase))
+                            && !row.Slot.Name.Equals(PersonaSelectorSlot, StringComparison.OrdinalIgnoreCase)
+                            && (IsSharedSlot(row.Slot.Name) || IsPersonaSlot(row.Slot.Name) == persona))
+                        .Select(static row => (Row: row, Item: row.ComboBox.SelectedIndex, Style: row.StyleComboBox.SelectedIndex, Skin: row.SkinComboBox.SelectedIndex))
+                        .ToList();
+
+                ResetLoadout(persona);
+                pickedSlots.Clear();
 
                 if (set != null)
                 {
@@ -587,6 +605,15 @@ namespace GUI.Forms
                             SelectItem(comboBox, candidate => candidate == item);
                         }
                     }
+                }
+
+                foreach (var (row, item, style, skin) in keptRows)
+                {
+                    // In this order, since picking an item resets its style, and picking a style resets its skin
+                    row.ComboBox.SelectedIndex = item;
+                    row.StyleComboBox.SelectedIndex = style;
+                    row.SkinComboBox.SelectedIndex = skin;
+                    pickedSlots.Add(row.Slot.Name);
                 }
             }
             finally
@@ -614,10 +641,22 @@ namespace GUI.Forms
 
             try
             {
-                // Switching between the hero and its persona swaps out the whole loadout
-                if (sender is ComboBox { Tag: HeroSlot slot } comboBox && slot.Name.Equals(PersonaSelectorSlot, StringComparison.OrdinalIgnoreCase))
+                if (sender is ComboBox { Tag: HeroSlot slot } comboBox)
                 {
-                    ResetLoadout(IsPersonaItem(GetItem(comboBox)), keepPersonaSelector: true);
+                    // Switching between the hero and its persona swaps out the whole loadout
+                    if (slot.Name.Equals(PersonaSelectorSlot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ResetLoadout(IsPersonaItem(GetItem(comboBox)), keepPersonaSelector: true);
+                        pickedSlots.Clear();
+                    }
+                    else if (GetItem(comboBox) is { IsDefault: false })
+                    {
+                        pickedSlots.Add(slot.Name);
+                    }
+                    else
+                    {
+                        pickedSlots.Remove(slot.Name);
+                    }
                 }
 
                 // A hand picked item means the loadout no longer is the set that was chosen

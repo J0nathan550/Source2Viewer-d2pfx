@@ -326,6 +326,18 @@ namespace GUI.Types.Exporter.CharacterAssets
                     var details = new List<string>();
                     var vmdl = ReadModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, progress, details);
 
+                    if (replacement.ActivityModifiers.Count > 0)
+                    {
+                        try
+                        {
+                            vmdl = ModelDocEditor.ApplyActivityModifiers(vmdl, replacement.ActivityModifiers, details);
+                        }
+                        catch (Exception e)
+                        {
+                            progress.Report($"  ! {replacement.Target}: activity modifiers were not applied: {e.Message}");
+                        }
+                    }
+
                     foreach (var merged in replacement.Merged)
                     {
                         try

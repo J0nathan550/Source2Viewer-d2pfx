@@ -261,11 +261,33 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// The material group of the hero's model. A style's skin applies to the model the item swaps the hero's for,
-        /// and to the hero's own model when the item has no model of its own.
+        /// and to the hero's own model when the item has no model of its own. Items can also pick the hero's skin while
+        /// wearing a model of their own, e.g. an arcana hair that sets the hero's body alight.
         /// </summary>
         public int HeroSkin => HeroModelItem?.Skin is { } skin and not 0
             ? skin
-            : Items.LastOrDefault(item => item.Item.ModelPlayer == null && item.Skin != 0 && IsWornByHero(item.Item.Slot))?.Skin ?? 0;
+            : HeroSkinModifier
+                ?? Items.LastOrDefault(item => item.Item.ModelPlayer == null && item.Skin != 0 && IsWornByHero(item.Item.Slot))?.Skin
+                ?? 0;
+
+        private int? HeroSkinModifier => Items
+            .Where(item => IsWornByHero(item.Item.Slot))
+            .SelectMany(static item => item.Modifiers)
+            .LastOrDefault(static modifier => modifier is { Type: "model_skin", Asset: null, LoadoutOnly: false, Value: > 0 })?
+            .Value;
+
+        /// <summary>
+        /// The activity modifiers the items worn by the hero set on it, which make the hero play the sequences made for
+        /// them, e.g. an arcana's spawn and teleport animations.
+        /// </summary>
+        public List<ActivityModifier> ActivityModifiers => [.. Items
+            .Where(item => IsWornByHero(item.Item.Slot))
+            .SelectMany(static item => item.Modifiers)
+            .Where(static modifier => modifier is { Type: "activity", LoadoutOnly: false, Modifier.Length: > 0 })
+            .Select(static modifier => new ActivityModifier(
+                modifier.Asset is null || modifier.Asset.Equals("ALL", StringComparison.OrdinalIgnoreCase) ? null : modifier.Asset,
+                modifier.Modifier!))
+            .Distinct()];
 
         /// <summary>
         /// The model an item shows. Items can swap their own model for a style, and other items can swap it for a

@@ -81,7 +81,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>
         /// Writes the equipped look over the hero's default assets, so it shows without the items being equipped: the
         /// arcana or persona model as the hero's model, chosen items over the default items' models, particles the items
-        /// swap in over the ones they replace, and the particles items create added to their models.
+        /// swap in over the ones they replace, the particles items create added to their models, and the skin and
+        /// animations items pick for the hero made its defaults.
         /// </summary>
         public bool ReplaceDefaults { get; set; } = true;
 
@@ -105,6 +106,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>Models whose meshes are added to this one, since they have no model of their own to be written over.</summary>
         public List<MergedModel> Merged { get; init; } = [];
+
+        /// <summary>The activity modifiers to apply, since nothing sets them without the items equipped.</summary>
+        public List<ActivityModifier> ActivityModifiers { get; init; } = [];
     }
 
     /// <summary>
@@ -583,10 +587,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             var heroModel = loadout.HeroModel ?? hero.Model;
             var (heroSkin, heroBodyGroups) = GetModelLook(loadout, heroModel, loadout.HeroSkin);
+            var activityModifiers = loadout.ActivityModifiers;
 
             Enqueue(heroModel);
 
-            if (!CharacterLoadout.IsSamePath(heroModel, hero.Model) || heroSkin != 0 || heroParticles.Count > 0 || merged.Count > 0 || heroBodyGroups.Count > 0)
+            if (!CharacterLoadout.IsSamePath(heroModel, hero.Model) || heroSkin != 0 || heroParticles.Count > 0 || merged.Count > 0 || heroBodyGroups.Count > 0
+                || activityModifiers.Count > 0)
             {
                 plan.ModelReplacements.Add(new ModelReplacement(
                     NormalizePath(heroModel),
@@ -596,6 +602,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 {
                     BodyGroups = heroBodyGroups,
                     Merged = merged,
+                    ActivityModifiers = activityModifiers,
                 });
             }
         }
@@ -613,8 +620,9 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
 
                 var (skin, bodyGroups) = GetModelLook(loadout, modifier.Modifier, item.Skin);
+                var activityModifiers = loadout.ActivityModifiers;
 
-                if (CharacterLoadout.IsSamePath(modifier.Asset, modifier.Modifier) && skin == 0 && bodyGroups.Count == 0)
+                if (CharacterLoadout.IsSamePath(modifier.Asset, modifier.Modifier) && skin == 0 && bodyGroups.Count == 0 && activityModifiers.Count == 0)
                 {
                     continue;
                 }
@@ -622,6 +630,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(modifier.Modifier), NormalizePath(modifier.Asset), skin, [])
                 {
                     BodyGroups = bodyGroups,
+                    ActivityModifiers = activityModifiers,
                 });
 
                 Enqueue(modifier.Modifier);

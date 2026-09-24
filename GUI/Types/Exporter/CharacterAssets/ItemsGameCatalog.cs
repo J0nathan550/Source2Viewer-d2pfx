@@ -18,7 +18,10 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <param name="Modifier">What it is replaced with.</param>
     /// <param name="Style">The item style this applies to, or null when it applies to every style.</param>
     /// <param name="LoadoutOnly">Whether this only applies while the hero is shown in the loadout screen.</param>
-    /// <param name="Value">The number some types carry, e.g. the level of "arcana_level" or the choice of "bodygroup_visibility".</param>
+    /// <param name="Value">
+    /// The number some types carry, e.g. the level of "arcana_level", the choice of "bodygroup_visibility" or the material
+    /// group of "model_skin".
+    /// </param>
     sealed record AssetModifier(string Type, string? Asset, string? Modifier, int? Style, bool LoadoutOnly, int? Value = null)
     {
         /// <summary>
@@ -384,7 +387,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     NullIfEmpty(GetValue(modifier, "modifier")),
                     style,
                     GetValue(modifier, "spawn_in_loadout_only") == "1" || GetValue(modifier, "spawn_in_alternate_loadout_only") == "1",
-                    ParseInt(GetValue(modifier, "level") ?? GetValue(modifier, "value")))
+                    ParseInt(GetValue(modifier, "level") ?? GetValue(modifier, "value") ?? GetValue(modifier, "skin")))
                 {
                     RequiredArcanaLevel = ParseInt(GetValue(modifier, "required_arcana_level")),
                 });
