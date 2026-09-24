@@ -24,6 +24,9 @@ namespace GUI.Forms
     {
         private const string PersonaSelectorSlot = "persona_selector";
 
+        // Width of the controls next to the preview at 96 DPI, until the divider is dragged
+        private const int DefaultControlsWidth = 540;
+
         // Remembered for the next time the dialog opens
         private static string? lastHeroName;
         private static CharacterExportOptions? lastOptions;
@@ -35,7 +38,15 @@ namespace GUI.Forms
         private readonly Dictionary<string, List<(string Name, string[] Materials)>> materialGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<(IconSlot Slot, ComboBox ComboBox, PictureBox Picture)> iconRows = [];
         private readonly HashSet<IconSlot> pickedIcons = [];
+        private readonly List<(SoundSlot Slot, ComboBox ComboBox)> soundRows = [];
+        private readonly HashSet<SoundSlot> pickedSounds = [];
         private readonly Dictionary<string, Image?> thumbnails = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, string>? soundEventFiles;
+#pragma warning disable CA2213 // Disposed with the sounds table it is added to
+        private ComboBox? voiceComboBox;
+#pragma warning restore CA2213
+        private bool pickedVoice;
+        private bool updatingSounds;
         private GLCharacterPreviewViewer? previewViewer;
         private int heroIndex = -1;
         private bool updatingSelection;
@@ -66,6 +77,9 @@ namespace GUI.Forms
             IncludeAudio = includeAudioCheckBox.Checked,
             Icons = iconsCheckBox.Checked,
             IconReplacements = GetIconReplacements(),
+            Sounds = soundsCheckBox.Checked,
+            SoundReplacements = GetSoundReplacements(),
+            Voice = (voiceComboBox?.SelectedItem as VoiceChoice)?.Criteria,
             Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
@@ -90,6 +104,9 @@ namespace GUI.Forms
             toolTip.SetToolTip(heroVoiceCheckBox, "The hero's game_sounds_vo file, which points at the voice lines in the game");
             toolTip.SetToolTip(itemSoundsCheckBox, "The files the sound events the items swap in are defined in");
             toolTip.SetToolTip(includeAudioCheckBox, "Also export every sound the exported sound events play, which is most of the export's size");
+            toolTip.SetToolTip(soundsCheckBox,
+                "Write the sounds and voice picked on the Sounds tab over the hero's own, in the sound event files that define them,\n" +
+                "so they play without the items being equipped");
             toolTip.SetToolTip(replaceDefaultsCheckBox,
                 "Write the chosen look over the hero's default assets, so it shows without the items being equipped:\n" +
                 "the arcana or persona model as the hero's model, chosen items over the default items' models,\n" +
@@ -159,6 +176,7 @@ namespace GUI.Forms
             heroVoiceCheckBox.Checked = options.HeroVoice;
             includeAudioCheckBox.Checked = options.IncludeAudio;
             iconsCheckBox.Checked = options.Icons;
+            soundsCheckBox.Checked = options.Sounds;
             pedestalCheckBox.Checked = options.Pedestal;
             replaceDefaultsCheckBox.Checked = options.ReplaceDefaults;
             replaceSharedParticlesCheckBox.Checked = options.ReplaceSharedParticles;
@@ -167,6 +185,17 @@ namespace GUI.Forms
         private void ReplaceDefaultsCheckBox_CheckedChanged(object? sender, EventArgs e)
         {
             replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+
+            var savedWidth = Settings.Config.CharacterExportControlsWidth;
+
+            mainSplitContainer.Panel1MinSize = this.AdjustForDPI(200);
+            SetControlsWidth(this.AdjustForDPI(savedWidth > 0 ? savedWidth : DefaultControlsWidth));
+            mainSplitContainer.Panel2MinSize = this.AdjustForDPI(440);
         }
 
         protected override void OnShown(EventArgs e)
@@ -200,6 +229,14 @@ namespace GUI.Forms
 
             lastOptions = Options;
 
+            var controlsWidth = (int)MathF.Round(mainSplitContainer.Panel2.Width * 96f / DeviceDpi);
+
+            if (controlsWidth != Settings.Config.CharacterExportControlsWidth)
+            {
+                Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                Settings.Save();
+            }
+
             foreach (var (_, _, picture) in iconRows)
             {
                 picture.Image = null;
@@ -213,6 +250,42 @@ namespace GUI.Forms
             thumbnails.Clear();
 
             base.OnFormClosed(e);
+        }
+
+        /// <summary>
+        /// Moves the divider so the controls get the given width, as far as the preview's minimum width lets them.
+        /// </summary>
+        private void SetControlsWidth(int width)
+        {
+            var maximum = mainSplitContainer.Width - mainSplitContainer.SplitterWidth - mainSplitContainer.Panel2MinSize;
+            var distance = mainSplitContainer.Width - mainSplitContainer.SplitterWidth - width;
+
+            mainSplitContainer.SplitterDistance = Math.Clamp(distance, mainSplitContainer.Panel1MinSize, Math.Max(mainSplitContainer.Panel1MinSize, maximum));
+        }
+
+        private void MainSplitContainer_SplitterMoved(object? sender, SplitterEventArgs e) => mainSplitContainer.Invalidate();
+
+        /// <summary>
+        /// Draws the divider between the preview and the controls, which is otherwise the same color as the dialog, with
+        /// a grip in its middle to show it can be dragged.
+        /// </summary>
+        private void MainSplitContainer_Paint(object? sender, PaintEventArgs e)
+        {
+            var bounds = mainSplitContainer.SplitterRectangle;
+            var x = bounds.X + (bounds.Width / 2);
+            var y = bounds.Y + (bounds.Height / 2);
+            var dot = Math.Max(2, this.AdjustForDPI(3));
+            var gap = dot * 2;
+
+            using var pen = new Pen(Themer.CurrentThemeColors.Border, Math.Max(1, this.AdjustForDPI(1)));
+            e.Graphics.DrawLine(pen, x, bounds.Top, x, bounds.Bottom);
+
+            using var brush = new SolidBrush(Themer.CurrentThemeColors.Contrast);
+
+            for (var i = -2; i <= 2; i++)
+            {
+                e.Graphics.FillEllipse(brush, x - (dot / 2f), y + (i * gap) - (dot / 2f), dot, dot);
+            }
         }
 
         private async Task LoadPreviewAsync()
@@ -283,6 +356,7 @@ namespace GUI.Forms
                 BuildSlotRows(hero);
                 BuildItemSets(hero);
                 BuildIconRows(hero);
+                BuildSoundRows(hero);
                 ResetLoadout(persona: false);
             }
             finally
@@ -335,10 +409,10 @@ namespace GUI.Forms
 
                 toolTip.SetToolTip(label, slot.Name);
 
-                var comboBox = new ThemedComboBox
+                var comboBox = new SearchableComboBox
                 {
                     Dock = DockStyle.Fill,
-                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    DropDownWidth = this.AdjustForDPI(360),
                     MaxDropDownItems = 20,
                     Tag = slot,
                 };
@@ -949,6 +1023,7 @@ namespace GUI.Forms
 
             pedestalCheckBox.Enabled = loadout.Pedestals.Any();
             UpdateIconChoices(loadout);
+            UpdateSoundChoices(loadout);
         }
 
         /// <summary>
@@ -1097,6 +1172,190 @@ namespace GUI.Forms
 
         private List<IconReplacement> GetIconReplacements()
             => [.. iconRows.SelectMany(row => row.ComboBox.SelectedItem is IconChoice choice ? row.Slot.GetReplacements(choice, Exists) : [])];
+
+        /// <summary>
+        /// Lists the voices the hero's items switch it to and the sounds they swap, the hero's own sounds before the ones
+        /// every hero plays.
+        /// </summary>
+        private void BuildSoundRows(HeroDefinition hero)
+        {
+            soundsTable.SuspendLayout();
+
+            foreach (var control in soundsTable.Controls.Cast<Control>().ToList())
+            {
+                control.Dispose();
+            }
+
+            soundsTable.Controls.Clear();
+            soundsTable.RowStyles.Clear();
+            soundsTable.RowCount = 0;
+            soundRows.Clear();
+            pickedSounds.Clear();
+            voiceComboBox = null;
+            pickedVoice = false;
+
+            soundEventFiles ??= CharacterSounds.GetEventFiles(package);
+
+            var voices = CharacterSounds.GetVoices(catalog, hero, HeroResponseRules.Load(package, hero));
+            var slots = CharacterSounds.GetSlots(catalog, hero, soundEventFiles);
+
+            void AddFullRow(Control control)
+            {
+                var row = soundsTable.RowCount++;
+                soundsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                soundsTable.Controls.Add(control, 0, row);
+                soundsTable.SetColumnSpan(control, 2);
+            }
+
+            void AddGroup(string text, string toolTipText)
+            {
+                var label = new Label
+                {
+                    AutoSize = true,
+                    Text = text,
+                    Font = groupFont ??= new Font(Font, FontStyle.Bold),
+                    Margin = new Padding(3, 8, 3, 3),
+                };
+
+                toolTip.SetToolTip(label, toolTipText);
+                AddFullRow(label);
+            }
+
+            ComboBox AddRow(string text, string toolTipText, IEnumerable<object> choices)
+            {
+                var label = new Label
+                {
+                    AutoSize = true,
+                    Anchor = AnchorStyles.Left,
+                    MaximumSize = new Size(this.AdjustForDPI(170), 0),
+                    Text = text,
+                    Margin = new Padding(3, 6, 6, 3),
+                };
+
+                var comboBox = new ThemedComboBox
+                {
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right,
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    DropDownWidth = this.AdjustForDPI(360),
+                    MaxDropDownItems = 20,
+                };
+
+                toolTip.SetToolTip(label, toolTipText);
+
+                foreach (var choice in choices)
+                {
+                    comboBox.Items.Add(choice);
+                }
+
+                var row = soundsTable.RowCount++;
+                soundsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                soundsTable.Controls.Add(label, 0, row);
+                soundsTable.Controls.Add(comboBox, 1, row);
+
+                return comboBox;
+            }
+
+            if (voices.Count < 2 && slots.Count == 0)
+            {
+                AddFullRow(new Label
+                {
+                    AutoSize = true,
+                    Text = $"No item comes with other sounds for {hero.DisplayName}.",
+                    Margin = new Padding(3, 8, 3, 3),
+                });
+            }
+
+            if (voices.Count > 1)
+            {
+                AddGroup("Voice", "Voices the hero's items switch it to, like an arcana's");
+
+                voiceComboBox = AddRow("Voice lines",
+                    "The voice's lines are written over the hero's own ones, matched by the situation they are spoken in.\n" +
+                    "The counts are how many of the hero's lines the voice has a line for.",
+                    voices);
+
+                voiceComboBox.SelectedIndexChanged += VoiceComboBox_SelectedIndexChanged;
+            }
+
+            string? group = null;
+
+            foreach (var slot in slots)
+            {
+                var slotGroup = slot.Shared ? CharacterSounds.SharedGroup : CharacterSounds.HeroGroup;
+
+                if (slotGroup != group)
+                {
+                    group = slotGroup;
+
+                    AddGroup(group, slot.Shared
+                        ? "Sounds every hero plays, like the blink dagger's. Writing over them changes them for every hero,\nso they are only replaced when picked here by hand."
+                        : "The hero's own sounds, which the equipped items' sounds are written over");
+                }
+
+                var comboBox = AddRow(slot.DisplayName, $"{slot.Event}\n{slot.File}", slot.Choices);
+                comboBox.Tag = slot;
+                comboBox.SelectedIndexChanged += SoundComboBox_SelectedIndexChanged;
+
+                soundRows.Add((slot, comboBox));
+            }
+
+            Themer.ThemeControl(soundsTable);
+            soundsTable.ResumeLayout(true);
+        }
+
+        /// <summary>
+        /// Shows the voice and the sounds the equipped items come with, except where one was picked by hand. Sounds every
+        /// hero plays are left as they are unless picked by hand.
+        /// </summary>
+        private void UpdateSoundChoices(CharacterLoadout loadout)
+        {
+            updatingSounds = true;
+
+            try
+            {
+                if (voiceComboBox != null && (!pickedVoice || voiceComboBox.SelectedIndex < 0))
+                {
+                    var criteria = loadout.VoiceCriteria;
+
+                    voiceComboBox.SelectedItem = voiceComboBox.Items.OfType<VoiceChoice>()
+                        .FirstOrDefault(choice => string.Equals(choice.Criteria, criteria, StringComparison.OrdinalIgnoreCase))
+                        ?? voiceComboBox.Items[0];
+                }
+
+                foreach (var (slot, comboBox) in soundRows)
+                {
+                    if (!pickedSounds.Contains(slot) || comboBox.SelectedIndex < 0)
+                    {
+                        comboBox.SelectedItem = slot.Shared ? slot.Default : loadout.GetSound(slot);
+                    }
+                }
+            }
+            finally
+            {
+                updatingSounds = false;
+            }
+        }
+
+        private void VoiceComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (!updatingSounds)
+            {
+                pickedVoice = true;
+            }
+        }
+
+        private void SoundComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (!updatingSounds && sender is ComboBox { Tag: SoundSlot slot })
+            {
+                pickedSounds.Add(slot);
+            }
+        }
+
+        private List<SoundReplacement> GetSoundReplacements()
+            => [.. soundRows
+                .Where(static row => row.ComboBox.SelectedItem is SoundChoice choice && choice != row.Slot.Default)
+                .Select(static row => new SoundReplacement(((SoundChoice)row.ComboBox.SelectedItem!).Event, row.Slot.Event))];
 
         private bool Exists(string path) => package.FindEntry(path) != null;
 

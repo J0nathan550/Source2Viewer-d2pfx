@@ -188,6 +188,29 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// The version of a sound event the equipped items play, the game's own one when none of them swaps it.
+        /// </summary>
+        public SoundChoice GetSound(SoundSlot slot)
+        {
+            var sound = Items
+                .SelectMany(static item => item.Modifiers)
+                .LastOrDefault(modifier => modifier is { Type: "sound", LoadoutOnly: false, Modifier: not null }
+                    && string.Equals(modifier.Asset, slot.Event, StringComparison.OrdinalIgnoreCase))?
+                .Modifier;
+
+            return slot.Choices.FirstOrDefault(choice => choice.Event.Equals(sound, StringComparison.OrdinalIgnoreCase)) ?? slot.Default;
+        }
+
+        /// <summary>
+        /// The response criteria the equipped items set, which switches the hero to another voice, e.g. an arcana's, or
+        /// null when the hero keeps its own.
+        /// </summary>
+        public string? VoiceCriteria => Items
+            .SelectMany(static item => item.Modifiers)
+            .LastOrDefault(static modifier => modifier is { Type: "response_criteria", LoadoutOnly: false, Asset.Length: > 0 })?
+            .Asset;
+
+        /// <summary>
         /// The item that swaps the hero's own model, such as an arcana or a persona.
         /// </summary>
         public EquippedItem? HeroModelItem => Items.LastOrDefault(item => GetHeroModelSwap(item) != null);

@@ -223,6 +223,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportRawFiles(plan.RawFiles, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ApplyReplacements(plan, contentRoot, fileLoader, progress);
+                failed += ApplySoundReplacements(plan.SoundEventEdits, contentRoot, fileLoader, progress);
                 failed += ExportIcons(plan.IconReplacements, gameRoot, fileLoader, progress, cancellationToken);
 
                 foreach (var note in plan.Notes)
@@ -401,6 +402,49 @@ namespace GUI.Types.Exporter.CharacterAssets
             foreach (var skipped in plan.SkippedSharedParticles)
             {
                 progress.Report($"  - left {skipped.Target} alone, every hero uses it (it would become {skipped.Source})");
+            }
+
+            return failed;
+        }
+
+        /// <summary>
+        /// Writes the sound event files over their decompiled sources with the chosen sounds and voice lines written over
+        /// the hero's own.
+        /// </summary>
+        private static int ApplySoundReplacements(List<SoundEventEdit> edits, string outputRoot, GameFileLoader fileLoader, IProgress<string> progress)
+        {
+            if (edits.Count == 0)
+            {
+                return 0;
+            }
+
+            progress.Report("Replacing the hero's sounds...");
+
+            var failed = 0;
+
+            foreach (var edit in edits)
+            {
+                try
+                {
+                    using var resource = fileLoader.LoadFile(edit.File + GameFileLoader.CompiledFileSuffix) ?? throw new FileNotFoundException("Could not be read");
+
+                    var targetPath = GetOutputPath(outputRoot, edit.File);
+                    Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                    File.WriteAllText(targetPath, edit.Apply(resource));
+
+                    progress.Report($"  {edit.File}:");
+
+                    foreach (var detail in edit.Details)
+                    {
+                        progress.Report($"    {detail}");
+                    }
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED {edit.File}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to replace sounds in '{edit.File}': {e}");
+                }
             }
 
             return failed;

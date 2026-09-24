@@ -53,6 +53,21 @@ namespace GUI.Types.Exporter.CharacterAssets
         public IReadOnlyList<IconReplacement> IconReplacements { get; set; } = [];
 
         /// <summary>
+        /// Writes <see cref="SoundReplacements"/> and the <see cref="Voice"/> lines over the hero's own sounds, in the
+        /// sound event files they are defined in.
+        /// </summary>
+        public bool Sounds { get; set; } = true;
+
+        /// <summary>The sound events to write over others when <see cref="Sounds"/> is set.</summary>
+        public IReadOnlyList<SoundReplacement> SoundReplacements { get; set; } = [];
+
+        /// <summary>
+        /// The response criteria of the voice whose lines are written over the hero's own when <see cref="Sounds"/> is
+        /// set, see <see cref="HeroResponseRules.MapVoice"/>, or null to keep the hero's voice.
+        /// </summary>
+        public string? Voice { get; set; }
+
+        /// <summary>
         /// The models the hero stands on in the loadout screen, and the particles items only play there.
         /// </summary>
         public bool Pedestal { get; set; }
@@ -126,6 +141,9 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Compiled icons copied into the game folder, as package paths.</summary>
         public List<IconReplacement> IconReplacements { get; } = [];
 
+        /// <summary>Sound event files rewritten with other events' definitions once everything is exported.</summary>
+        public List<SoundEventEdit> SoundEventEdits { get; } = [];
+
         /// <summary>Things worth knowing about how the loadout was exported.</summary>
         public List<string> Notes { get; } = [];
 
@@ -143,18 +161,6 @@ namespace GUI.Types.Exporter.CharacterAssets
         {
             ".vmdl", ".vpcf", ".vsnap", ".vsndevts", ".vsnd",
         };
-
-        // Sound event files that never hold hero or cosmetic sounds
-        private static readonly string[] IgnoredSoundEventFolders =
-        [
-            "soundevents/music/",
-            "soundevents/teamfandom/",
-            "soundevents/team_fandom/",
-            "soundevents/stickers/",
-        ];
-
-        private const string VoiceScriptsFolder = "soundevents/voscripts/";
-        private const string SoundEventsTypeName = "vsndevts_c";
 
         private readonly Package package;
         private readonly GameFileLoader fileLoader;
@@ -215,6 +221,11 @@ namespace GUI.Types.Exporter.CharacterAssets
                         plan.Missing.Add(icon.Source);
                     }
                 }
+            }
+
+            if (options.Sounds)
+            {
+                AddSoundReplacements(loadout.Hero, options, plan);
             }
 
             while (queue.TryDequeue(out var next))
@@ -717,6 +728,141 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
         }
 
+        /// <summary>
+        /// Works out how the sound event files get rewritten for <see cref="CharacterExportOptions.SoundReplacements"/>
+        /// and the <see cref="CharacterExportOptions.Voice"/>, and queues those files, and the sounds the copied
+        /// definitions play when <see cref="CharacterExportOptions.IncludeAudio"/> is set.
+        /// </summary>
+        private void AddSoundReplacements(HeroDefinition hero, CharacterExportOptions options, CharacterExportPlan plan)
+        {
+            if (options.SoundReplacements.Count == 0 && options.Voice == null)
+            {
+                return;
+            }
+
+            var index = soundEvents ??= BuildSoundEventIndex(hero);
+            var edits = new Dictionary<string, SoundEventEdit>(StringComparer.OrdinalIgnoreCase);
+            var sounds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            SoundEventEdit? Replace(string target, string source)
+            {
+                if (!index.TryGetValue(target, out var targetEvent))
+                {
+                    plan.Missing.Add($"sound event {target}");
+                    return null;
+                }
+
+                if (!index.TryGetValue(source, out var sourceEvent))
+                {
+                    plan.Missing.Add($"sound event {source}");
+                    return null;
+                }
+
+                if (!edits.TryGetValue(targetEvent.File, out var edit))
+                {
+                    edit = new SoundEventEdit(targetEvent.File, ReadEventNames(targetEvent.File));
+                    edits.Add(edit.File, edit);
+                }
+
+                edit.Events[target] = sourceEvent.Data;
+                CollectEventSounds(sourceEvent.Data, sounds, depth: 0);
+                AddPlayedEvents(edit, sourceEvent, sounds, depth: 0);
+
+                return edit;
+            }
+
+            foreach (var (source, target) in options.SoundReplacements)
+            {
+                Replace(target, source)?.Details.Add($"{target} <- {source}");
+            }
+
+            if (options.Voice is { } criteria)
+            {
+                var mapping = HeroResponseRules.Load(package, hero)?.MapVoice(criteria);
+
+                if (mapping == null || mapping.Lines.Count == 0)
+                {
+                    plan.Notes.Add($"the hero's response rules have no lines for the {criteria} voice, it keeps its own");
+                }
+                else
+                {
+                    SoundEventEdit? voiceEdit = null;
+                    var replaced = 0;
+
+                    foreach (var (line, voiceLine) in mapping.Lines)
+                    {
+                        if (Replace(line, voiceLine) is { } edit)
+                        {
+                            voiceEdit = edit;
+                            replaced++;
+                        }
+                    }
+
+                    voiceEdit?.Details.Add($"{replaced} of the hero's {mapping.HeroLines} voice lines <- the {criteria} voice");
+                }
+            }
+
+            foreach (var edit in edits.Values)
+            {
+                plan.SoundEventEdits.Add(edit);
+                Enqueue(edit.File, includeSounds: options.IncludeAudio);
+            }
+
+            if (options.IncludeAudio)
+            {
+                foreach (var sound in sounds)
+                {
+                    Enqueue(sound);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds the events a copied definition plays, e.g. its "soundevent_layer2", when they are defined next to it but
+        /// not in the file it is copied into, which would otherwise not have them.
+        /// </summary>
+        private void AddPlayedEvents(SoundEventEdit edit, (string File, KVObject Data) soundEvent, HashSet<string> sounds, int depth)
+        {
+            if (depth > 8)
+            {
+                return;
+            }
+
+            foreach (var name in GetStrings(soundEvent.Data))
+            {
+                if (edit.FileEvents.Contains(name)
+                    || edit.Events.ContainsKey(name)
+                    || !soundEvents!.TryGetValue(name, out var played)
+                    || !played.File.Equals(soundEvent.File, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                edit.Events[name] = played.Data;
+                CollectEventSounds(played.Data, sounds, depth: 0);
+                AddPlayedEvents(edit, played, sounds, depth + 1);
+            }
+        }
+
+        private HashSet<string> ReadEventNames(string file)
+        {
+            try
+            {
+                using var resource = fileLoader.LoadFile(file + GameFileLoader.CompiledFileSuffix);
+
+                if (resource?.DataBlock != null)
+                {
+                    return resource.DataBlock.AsKeyValueCollection().Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            catch (Exception e)
+            {
+                progress?.Report($"  ! failed to read the sound events of \"{file}\": {e.Message}");
+            }
+
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
         private void CollectEventSounds(KVObject soundEvent, HashSet<string> sounds, int depth)
         {
             CollectSoundPaths(soundEvent, sounds);
@@ -731,24 +877,24 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         private static void CollectSoundPaths(KVObject value, HashSet<string> sounds)
+            => sounds.UnionWith(GetStrings(value).Where(static text => text.EndsWith(".vsnd", StringComparison.OrdinalIgnoreCase)));
+
+        private static IEnumerable<string> GetStrings(KVObject value)
         {
             switch (value.ValueType)
             {
-                case KVValueType.String:
-                    var text = value.ToString();
-
-                    if (text != null && text.EndsWith(".vsnd", StringComparison.OrdinalIgnoreCase))
-                    {
-                        sounds.Add(text);
-                    }
-
+                case KVValueType.String when value.ToString() is { } text:
+                    yield return text;
                     break;
 
                 case KVValueType.Collection:
                 case KVValueType.Array:
                     foreach (var child in value.Values)
                     {
-                        CollectSoundPaths(child, sounds);
+                        foreach (var text in GetStrings(child))
+                        {
+                            yield return text;
+                        }
                     }
 
                     break;
@@ -763,17 +909,17 @@ namespace GUI.Types.Exporter.CharacterAssets
             var heroVoiceFile = hero.VoiceFile != null ? NormalizePath(hero.VoiceFile) + GameFileLoader.CompiledFileSuffix : null;
 
             // Hero files go first so their definitions win over same named events elsewhere
-            var entries = GetPackageEntries(SoundEventsTypeName)
+            var entries = GetPackageEntries(CharacterSounds.SoundEventsTypeName)
                 .Where(entry =>
                 {
                     var path = entry.GetFullPath();
 
-                    if (path.StartsWith(VoiceScriptsFolder, StringComparison.OrdinalIgnoreCase))
+                    if (path.StartsWith(CharacterSounds.VoiceScriptsFolder, StringComparison.OrdinalIgnoreCase))
                     {
                         return path.Equals(heroVoiceFile, StringComparison.OrdinalIgnoreCase);
                     }
 
-                    return !IgnoredSoundEventFolders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase));
+                    return !CharacterSounds.IgnoredFolders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase));
                 })
                 .OrderByDescending(entry => entry.GetFullPath().Contains(hero.ShortName, StringComparison.OrdinalIgnoreCase));
 

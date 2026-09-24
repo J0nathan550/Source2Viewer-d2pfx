@@ -24,11 +24,16 @@ namespace GUI.Forms
             {
                 previewViewer?.Dispose();
                 previewViewer = null;
-                groupFont?.Dispose();
-                groupFont = null;
             }
 
             base.Dispose(disposing);
+
+            // The group labels are laid out with it until the controls are disposed
+            if (disposing)
+            {
+                groupFont?.Dispose();
+                groupFont = null;
+            }
         }
 
         #region Windows Form Designer generated code
@@ -40,7 +45,7 @@ namespace GUI.Forms
         private void InitializeComponent()
         {
             components = new System.ComponentModel.Container();
-            mainTable = new System.Windows.Forms.TableLayoutPanel();
+            mainSplitContainer = new System.Windows.Forms.SplitContainer();
             previewPanel = new System.Windows.Forms.Panel();
             previewStatusLabel = new System.Windows.Forms.Label();
             controlsTable = new System.Windows.Forms.TableLayoutPanel();
@@ -50,7 +55,7 @@ namespace GUI.Forms
             nextHeroButton = new ThemedButton();
             heroSearchTextBox = new ThemedTextBox();
             itemSetLabel = new System.Windows.Forms.Label();
-            itemSetComboBox = new ThemedComboBox();
+            itemSetComboBox = new SearchableComboBox();
             loadoutTabControl = new ThemedTabControl();
             itemsTabPage = new ThemedTabPage();
             slotsPanel = new System.Windows.Forms.Panel();
@@ -58,6 +63,9 @@ namespace GUI.Forms
             iconsTabPage = new ThemedTabPage();
             iconsPanel = new System.Windows.Forms.Panel();
             iconsTable = new System.Windows.Forms.TableLayoutPanel();
+            soundsTabPage = new ThemedTabPage();
+            soundsPanel = new System.Windows.Forms.Panel();
+            soundsTable = new System.Windows.Forms.TableLayoutPanel();
             includeGroupBox = new ThemedGroupBox();
             includeTable = new System.Windows.Forms.TableLayoutPanel();
             heroModelCheckBox = new System.Windows.Forms.CheckBox();
@@ -68,6 +76,7 @@ namespace GUI.Forms
             heroSoundsCheckBox = new System.Windows.Forms.CheckBox();
             heroVoiceCheckBox = new System.Windows.Forms.CheckBox();
             iconsCheckBox = new System.Windows.Forms.CheckBox();
+            soundsCheckBox = new System.Windows.Forms.CheckBox();
             includeAudioCheckBox = new System.Windows.Forms.CheckBox();
             pedestalCheckBox = new System.Windows.Forms.CheckBox();
             replaceDefaultsCheckBox = new System.Windows.Forms.CheckBox();
@@ -86,7 +95,10 @@ namespace GUI.Forms
             exportButton = new ThemedButton();
             previewTimer = new System.Windows.Forms.Timer(components);
             toolTip = new System.Windows.Forms.ToolTip(components);
-            mainTable.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)mainSplitContainer).BeginInit();
+            mainSplitContainer.Panel1.SuspendLayout();
+            mainSplitContainer.Panel2.SuspendLayout();
+            mainSplitContainer.SuspendLayout();
             previewPanel.SuspendLayout();
             controlsTable.SuspendLayout();
             heroNavigationTable.SuspendLayout();
@@ -95,6 +107,8 @@ namespace GUI.Forms
             slotsPanel.SuspendLayout();
             iconsTabPage.SuspendLayout();
             iconsPanel.SuspendLayout();
+            soundsTabPage.SuspendLayout();
+            soundsPanel.SuspendLayout();
             includeGroupBox.SuspendLayout();
             includeTable.SuspendLayout();
             outputGroupBox.SuspendLayout();
@@ -102,29 +116,37 @@ namespace GUI.Forms
             buttonsTable.SuspendLayout();
             SuspendLayout();
             //
-            // mainTable
+            // mainSplitContainer
             //
-            mainTable.ColumnCount = 2;
-            mainTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            mainTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 540F));
-            mainTable.Controls.Add(previewPanel, 0, 0);
-            mainTable.Controls.Add(controlsTable, 1, 0);
-            mainTable.Dock = System.Windows.Forms.DockStyle.Fill;
-            mainTable.Location = new System.Drawing.Point(0, 0);
-            mainTable.Name = "mainTable";
-            mainTable.Padding = new System.Windows.Forms.Padding(8);
-            mainTable.RowCount = 1;
-            mainTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            mainTable.Size = new System.Drawing.Size(1224, 840);
-            mainTable.TabIndex = 0;
+            mainSplitContainer.Dock = System.Windows.Forms.DockStyle.Fill;
+            mainSplitContainer.FixedPanel = System.Windows.Forms.FixedPanel.Panel2;
+            mainSplitContainer.Location = new System.Drawing.Point(8, 8);
+            mainSplitContainer.Name = "mainSplitContainer";
+            //
+            // mainSplitContainer.Panel1
+            //
+            mainSplitContainer.Panel1.Controls.Add(previewPanel);
+            mainSplitContainer.Panel1MinSize = 200;
+            //
+            // mainSplitContainer.Panel2
+            //
+            mainSplitContainer.Panel2.Controls.Add(controlsTable);
+            mainSplitContainer.Panel2MinSize = 440;
+            mainSplitContainer.Size = new System.Drawing.Size(1208, 824);
+            mainSplitContainer.SplitterDistance = 660;
+            mainSplitContainer.SplitterWidth = 8;
+            mainSplitContainer.TabIndex = 0;
+            mainSplitContainer.TabStop = false;
+            mainSplitContainer.SplitterMoved += MainSplitContainer_SplitterMoved;
+            mainSplitContainer.Paint += MainSplitContainer_Paint;
             //
             // previewPanel
             //
             previewPanel.Controls.Add(previewStatusLabel);
             previewPanel.Dock = System.Windows.Forms.DockStyle.Fill;
-            previewPanel.Location = new System.Drawing.Point(11, 11);
+            previewPanel.Location = new System.Drawing.Point(0, 0);
             previewPanel.Name = "previewPanel";
-            previewPanel.Size = new System.Drawing.Size(722, 759);
+            previewPanel.Size = new System.Drawing.Size(660, 824);
             previewPanel.TabIndex = 0;
             //
             // previewStatusLabel
@@ -132,7 +154,7 @@ namespace GUI.Forms
             previewStatusLabel.Dock = System.Windows.Forms.DockStyle.Fill;
             previewStatusLabel.Location = new System.Drawing.Point(0, 0);
             previewStatusLabel.Name = "previewStatusLabel";
-            previewStatusLabel.Size = new System.Drawing.Size(722, 759);
+            previewStatusLabel.Size = new System.Drawing.Size(660, 824);
             previewStatusLabel.TabIndex = 0;
             previewStatusLabel.Text = "Loading preview...";
             previewStatusLabel.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
@@ -150,7 +172,7 @@ namespace GUI.Forms
             controlsTable.Controls.Add(outputGroupBox, 0, 6);
             controlsTable.Controls.Add(buttonsTable, 0, 7);
             controlsTable.Dock = System.Windows.Forms.DockStyle.Fill;
-            controlsTable.Location = new System.Drawing.Point(739, 11);
+            controlsTable.Location = new System.Drawing.Point(0, 0);
             controlsTable.Name = "controlsTable";
             controlsTable.RowCount = 8;
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
@@ -161,7 +183,7 @@ namespace GUI.Forms
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             controlsTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            controlsTable.Size = new System.Drawing.Size(434, 759);
+            controlsTable.Size = new System.Drawing.Size(540, 824);
             controlsTable.TabIndex = 1;
             //
             // heroNavigationTable
@@ -253,6 +275,7 @@ namespace GUI.Forms
             loadoutTabControl.BaseTabWidth = 120;
             loadoutTabControl.Controls.Add(itemsTabPage);
             loadoutTabControl.Controls.Add(iconsTabPage);
+            loadoutTabControl.Controls.Add(soundsTabPage);
             loadoutTabControl.Dock = System.Windows.Forms.DockStyle.Fill;
             loadoutTabControl.DrawMode = System.Windows.Forms.TabDrawMode.OwnerDrawFixed;
             loadoutTabControl.Location = new System.Drawing.Point(3, 145);
@@ -334,6 +357,39 @@ namespace GUI.Forms
             iconsTable.Size = new System.Drawing.Size(460, 0);
             iconsTable.TabIndex = 0;
             //
+            // soundsTabPage
+            //
+            soundsTabPage.Controls.Add(soundsPanel);
+            soundsTabPage.Location = new System.Drawing.Point(4, 36);
+            soundsTabPage.Name = "soundsTabPage";
+            soundsTabPage.Size = new System.Drawing.Size(460, 290);
+            soundsTabPage.TabIndex = 2;
+            soundsTabPage.Text = "Sounds";
+            //
+            // soundsPanel
+            //
+            soundsPanel.AutoScroll = true;
+            soundsPanel.Controls.Add(soundsTable);
+            soundsPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            soundsPanel.Location = new System.Drawing.Point(0, 0);
+            soundsPanel.Name = "soundsPanel";
+            soundsPanel.Size = new System.Drawing.Size(460, 290);
+            soundsPanel.TabIndex = 0;
+            //
+            // soundsTable
+            //
+            soundsTable.AutoSize = true;
+            soundsTable.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            soundsTable.ColumnCount = 2;
+            soundsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            soundsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            soundsTable.Dock = System.Windows.Forms.DockStyle.Top;
+            soundsTable.Location = new System.Drawing.Point(0, 0);
+            soundsTable.Name = "soundsTable";
+            soundsTable.RowCount = 0;
+            soundsTable.Size = new System.Drawing.Size(460, 0);
+            soundsTable.TabIndex = 0;
+            //
             // includeGroupBox
             //
             includeGroupBox.AutoSize = true;
@@ -364,7 +420,8 @@ namespace GUI.Forms
             includeTable.Controls.Add(heroSoundsCheckBox, 1, 2);
             includeTable.Controls.Add(heroVoiceCheckBox, 2, 2);
             includeTable.Controls.Add(includeAudioCheckBox, 0, 3);
-            includeTable.SetColumnSpan(includeAudioCheckBox, 3);
+            includeTable.SetColumnSpan(includeAudioCheckBox, 2);
+            includeTable.Controls.Add(soundsCheckBox, 2, 3);
             includeTable.Controls.Add(replaceDefaultsCheckBox, 0, 4);
             includeTable.SetColumnSpan(replaceDefaultsCheckBox, 2);
             includeTable.Controls.Add(replaceSharedParticlesCheckBox, 2, 4);
@@ -457,6 +514,16 @@ namespace GUI.Forms
             iconsCheckBox.TabIndex = 7;
             iconsCheckBox.Text = "Replace icons";
             iconsCheckBox.UseVisualStyleBackColor = true;
+            //
+            // soundsCheckBox
+            //
+            soundsCheckBox.AutoSize = true;
+            soundsCheckBox.Checked = true;
+            soundsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            soundsCheckBox.Name = "soundsCheckBox";
+            soundsCheckBox.TabIndex = 12;
+            soundsCheckBox.Text = "Replace sounds";
+            soundsCheckBox.UseVisualStyleBackColor = true;
             //
             // includeAudioCheckBox
             //
@@ -584,8 +651,8 @@ namespace GUI.Forms
             buttonsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
             buttonsTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
             buttonsTable.Controls.Add(summaryLabel, 0, 0);
-            buttonsTable.Controls.Add(cancelButton, 1, 0);
-            buttonsTable.Controls.Add(exportButton, 2, 0);
+            buttonsTable.Controls.Add(exportButton, 1, 0);
+            buttonsTable.Controls.Add(cancelButton, 2, 0);
             buttonsTable.Dock = System.Windows.Forms.DockStyle.Fill;
             buttonsTable.Location = new System.Drawing.Point(3, 713);
             buttonsTable.Name = "buttonsTable";
@@ -607,7 +674,7 @@ namespace GUI.Forms
             cancelButton.DialogResult = System.Windows.Forms.DialogResult.Cancel;
             cancelButton.Name = "cancelButton";
             cancelButton.Size = new System.Drawing.Size(96, 37);
-            cancelButton.TabIndex = 1;
+            cancelButton.TabIndex = 2;
             cancelButton.Text = "Cancel";
             cancelButton.UseVisualStyleBackColor = false;
             //
@@ -615,7 +682,7 @@ namespace GUI.Forms
             //
             exportButton.Name = "exportButton";
             exportButton.Size = new System.Drawing.Size(96, 37);
-            exportButton.TabIndex = 2;
+            exportButton.TabIndex = 1;
             exportButton.Text = "Export...";
             exportButton.UseVisualStyleBackColor = false;
             exportButton.Click += ExportButton_Click;
@@ -632,15 +699,19 @@ namespace GUI.Forms
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             CancelButton = cancelButton;
             ClientSize = new System.Drawing.Size(1224, 840);
-            Controls.Add(mainTable);
+            Controls.Add(mainSplitContainer);
             Font = new System.Drawing.Font("Segoe UI", 10F);
+            Padding = new System.Windows.Forms.Padding(8);
             MinimumSize = new System.Drawing.Size(900, 700);
             Name = "CharacterSelectForm";
             ShowIcon = false;
             ShowInTaskbar = false;
             StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             Text = "Choose Character";
-            mainTable.ResumeLayout(false);
+            mainSplitContainer.Panel1.ResumeLayout(false);
+            mainSplitContainer.Panel2.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)mainSplitContainer).EndInit();
+            mainSplitContainer.ResumeLayout(false);
             previewPanel.ResumeLayout(false);
             controlsTable.ResumeLayout(false);
             controlsTable.PerformLayout();
@@ -652,6 +723,9 @@ namespace GUI.Forms
             iconsTabPage.ResumeLayout(false);
             iconsPanel.ResumeLayout(false);
             iconsPanel.PerformLayout();
+            soundsTabPage.ResumeLayout(false);
+            soundsPanel.ResumeLayout(false);
+            soundsPanel.PerformLayout();
             includeGroupBox.ResumeLayout(false);
             includeGroupBox.PerformLayout();
             includeTable.ResumeLayout(false);
@@ -666,7 +740,7 @@ namespace GUI.Forms
 
         #endregion
 
-        private System.Windows.Forms.TableLayoutPanel mainTable;
+        private System.Windows.Forms.SplitContainer mainSplitContainer;
         private System.Windows.Forms.Panel previewPanel;
         private System.Windows.Forms.Label previewStatusLabel;
         private System.Windows.Forms.TableLayoutPanel controlsTable;
@@ -676,7 +750,7 @@ namespace GUI.Forms
         private ThemedButton nextHeroButton;
         private ThemedTextBox heroSearchTextBox;
         private System.Windows.Forms.Label itemSetLabel;
-        private ThemedComboBox itemSetComboBox;
+        private SearchableComboBox itemSetComboBox;
         private ThemedTabControl loadoutTabControl;
         private ThemedTabPage itemsTabPage;
         private System.Windows.Forms.Panel slotsPanel;
@@ -684,6 +758,9 @@ namespace GUI.Forms
         private ThemedTabPage iconsTabPage;
         private System.Windows.Forms.Panel iconsPanel;
         private System.Windows.Forms.TableLayoutPanel iconsTable;
+        private ThemedTabPage soundsTabPage;
+        private System.Windows.Forms.Panel soundsPanel;
+        private System.Windows.Forms.TableLayoutPanel soundsTable;
         private ThemedGroupBox includeGroupBox;
         private System.Windows.Forms.TableLayoutPanel includeTable;
         private System.Windows.Forms.CheckBox heroModelCheckBox;
@@ -694,6 +771,7 @@ namespace GUI.Forms
         private System.Windows.Forms.CheckBox heroSoundsCheckBox;
         private System.Windows.Forms.CheckBox heroVoiceCheckBox;
         private System.Windows.Forms.CheckBox iconsCheckBox;
+        private System.Windows.Forms.CheckBox soundsCheckBox;
         private System.Windows.Forms.CheckBox includeAudioCheckBox;
         private System.Windows.Forms.CheckBox pedestalCheckBox;
         private System.Windows.Forms.CheckBox replaceDefaultsCheckBox;
