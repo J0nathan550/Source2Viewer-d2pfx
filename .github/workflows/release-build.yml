@@ -127,12 +127,24 @@ jobs:
     needs: version
     runs-on: windows-latest
 
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
     steps:
     - uses: actions/checkout@v7
     - uses: ./.github/actions/setup-dotnet-cache
 
     - name: Publish GUI
       run: dotnet publish --configuration Release --self-contained --runtime win-x64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} -p:ProjectBaseVersion=${{ needs.version.outputs.base }} -p:ProjectBuildNumber=${{ needs.version.outputs.build }} GUI/GUI.csproj
+
+    # The in-app updater only installs an executable whose hash this workflow attested,
+    # on master for dev builds and on the release tag for stable builds
+    - name: Attest build provenance
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: GUI/bin/Release/win-x64/publish/Source2Viewer.exe
 
     - name: Upload GUI artifact
       uses: actions/upload-artifact@v7
@@ -164,6 +176,49 @@ jobs:
         zip -9j release/cli-windows-x64.zip artifacts/cli-windows-x64/*
         zip -9j release/cli-linux-x64.zip artifacts/cli-linux-x64/*
         zip -9j release/gui-windows-x64.zip artifacts/gui-windows-x64/*
+        # The in-app updater downloads the bare executable and swaps it in place
+        cp artifacts/gui-windows-x64/Source2Viewer.exe release/Source2Viewer.exe
+
+    # latest.json is what the in-app updater reads, from whichever release is the latest one.
+    # It describes both channels, so the entry for the other channel is carried over from the
+    # previous release's manifest. Tags are the stable channel, master builds are the dev channel.
+    - name: Create update manifest
+      env:
+        REPOSITORY: ${{ github.repository }}
+        REF: ${{ github.ref }}
+        REF_TYPE: ${{ github.ref_type }}
+        TAG: ${{ needs.version.outputs.tag }}
+        VERSION: ${{ needs.version.outputs.version }}
+        BUILD: ${{ needs.version.outputs.build }}
+      run: |
+        set -euo pipefail
+
+        if ! curl -fsSL --retry 3 "https://github.com/$REPOSITORY/releases/latest/download/latest.json" -o previous.json || ! jq -e 'type == "object"' previous.json > /dev/null; then
+          echo "::warning::No previous update manifest found, starting a new one"
+          echo '{}' > previous.json
+        fi
+
+        exe=release/Source2Viewer.exe
+        asset=$(jq -n \
+          --arg name "Source2Viewer.exe" \
+          --arg url "https://github.com/$REPOSITORY/releases/download/$TAG/Source2Viewer.exe" \
+          --argjson size "$(stat -c %s "$exe")" \
+          --arg sha256 "$(sha256sum "$exe" | cut -d ' ' -f 1)" \
+          '{"win-x64": {name: $name, url: $url, size: $size, sha256: $sha256}}')
+
+        if [[ "$REF_TYPE" == "tag" ]]; then
+          jq --arg version "$VERSION" --arg tag "$TAG" --arg notes "https://github.com/$REPOSITORY/releases/tag/$TAG" --argjson assets "$asset" \
+            '.stable = {version: $version, tag: $tag, releaseNotesUrl: $notes, assets: $assets}' previous.json > release/latest.json
+        elif [[ "$REF" == "refs/heads/master" ]]; then
+          jq --argjson build "$BUILD" --argjson assets "$asset" \
+            '.dev = {buildNumber: $build, assets: $assets}' previous.json > release/latest.json
+        else
+          # The updater only accepts dev builds attested on master
+          echo "::warning::$REF is not master, the update manifest is carried over unchanged"
+          cp previous.json release/latest.json
+        fi
+
+        cat release/latest.json
 
     - name: Release
       uses: softprops/action-gh-release@v3
@@ -172,6 +227,8 @@ jobs:
         name: Build ${{ needs.version.outputs.build }} (${{ needs.version.outputs.version }})
         # Tag the commit that was built, not whatever the branch points at by the time this runs
         target_commitish: ${{ github.sha }}
+        # The updater reads latest.json from the latest release, so every release must become it
+        make_latest: true
         files: release/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -20,9 +20,9 @@ static class UpdateInstaller
 {
     private const string ReplacedSuffix = ".old";
     private const string PendingSuffix = ".new";
-    private const string Repository = "ValveResourceFormat/ValveResourceFormat";
-    private const string RepositoryId = "42366054";
-    private const string Workflow = ".github/workflows/build.yml";
+    private const string Repository = UpdateChecker.Repository;
+    private const string RepositoryId = UpdateChecker.RepositoryId;
+    private const string Workflow = ".github/workflows/release-build.yml";
     private const string ProvenancePredicateType = "https://slsa.dev/provenance/v1";
 
     // Keeps the Sigstore trust root cached between verifications
@@ -302,7 +302,7 @@ static class UpdateInstaller
         using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // Dev builds are attested on the branch, releases on their tag
-        var expectedRef = UpdateChecker.IsNewVersionStableBuild ? $"refs/tags/{UpdateChecker.NewVersion}" : "refs/heads/master";
+        var expectedRef = UpdateChecker.ProvenanceRef ?? throw new InvalidOperationException("The update does not name the ref it was built from.");
         var policy = new VerificationPolicy
         {
             CertificateIdentity = new CertificateIdentity
@@ -394,19 +394,12 @@ static class UpdateInstaller
 
         // The file is what the manifest promised, now make sure the manifest promised the right build
         var fileVersion = FileVersionInfo.GetVersionInfo(downloadPath).FileVersion;
-
-        if (!Version.TryParse(fileVersion, out var version) || !Version.TryParse(UpdateChecker.NewVersion, out var expectedVersion))
-        {
+        var matches = Version.TryParse(fileVersion, out var version) && (Version.TryParse(UpdateChecker.NewVersion, out var expectedVersion)
+            ? version == expectedVersion
             // Dev builds are identified by build number alone
-            if (!int.TryParse(UpdateChecker.NewVersion, out var expectedBuild) || version?.Build != expectedBuild)
-            {
-                throw new InvalidDataException($"The downloaded file reports version {fileVersion} instead of {UpdateChecker.NewVersion}.");
-            }
+            : int.TryParse(UpdateChecker.NewVersion, out var expectedBuild) && UpdateChecker.GetBuildNumber(version) == expectedBuild);
 
-            return;
-        }
-
-        if (version.Major != expectedVersion.Major || version.Minor != expectedVersion.Minor)
+        if (!matches)
         {
             throw new InvalidDataException($"The downloaded file reports version {fileVersion} instead of {UpdateChecker.NewVersion}.");
         }

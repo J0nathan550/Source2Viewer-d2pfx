@@ -162,7 +162,7 @@ namespace GUI.Forms
 
         private void OnViewReleaseNotesButtonClick(object sender, EventArgs e)
         {
-            OpenUrl(UpdateChecker.ReleaseNotesUrl ?? "https://github.com/ValveResourceFormat/ValveResourceFormat/releases");
+            OpenUrl(UpdateChecker.ReleaseNotesUrl ?? $"https://github.com/{UpdateChecker.Repository}/releases");
         }
 
         private async void OnDownloadButtonClick(object sender, EventArgs e)

@@ -38,6 +38,10 @@ static partial class UpdateChecker
         [JsonPropertyName("version")]
         public string? Version { get; set; }
 
+        /// <summary>The git tag the release was built from, which its build provenance is attested on.</summary>
+        [JsonPropertyName("tag")]
+        public string? Tag { get; set; }
+
         [JsonPropertyName("releaseNotesUrl")]
         public string? ReleaseNotesUrl { get; set; }
 
@@ -75,7 +79,12 @@ static partial class UpdateChecker
     {
     }
 
-    private const string ManifestUrl = "https://update.s2v.app/v1/latest.json";
+    /// <summary>The GitHub repository that builds, releases and attests the updates.</summary>
+    public const string Repository = "J0nathan550/Source2Viewer-d2pfx";
+    public const string RepositoryId = "1379849563";
+
+    // Every release carries the manifest for both channels, so the newest release always has the current one
+    private const string ManifestUrl = $"https://github.com/{Repository}/releases/latest/download/latest.json";
     private static readonly TimeSpan CheckInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan FailedCheckRetryDelay = TimeSpan.FromMinutes(30);
 
@@ -95,6 +104,8 @@ static partial class UpdateChecker
     public static string? DownloadUrl { get; private set; }
     public static long? DownloadSize { get; private set; }
     public static string? DownloadSha256 { get; private set; }
+    /// <summary>The git ref whose workflow run must have attested the offered build.</summary>
+    public static string? ProvenanceRef { get; private set; }
 
     /// <summary>
     /// The newest dev build known from this session's check, if it is newer than the running build, regardless of the selected channel.
@@ -125,7 +136,7 @@ static partial class UpdateChecker
 
             var dev = manifestTask.Result?.Dev;
 
-            return dev is { BuildNumber: > 0 } && dev.BuildNumber > currentVersion.Build ? dev.BuildNumber : null;
+            return dev is { BuildNumber: > 0 } && dev.BuildNumber > GetBuildNumber(currentVersion) ? dev.BuildNumber : null;
         }
     }
 
@@ -201,12 +212,17 @@ static partial class UpdateChecker
         return new Version(versionPlus > 0 ? version[..versionPlus] : version);
     }
 
+    /// <summary>
+    /// Versions are major.minor.patch.build, and the build number is shared by both channels.
+    /// </summary>
+    public static int GetBuildNumber(Version version) => Math.Max(version.Revision, 0);
+
     private static bool IsLocalBuild(Version currentVersion)
     {
 #if TEST_NON_LOCAL_BUILD
         return false;
 #else
-        return currentVersion.Build == 0;
+        return GetBuildNumber(currentVersion) == 0;
 #endif
     }
 
@@ -239,6 +255,7 @@ static partial class UpdateChecker
         IsNewVersionStableBuild = channel == Settings.UpdateChannel.Stable;
         IsNewer = false;
         NewVersion = null;
+        ProvenanceRef = null;
         Dictionary<string, UpdateAsset>? assets = null;
 
         if (IsNewVersionStableBuild)
@@ -247,7 +264,8 @@ static partial class UpdateChecker
             {
                 NewVersion = stable.Version;
                 var releaseVersion = Version.TryParse(NewVersion, out var parsed) ? parsed : new Version(0, 0);
-                IsNewer = releaseVersion > new Version(currentVersion.Major, currentVersion.Minor);
+                IsNewer = releaseVersion > currentVersion;
+                ProvenanceRef = $"refs/tags/{stable.Tag ?? stable.Version}";
                 assets = stable.Assets;
             }
         }
@@ -255,8 +273,9 @@ static partial class UpdateChecker
         {
             NewVersion = dev.BuildNumber.ToString(CultureInfo.InvariantCulture);
 
-            // Tag and branch builds share one run number sequence, so this compares across channels too
-            IsNewer = dev.BuildNumber > currentVersion.Build;
+            // Tag and branch builds share one build number sequence, so this compares across channels too
+            IsNewer = dev.BuildNumber > GetBuildNumber(currentVersion);
+            ProvenanceRef = "refs/heads/master";
             assets = dev.Assets;
         }
 
@@ -282,7 +301,7 @@ static partial class UpdateChecker
         }
 
         using var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.Add("User-Agent", $"Source2Viewer/{Program.ProductVersion} (+https://github.com/ValveResourceFormat/ValveResourceFormat)");
+        httpClient.DefaultRequestHeaders.Add("User-Agent", $"Source2Viewer/{Program.ProductVersion} (+https://github.com/{Repository})");
 
         using var response = await httpClient.GetAsync(new Uri(ManifestUrl)).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
