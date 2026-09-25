@@ -86,7 +86,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         public VoiceChoice? Voice { get; set; }
 
         /// <summary>
-        /// The models the hero stands on in the loadout screen, and the particles items only play there.
+        /// The models the hero stands on in the loadout screen, and the particles items only play there. With
+        /// <see cref="ReplaceDefaults"/>, the item's pedestal is written over the hero's own.
         /// </summary>
         public bool Pedestal { get; set; }
 
@@ -146,6 +147,15 @@ namespace GUI.Types.Exporter.CharacterAssets
     sealed record ParticleReplacement(string Source, string Target);
 
     /// <summary>
+    /// A game particle written with its references to particles that get written over pointed at copies of their game
+    /// versions, see <see cref="CharacterExportPlan.ParticleRedirects"/>.
+    /// </summary>
+    /// <param name="Particle">The particle whose game version is written, as a source path.</param>
+    /// <param name="Output">The source path it is written as.</param>
+    /// <param name="Redirects">The copies to reference instead, by the particle written over they are copies of.</param>
+    sealed record ParticleRedirect(string Particle, string Output, Dictionary<string, string> Redirects);
+
+    /// <summary>
     /// Every file a character export writes, grouped by how it gets decompiled. Paths are package paths of compiled files
     /// (ending in "_c"), except <see cref="RawFiles"/> and the replacements, which use source paths.
     /// </summary>
@@ -174,6 +184,21 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>Particles written over the default ones once everything is exported.</summary>
         public List<ParticleReplacement> ParticleReplacements { get; } = [];
+
+        /// <summary>
+        /// The particles the swapped in particles play that reference particles written over, rewritten to reference copies
+        /// of the game's versions, and those copies. The game only swaps the particle it creates, so the parts keep
+        /// playing the originals, e.g. an arcana effect whose parts use the empty effect it replaces as a placeholder
+        /// child, which would otherwise contain itself.
+        /// </summary>
+        public List<ParticleRedirect> ParticleRedirects { get; } = [];
+
+        /// <summary>
+        /// The control points the equipped items set on exported particles, by particle source path, which are written
+        /// into the particles so they show as with the items equipped, e.g. the color of an arcana style's effects.
+        /// The particles written over others are copies, so they get them too.
+        /// </summary>
+        public Dictionary<string, Dictionary<int, Vector3>> ParticleControlPoints { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Particle swaps left out because every hero uses the particle they replace.</summary>
         public List<ParticleReplacement> SkippedSharedParticles { get; } = [];
@@ -238,6 +263,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             if (options.ReplaceDefaults)
             {
                 AddReplacements(loadout, options, equippedAssets, plan);
+                AddParticleRedirects(plan, cancellationToken);
             }
             else
             {
@@ -246,10 +272,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             if (options.Pedestal)
             {
-                foreach (var pedestal in loadout.Pedestals)
-                {
-                    Enqueue(pedestal);
-                }
+                AddPedestals(loadout, options, plan);
             }
 
             if (options.Icons)
@@ -276,6 +299,14 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Visit(next.Path, next.IncludeSounds, plan);
+            }
+
+            foreach (var (particle, controlPoints) in loadout.ParticleControlPoints)
+            {
+                if (plan.Resources.Contains(particle + GameFileLoader.CompiledFileSuffix, StringComparer.OrdinalIgnoreCase))
+                {
+                    plan.ParticleControlPoints[particle] = controlPoints;
+                }
             }
 
             if (options.Materials)
@@ -737,6 +768,127 @@ namespace GUI.Types.Exporter.CharacterAssets
                     ActivityModifiers = activityModifiers,
                     Rename = rename,
                 });
+            }
+        }
+
+        /// <summary>
+        /// Works out <see cref="CharacterExportPlan.ParticleRedirects"/>: walks what the swapped in particles play in the
+        /// game, and keeps whatever references a particle that gets written over on a copy of its game version.
+        /// </summary>
+        private void AddParticleRedirects(CharacterExportPlan plan, CancellationToken cancellationToken)
+        {
+            var replaced = plan.ParticleReplacements.Select(static replacement => replacement.Target).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (replaced.Count == 0)
+            {
+                return;
+            }
+
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var queue = new Queue<string>(plan.ParticleReplacements.Select(static replacement => replacement.Source));
+
+            while (queue.TryDequeue(out var particle))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!visited.Add(particle))
+                {
+                    continue;
+                }
+
+                var references = GetParticleReferences(particle);
+                var redirects = references
+                    .Where(replaced.Contains)
+                    .ToDictionary(static target => target, GetOriginalCopyPath, StringComparer.OrdinalIgnoreCase);
+
+                // Only reached through a reference, so the copy of its game version is needed
+                var isReplaced = replaced.Contains(particle);
+
+                if (redirects.Count > 0 || isReplaced)
+                {
+                    plan.ParticleRedirects.Add(new ParticleRedirect(particle, isReplaced ? GetOriginalCopyPath(particle) : particle, redirects));
+                }
+
+                foreach (var reference in references)
+                {
+                    queue.Enqueue(reference);
+                }
+            }
+        }
+
+        private List<string> GetParticleReferences(string particle)
+        {
+            var references = new List<string>();
+
+            try
+            {
+                using var resource = fileLoader.LoadFileCompiled(particle);
+
+                foreach (var reference in resource?.ExternalReferences?.ResourceRefInfoList ?? [])
+                {
+                    if (IsParticlePath(reference.Name) && !references.Contains(NormalizePath(reference.Name), StringComparer.OrdinalIgnoreCase))
+                    {
+                        references.Add(NormalizePath(reference.Name));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                progress?.Report($"  ! failed to read the references of \"{particle}\": {e.Message}");
+            }
+
+            return references;
+        }
+
+        /// <summary>
+        /// Where the game version of a particle that gets written over is kept, for the particles that play it.
+        /// </summary>
+        private static string GetOriginalCopyPath(string particle) => $"{particle[..^".vpcf".Length]}_original.vpcf";
+
+        /// <summary>
+        /// Queues the pedestals the equipped items bring, and when the default assets are replaced writes the first one
+        /// over the one the hero stands on without them, with the skin the item's style shows it with.
+        /// </summary>
+        private void AddPedestals(CharacterLoadout loadout, CharacterExportOptions options, CharacterExportPlan plan)
+        {
+            var pedestals = loadout.Pedestals.ToList();
+
+            foreach (var (model, _) in pedestals)
+            {
+                Enqueue(model);
+            }
+
+            if (!options.ReplaceDefaults || pedestals.Count == 0)
+            {
+                return;
+            }
+
+            var hero = loadout.Hero;
+            var (pedestal, pedestalSkin) = pedestals[0];
+
+            if (hero.Pedestal == null)
+            {
+                plan.Notes.Add($"{NormalizePath(pedestal)} has no pedestal of the hero's to be written over, it was exported as is");
+                return;
+            }
+
+            var target = NormalizePath(hero.Pedestal);
+            var (skin, bodyGroups) = GetModelLook(loadout, pedestal, pedestalSkin, styleRemaps: !options.RenameModels);
+
+            plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(pedestal), target, skin, [])
+            {
+                BodyGroups = bodyGroups,
+                Rename = options.RenameModels,
+            });
+
+            if (hero.SharesPedestal)
+            {
+                plan.Notes.Add($"{target} is the pedestal every hero without one of its own stands on, they all stand on {NormalizePath(pedestal)} now");
+            }
+
+            foreach (var (other, _) in pedestals.Skip(1))
+            {
+                plan.Notes.Add($"{target} can only be one pedestal, {NormalizePath(other)} was exported as is");
             }
         }
 

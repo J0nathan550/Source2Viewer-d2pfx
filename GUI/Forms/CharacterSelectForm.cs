@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -113,6 +114,7 @@ namespace GUI.Forms
                 "They are the compiled images the game already has, so they show as they are.");
             toolTip.SetToolTip(pedestalCheckBox,
                 "The model the hero stands on in the loadout screen, and the particles items only play there.\n" +
+                "When replacing default assets, it is written over the hero's own pedestal in the style's skin.\n" +
                 "Only available when an equipped item comes with one.");
             toolTip.SetToolTip(heroSoundsCheckBox, "The hero's game_sounds file, which points at the sounds in the game");
             toolTip.SetToolTip(heroVoiceCheckBox, "The hero's game_sounds_vo file, which points at the voice lines in the game");
@@ -713,27 +715,12 @@ namespace GUI.Forms
                 return;
             }
 
-            var item = GetItem(comboBox);
-            var styles = item?.Styles ?? [];
+            var styles = GetItem(comboBox)?.Styles ?? [];
 
             updatingSkins = true;
 
             try
             {
-                skinComboBox.BeginUpdate();
-                skinComboBox.Items.Clear();
-
-                if (item != null && GetShownModel(item) is { } model)
-                {
-                    foreach (var skin in GetSkinChoices(model))
-                    {
-                        skinComboBox.Items.Add(skin);
-                    }
-                }
-
-                skinComboBox.Visible = skinComboBox.Items.Count > 1;
-                skinComboBox.EndUpdate();
-
                 styleComboBox.BeginUpdate();
                 styleComboBox.Items.Clear();
 
@@ -751,17 +738,50 @@ namespace GUI.Forms
                 updatingSkins = false;
             }
 
+            UpdateSkins(comboBox, styleComboBox, skinComboBox);
+        }
+
+        /// <summary>
+        /// Offers the skins of the model the item shows in its chosen style, starting from the one the style shows.
+        /// </summary>
+        private void UpdateSkins(ComboBox comboBox, ComboBox styleComboBox, ComboBox skinComboBox)
+        {
+            var item = GetItem(comboBox);
+
+            updatingSkins = true;
+
+            try
+            {
+                skinComboBox.BeginUpdate();
+                skinComboBox.Items.Clear();
+
+                if (item != null && GetShownModel(item, (styleComboBox.SelectedItem as ItemStyle)?.Index ?? 0) is { } model)
+                {
+                    foreach (var skin in GetSkinChoices(model))
+                    {
+                        skinComboBox.Items.Add(skin);
+                    }
+                }
+
+                skinComboBox.Visible = skinComboBox.Items.Count > 1;
+                skinComboBox.EndUpdate();
+            }
+            finally
+            {
+                updatingSkins = false;
+            }
+
             SelectDefaultSkin(comboBox, styleComboBox, skinComboBox);
         }
 
         private void StyleComboBox_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            // A style comes with its own skin
+            // A style comes with its own skin, and can come with a model of its own too
             var (_, comboBox, styleComboBox, skinComboBox) = slotRows.FirstOrDefault(row => row.StyleComboBox == sender);
 
             if (comboBox != null && !updatingSkins)
             {
-                SelectDefaultSkin(comboBox, styleComboBox, skinComboBox);
+                UpdateSkins(comboBox, styleComboBox, skinComboBox);
             }
 
             if (!updatingSelection)
@@ -805,11 +825,11 @@ namespace GUI.Forms
         }
 
         /// <summary>
-        /// The model an item shows its skin on: its own, or the one it gives the hero or a unit the hero creates.
+        /// The model an item shows its skin on in a style: its own, or the one it gives the hero or a unit the hero creates.
         /// </summary>
-        private static string? GetShownModel(EconItem item)
-            => item.ModelPlayer
-                ?? item.AssetModifiers.FirstOrDefault(static modifier => modifier.Type == "entity_model"
+        private static string? GetShownModel(EconItem item, int style)
+            => new EquippedItem(item, style).Model
+                ?? item.AssetModifiers.FirstOrDefault(modifier => modifier.Type == "entity_model" && (modifier.Style == null || modifier.Style == style)
                     && modifier.Modifier?.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase) == true)?.Modifier;
 
         /// <summary>
@@ -865,21 +885,26 @@ namespace GUI.Forms
                 }
             }
 
+            bool IsInFolder([NotNullWhen(true)] string? itemModel)
+                => itemModel != null && string.Equals(Path.GetDirectoryName(CharacterLoadout.NormalizePath(itemModel)), folder, StringComparison.OrdinalIgnoreCase);
+
             foreach (var item in catalog.GetItems(SelectedHero))
             {
-                if (GetShownModel(item) is not { } itemModel
-                    || !string.Equals(Path.GetDirectoryName(CharacterLoadout.NormalizePath(itemModel)), folder, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+                var itemModel = GetShownModel(item, style: 0);
 
-                AddItemSkin(itemModel, item.Skin, item.Name);
+                if (IsInFolder(itemModel))
+                {
+                    AddItemSkin(itemModel, item.Skin, item.Name);
+                }
 
                 foreach (var style in item.Styles)
                 {
-                    if (style.Skin is { } styleSkin && styleSkin != item.Skin)
+                    var styleModel = GetShownModel(item, style.Index);
+                    var styleSkin = style.Skin ?? item.Skin;
+
+                    if (IsInFolder(styleModel) && (styleSkin != item.Skin || !CharacterLoadout.IsSamePath(styleModel, itemModel)))
                     {
-                        AddItemSkin(itemModel, styleSkin, $"{item.Name} ({style.Name})");
+                        AddItemSkin(styleModel, styleSkin, $"{item.Name} ({style.Name})");
                     }
                 }
             }

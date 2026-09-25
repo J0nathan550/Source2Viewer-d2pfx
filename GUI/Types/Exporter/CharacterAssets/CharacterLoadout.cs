@@ -30,9 +30,26 @@ namespace GUI.Types.Exporter.CharacterAssets
         public int Skin => SkinOverride ?? DefaultSkin;
 
         /// <summary>
-        /// The material group the item shows its model with in the chosen style, when none is picked by hand.
+        /// The material group the item shows its model with in the chosen style, when none is picked by hand. Items
+        /// without a model of their own show the one they swap the hero's for, with the skin <see cref="ModelSkin"/> picks.
         /// </summary>
-        public int DefaultSkin => Item.Styles.FirstOrDefault(style => style.Index == Style)?.Skin ?? Item.Skin;
+        public int DefaultSkin => (Model == null ? ModelSkin : null)
+            ?? Item.Styles.FirstOrDefault(style => style.Index == Style)?.Skin
+            ?? Item.Skin;
+
+        /// <summary>
+        /// The item's own model in the chosen style, since styles can come as models of their own, or null when the item
+        /// has none.
+        /// </summary>
+        public string? Model => Item.Styles.FirstOrDefault(style => style.Index == Style)?.Model ?? Item.ModelPlayer;
+
+        /// <summary>
+        /// The material group the item's "model_skin" modifier picks for the hero's model in the chosen style, which
+        /// can differ from the style's own skin, e.g. an arcana whose styles are skins 1 and 2 of the model it swaps in.
+        /// </summary>
+        public int? ModelSkin => Modifiers
+            .LastOrDefault(static modifier => modifier is { Type: "model_skin", Asset: null, LoadoutOnly: false, Value: not null })?
+            .Value;
 
         /// <summary>
         /// The chosen style's name, or null when the item has only the one look.
@@ -168,6 +185,39 @@ namespace GUI.Types.Exporter.CharacterAssets
             .DistinctBy(static effect => (effect.Item, effect.Particle));
 
         /// <summary>
+        /// The control points the equipped items set on particles, by particle as a package source path and then by
+        /// control point, e.g. the color an arcana style gives its effects.
+        /// </summary>
+        public Dictionary<string, Dictionary<int, Vector3>> ParticleControlPoints
+        {
+            get
+            {
+                var controlPoints = new Dictionary<string, Dictionary<int, Vector3>>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var modifier in Items.SelectMany(static item => item.Modifiers))
+                {
+                    if (modifier is not { LoadoutOnly: false, ControlPoint: { } controlPoint, Asset: { } particle }
+                        || !particle.EndsWith(".vpcf", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var path = NormalizePath(particle);
+
+                    if (!controlPoints.TryGetValue(path, out var values))
+                    {
+                        values = [];
+                        controlPoints.Add(path, values);
+                    }
+
+                    values[controlPoint.Number] = controlPoint.Value;
+                }
+
+                return controlPoints;
+            }
+        }
+
+        /// <summary>
         /// Whether the game shows an effect with the equipped items. Items made to go with an arcana come with a version
         /// of the effect for each arcana level, and the one for the closest level at or below the equipped one shows,
         /// e.g. an arm's glow for arcana level 1 also shows at level 2 when there is none made for it.
@@ -218,13 +268,14 @@ namespace GUI.Types.Exporter.CharacterAssets
                 .Select(modifier => (item, modifier.Asset!)));
 
         /// <summary>
-        /// The models the hero stands on in the loadout screen, which the equipped items bring.
+        /// The models the hero stands on in the loadout screen, which the equipped items bring, with the material group
+        /// the item's style shows them with.
         /// </summary>
-        public IEnumerable<string> Pedestals => Items
+        public IEnumerable<(string Model, int Skin)> Pedestals => Items
             .SelectMany(static item => item.Modifiers)
             .Where(static modifier => modifier.Type == "portrait_background_model" && IsModelPath(modifier.Asset))
-            .Select(static modifier => modifier.Asset!)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+            .Select(static modifier => (Model: modifier.Asset!, Skin: modifier.Value ?? 0))
+            .DistinctBy(static pedestal => pedestal.Model, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// The version of an icon the equipped items show, the game's own one when none of them swaps it.
@@ -274,15 +325,21 @@ namespace GUI.Types.Exporter.CharacterAssets
         public string? HeroModel => HeroModelItem is { } item ? GetHeroModelSwap(item) : Hero.Model;
 
         /// <summary>
-        /// The material group of the hero's model. A style's skin applies to the model the item swaps the hero's for,
-        /// and to the hero's own model when the item has no model of its own. Items can also pick the hero's skin while
-        /// wearing a model of their own, e.g. an arcana hair that sets the hero's body alight.
+        /// The material group of the hero's model. The item that swaps the hero's model picks it with its "model_skin"
+        /// modifier, or else its style's skin applies to that model, and to the hero's own model when the item has no
+        /// model of its own. Items can also pick the hero's skin while wearing a model of their own, e.g. an arcana hair
+        /// that sets the hero's body alight.
         /// </summary>
-        public int HeroSkin => HeroModelItem?.Skin is { } skin and not 0
+        public int HeroSkin => HeroModelItemSkin is { } skin and not 0
             ? skin
             : HeroSkinModifier
-                ?? Items.LastOrDefault(item => item.Item.ModelPlayer == null && item.Skin != 0 && IsWornByHero(item.Item.Slot))?.Skin
+                ?? Items.LastOrDefault(item => item.Model == null && item.Skin != 0 && IsWornByHero(item.Item.Slot))?.Skin
                 ?? 0;
+
+        // A style's skin is for the item's own model when it has one, e.g. an arcana weapon that also swaps the hero's
+        private int? HeroModelItemSkin => HeroModelItem is not { } item
+            ? null
+            : item.Model == null ? item.Skin : item.ModelSkin ?? item.Skin;
 
         private int? HeroSkinModifier => Items
             .Where(item => IsWornByHero(item.Item.Slot))
@@ -309,7 +366,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public string? GetItemModel(EquippedItem item)
         {
-            var model = item.Item.ModelPlayer;
+            var model = item.Model;
 
             if (model == null)
             {

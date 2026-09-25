@@ -32,6 +32,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         public int? RequiredArcanaLevel { get; init; }
 
         /// <summary>
+        /// For "particle_control_point", the control point the item sets on the particle it names and the value it sets,
+        /// e.g. the color of an arcana style's effect.
+        /// </summary>
+        public (int Number, Vector3 Value)? ControlPoint { get; init; }
+
+        /// <summary>
         /// Whether this is the unusual effect picked for the item rather than one of the item's own, see
         /// <see cref="EquippedItem.Unusual"/>.
         /// </summary>
@@ -55,7 +61,8 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <param name="Index">The style number the asset modifiers refer to.</param>
     /// <param name="Name">The localized style name.</param>
     /// <param name="Skin">The material group the style shows the model with, or null to keep the item's own.</param>
-    sealed record ItemStyle(int Index, string Name, int? Skin);
+    /// <param name="Model">The model the style shows instead of the item's own, or null to keep it.</param>
+    sealed record ItemStyle(int Index, string Name, int? Skin, string? Model = null);
 
     /// <summary>
     /// A cosmetic item from items_game.txt that can be equipped on a hero.
@@ -125,6 +132,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>The voice lines the hero's chat wheel plays.</summary>
         public List<ChatWheelLine> ChatWheel { get; } = [];
 
+        /// <summary>The model the hero stands on in the loadout screen when no item brings another one.</summary>
+        public string? Pedestal { get; set; }
+
+        /// <summary>Whether <see cref="Pedestal"/> is the one every hero without a pedestal of its own stands on.</summary>
+        public bool SharesPedestal { get; set; }
+
         /// <summary>The entity name without the "npc_dota_hero_" prefix, e.g. "earthshaker".</summary>
         public string ShortName => Name.StartsWith(NamePrefix, StringComparison.Ordinal) ? Name[NamePrefix.Length..] : Name;
 
@@ -152,6 +165,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         public const string HeroesPath = "scripts/npc/npc_heroes.txt";
         public const string UnitsPath = "scripts/npc/npc_units.txt";
         public const string ChatWheelPath = "scripts/chat_wheel_heroes.txt";
+        public const string LoadoutPortraitsPath = "scripts/npc/portraits_full_body_loadout.txt";
 
         private static readonly string[] LocalizationPaths =
         [
@@ -275,6 +289,10 @@ namespace GUI.Types.Exporter.CharacterAssets
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {ChatWheelPath}...");
             LoadChatWheel(package, heroes);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report($"Reading {LoadoutPortraitsPath}...");
+            LoadPedestals(package, heroes);
 
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {ItemsGamePath}...");
@@ -463,6 +481,13 @@ namespace GUI.Types.Exporter.CharacterAssets
                     ParseInt(GetValue(modifier, "level") ?? GetValue(modifier, "value") ?? GetValue(modifier, "skin")))
                 {
                     RequiredArcanaLevel = ParseInt(GetValue(modifier, "required_arcana_level")),
+
+                    // Ones that depend on criteria, like the compendium level, cannot be told apart outside the game
+                    ControlPoint = type == "particle_control_point" && GetValue(modifier, "criteria") == null
+                        && ParseInt(GetValue(modifier, "control_point_number")) is { } controlPoint
+                        && ParseVector(GetValue(modifier, "cp_position")) is { } position
+                            ? (controlPoint, position)
+                            : null,
                 });
             }
 
@@ -478,7 +503,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                     item.Styles.Add(new ItemStyle(
                         index,
                         Localize(localization, GetValue(styleData, "name")) ?? $"Style {index}",
-                        ParseInt(GetValue(styleData, "skin")) ?? (styleSkins.TryGetValue(index, out var styleSkin) ? styleSkin : null)));
+                        ParseInt(GetValue(styleData, "skin")) ?? (styleSkins.TryGetValue(index, out var styleSkin) ? styleSkin : null),
+                        NullIfEmpty(GetValue(styleData, "model_player"))));
                 }
 
                 item.Styles.Sort(static (a, b) => a.Index.CompareTo(b.Index));
@@ -489,6 +515,31 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         private static int? ParseInt(string? value)
             => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) ? result : null;
+
+        /// <summary>
+        /// Parses three numbers separated by spaces, e.g. "150 255 70".
+        /// </summary>
+        private static Vector3? ParseVector(string? value)
+        {
+            var parts = value?.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts is not { Length: 3 })
+            {
+                return null;
+            }
+
+            var components = new float[3];
+
+            for (var i = 0; i < 3; i++)
+            {
+                if (!float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out components[i]))
+                {
+                    return null;
+                }
+            }
+
+            return new Vector3(components[0], components[1], components[2]);
+        }
 
         /// <summary>
         /// Looks a key up through an item's prefabs. An item may name several prefabs, and prefabs may have prefabs themselves.
@@ -748,6 +799,46 @@ namespace GUI.Types.Exporter.CharacterAssets
                         hero.ChatWheel.Add(new ChatWheelLine(key, sound, GetValue(message, "persona") == "1"));
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Reads the model each hero stands on in the loadout screen. Heroes without a portrait of their own there, or
+        /// whose portrait names no model, stand on the default entry's.
+        /// </summary>
+        private static void LoadPedestals(Package package, List<HeroDefinition> heroes)
+        {
+            KVObject? root;
+
+            try
+            {
+                root = ReadKeyValues(package, LoadoutPortraitsPath);
+            }
+            catch (Exception e)
+            {
+                // Only replacing the pedestal depends on it
+                Log.Warn(nameof(ItemsGameCatalog), $"Failed to read \"{LoadoutPortraitsPath}\": {e.Message}");
+                return;
+            }
+
+            if (root == null)
+            {
+                return;
+            }
+
+            static string? GetPedestal(KVObject root, string key)
+                => root.GetSubCollection(key) is { ValueType: KVValueType.Collection } portrait
+                    ? NullIfEmpty(GetValue(portrait, "PortraitBackgroundModel"))
+                    : null;
+
+            var defaultPedestal = GetPedestal(root, "default_entity_replacement");
+
+            foreach (var hero in heroes)
+            {
+                var pedestal = GetPedestal(root, hero.Name);
+
+                hero.Pedestal = pedestal ?? defaultPedestal;
+                hero.SharesPedestal = pedestal == null || pedestal.Equals(defaultPedestal, StringComparison.OrdinalIgnoreCase);
             }
         }
 

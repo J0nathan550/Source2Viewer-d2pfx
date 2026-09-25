@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -239,6 +241,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                 failed += ExportMaterials(plan.Materials, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportRawFiles(plan.RawFiles, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
+                failed += ApplyParticleRedirects(plan.ParticleRedirects, contentRoot, fileLoader, progress);
+                failed += ApplyControlPoints(plan.ParticleControlPoints, contentRoot, progress);
                 failed += ApplyReplacements(plan, contentRoot, fileLoader, progress);
                 failed += ApplySoundReplacements(plan.SoundEventEdits, contentRoot, fileLoader, progress);
                 failed += ExportIcons(plan.IconReplacements, gameRoot, fileLoader, progress, cancellationToken);
@@ -459,6 +463,97 @@ namespace GUI.Types.Exporter.CharacterAssets
             foreach (var skipped in plan.SkippedSharedParticles)
             {
                 progress.Report($"  - left {skipped.Target} alone, every hero uses it (it would become {skipped.Source})");
+            }
+
+            return failed;
+        }
+
+        /// <summary>
+        /// Writes the game versions of the particles that reference particles written over, pointed at copies of those,
+        /// see <see cref="CharacterExportPlan.ParticleRedirects"/>. Runs before the replacements, which copy the swapped
+        /// in particles as they are written here.
+        /// </summary>
+        private static int ApplyParticleRedirects(List<ParticleRedirect> redirects, string outputRoot, GameFileLoader fileLoader, IProgress<string> progress)
+        {
+            if (redirects.Count == 0)
+            {
+                return 0;
+            }
+
+            progress.Report("Keeping the parts of swapped in particles on the particles they replace...");
+
+            var failed = 0;
+
+            foreach (var redirect in redirects)
+            {
+                try
+                {
+                    using var resource = fileLoader.LoadFile(redirect.Particle + GameFileLoader.CompiledFileSuffix) ?? throw new FileNotFoundException("Could not be read");
+                    using var contentFile = FileExtract.Extract(resource, fileLoader);
+
+                    var text = Encoding.UTF8.GetString(contentFile.Data ?? throw new InvalidDataException("Could not be decompiled"));
+
+                    foreach (var (target, copy) in redirect.Redirects)
+                    {
+                        text = text.Replace($"\"{target}\"", $"\"{copy}\"", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    var outputPath = GetOutputPath(outputRoot, redirect.Output);
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                    File.WriteAllText(outputPath, text);
+
+                    var details = redirect.Redirects.Select(static pair => $"plays {pair.Value} instead of {pair.Key}");
+
+                    progress.Report(redirect.Output == redirect.Particle
+                        ? $"  {redirect.Output} ({string.Join(", ", details)})"
+                        : $"  {redirect.Output} <- the game's {redirect.Particle}{(redirect.Redirects.Count > 0 ? $" ({string.Join(", ", details)})" : string.Empty)}");
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED {redirect.Output} <- {redirect.Particle}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to write '{redirect.Output}': {e}");
+                }
+            }
+
+            return failed;
+        }
+
+        /// <summary>
+        /// Writes the control points the equipped items set into the exported particles, see
+        /// <see cref="CharacterExportPlan.ParticleControlPoints"/>. Runs before the replacements, which copy the particles
+        /// with them.
+        /// </summary>
+        private static int ApplyControlPoints(Dictionary<string, Dictionary<int, Vector3>> particles, string outputRoot, IProgress<string> progress)
+        {
+            if (particles.Count == 0)
+            {
+                return 0;
+            }
+
+            progress.Report("Setting the control points items set on their particles...");
+
+            var failed = 0;
+
+            foreach (var (particle, controlPoints) in particles)
+            {
+                try
+                {
+                    var path = GetExportedPath(outputRoot, particle, "vpcf");
+                    File.WriteAllText(path, ModelDocEditor.SetControlPoints(File.ReadAllText(path), controlPoints));
+
+                    var values = controlPoints.OrderBy(static controlPoint => controlPoint.Key)
+                        .Select(static controlPoint => string.Create(CultureInfo.InvariantCulture,
+                            $"CP{controlPoint.Key} = {controlPoint.Value.X} {controlPoint.Value.Y} {controlPoint.Value.Z}"));
+
+                    progress.Report($"  {particle} ({string.Join(", ", values)})");
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED {particle}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to set the control points of '{particle}': {e}");
+                }
             }
 
             return failed;

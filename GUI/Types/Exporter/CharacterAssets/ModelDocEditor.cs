@@ -726,6 +726,68 @@ namespace GUI.Types.Exporter.CharacterAssets
             return configurations.Count > 0 && configurations.All(static configuration => configuration.StagedForLoadout);
         }
 
+        /// <summary>
+        /// Adds operators to a decompiled particle that set control points to fixed values, which the game otherwise sets
+        /// on the particle when an item creates it, e.g. the color of an arcana style's effect. Children read the control
+        /// points of the particle they are part of, so setting them on the particle the game creates is enough.
+        /// </summary>
+        /// <param name="vpcf">The .vpcf text.</param>
+        /// <param name="controlPoints">The values to set, by control point.</param>
+        public static string SetControlPoints(string vpcf, IReadOnlyDictionary<int, Vector3> controlPoints)
+        {
+            var operators = new StringBuilder();
+
+            static string Format(float value) => value.ToString("0.0#####", CultureInfo.InvariantCulture);
+
+            foreach (var (number, value) in controlPoints.OrderBy(static controlPoint => controlPoint.Key))
+            {
+                operators.Append(CultureInfo.InvariantCulture, $$"""
+
+                    {
+                        _class = "C_OP_SetSingleControlPointPosition"
+                        m_nCP1 = {{number}}
+                        m_vecCP1Pos = [ {{Format(value.X)}}, {{Format(value.Y)}}, {{Format(value.Z)}} ]
+                        m_bUseWorldLocation = true
+                    },
+                    """);
+            }
+
+            if (operators.Length == 0)
+            {
+                return vpcf;
+            }
+
+            var preEmissionOperators = PreEmissionOperatorsRegex().Match(vpcf);
+            string edited;
+
+            if (preEmissionOperators.Success)
+            {
+                edited = vpcf.Insert(preEmissionOperators.Index + preEmissionOperators.Length, Indent(operators.ToString(), 2));
+            }
+            else
+            {
+                var rootEnd = vpcf.LastIndexOf('}');
+
+                if (rootEnd < 0)
+                {
+                    throw new InvalidDataException("The particle's root was not found");
+                }
+
+                edited = vpcf.Insert(rootEnd, $"\tm_PreEmissionOperators = \n\t[{Indent(operators.ToString(), 2)}\n\t]\n");
+            }
+
+            // Better not to edit the particle at all than to break it
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(edited));
+            KVObject root = KVDocumentExtensions.ParseKV3(stream);
+
+            if (root.GetArray("m_PreEmissionOperators") is not { Count: > 0 })
+            {
+                throw new InvalidDataException("The control point operators were not added");
+            }
+
+            return edited;
+        }
+
         private static List<(string Name, bool StagedForLoadout)> GetControlPointConfigurations(IFileLoader fileLoader, string particle)
         {
             using var resource = fileLoader.LoadFileCompiled(particle);
@@ -1038,5 +1100,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"_class\s*=\s*""RootNode""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex RootNodeChildrenRegex();
+
+        // Only the root's own, which the decompiler writes one tab in
+        [GeneratedRegex(@"^\tm_PreEmissionOperators\s*=\s*\[", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
+        private static partial Regex PreEmissionOperatorsRegex();
     }
 }
