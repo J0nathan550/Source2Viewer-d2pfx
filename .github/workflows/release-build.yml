@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      base: ${{ steps.version.outputs.base }}
       build: ${{ steps.version.outputs.build }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -30,9 +29,11 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
-    # A pushed "1.2.3.4" tag is used as the version and a pushed "build-4" tag as build number 4.
-    # Anything else gets the number after the highest "build-N" or "x.y.z.N" tag in the repository,
-    # on top of ProjectBaseVersion from Directory.Build.props, and is released as "build-N".
+    # Builds are numbered sequentially: a pushed "build-4" tag is build number 4, and anything else gets
+    # the number after the highest "build-N" tag in the repository and is released as "build-N".
+    # The version counts that many builds up from ProjectBaseVersion in Directory.Build.props, with the
+    # last three parts rolling over at 10, so build 10 of 1.0.0 is 1.0.1.0 and build 11 is 1.0.1.1.
+    # A pushed "1.2.3.4" tag is used as the version as is.
     - name: Determine version from git tags
       id: version
       env:
@@ -43,38 +44,48 @@ jobs:
 
         base=$(sed -n 's:.*<ProjectBaseVersion>\(.*\)</ProjectBaseVersion>.*:\1:p' Directory.Build.props)
 
-        if [[ "$REF_TYPE" == "tag" && "$REF_NAME" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)\.([0-9]+)$ ]]; then
-          base="${BASH_REMATCH[1]}"
-          build="${BASH_REMATCH[2]}"
-          tag="$REF_NAME"
-        elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" =~ ^build-([0-9]+)$ ]]; then
-          build="${BASH_REMATCH[1]}"
-          tag="$REF_NAME"
-        else
-          last=$(git ls-remote --tags --refs origin \
-            | sed -nE 's#^.*refs/tags/(build-|v?[0-9]+\.[0-9]+\.[0-9]+\.)([0-9]+)$#\2#p' \
-            | sort -n | tail -n 1)
-          build=$(( 10#${last:-0} + 1 ))
-          tag=$([[ "$REF_TYPE" == "tag" ]] && echo "$REF_NAME" || echo "build-$build")
-        fi
-
         if [[ ! "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           echo "::error::ProjectBaseVersion '$base' in Directory.Build.props must be major.minor.patch"
           exit 1
         fi
 
-        build=$(( 10#$build ))
-
-        # Each version part is stored as a 16-bit number in the exe and dll metadata
-        if (( build > 65534 )); then
-          echo "::error::Build number $build is too large"
-          exit 1
+        if [[ "$REF_TYPE" == "tag" && "$REF_NAME" =~ ^build-([0-9]+)$ ]]; then
+          build=$(( 10#${BASH_REMATCH[1]} ))
+        else
+          last=$(git ls-remote --tags --refs origin \
+            | sed -nE 's#^.*refs/tags/build-([0-9]+)$#\1#p' \
+            | sort -n | tail -n 1)
+          build=$(( 10#${last:-0} + 1 ))
         fi
 
-        version="$base.$build"
+        tag=$([[ "$REF_TYPE" == "tag" ]] && echo "$REF_NAME" || echo "build-$build")
+
+        if [[ "$REF_TYPE" == "tag" && "$REF_NAME" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          major=$(( 10#${BASH_REMATCH[1]} ))
+          minor=$(( 10#${BASH_REMATCH[2]} ))
+          patch=$(( 10#${BASH_REMATCH[3]} ))
+          revision=$(( 10#${BASH_REMATCH[4]} ))
+        else
+          IFS=. read -r major minor patch <<< "$base"
+          revision=$(( build % 10 ))
+          patch=$(( 10#$patch + build / 10 ))
+          minor=$(( 10#$minor + patch / 10 ))
+          patch=$(( patch % 10 ))
+          major=$(( 10#$major + minor / 10 ))
+          minor=$(( minor % 10 ))
+        fi
+
+        # Each version part is stored as a 16-bit number in the exe and dll metadata
+        for part in "$major" "$minor" "$patch" "$revision"; do
+          if (( part > 65534 )); then
+            echo "::error::Version part $part is too large"
+            exit 1
+          fi
+        done
+
+        version="$major.$minor.$patch.$revision"
 
         {
-          echo "base=$base"
           echo "build=$build"
           echo "version=$version"
           echo "tag=$tag"
@@ -104,7 +115,7 @@ jobs:
     - uses: ./.github/actions/setup-dotnet-cache
 
     - name: Publish CLI
-      run: dotnet publish --configuration Release --self-contained --runtime ${{ matrix.rid }} ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} -p:ProjectBaseVersion=${{ needs.version.outputs.base }} -p:ProjectBuildNumber=${{ needs.version.outputs.build }} CLI/CLI.csproj
+      run: dotnet publish --configuration Release --self-contained --runtime ${{ matrix.rid }} ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} -p:ProjectVersion=${{ needs.version.outputs.version }} -p:ProjectBuildNumber=${{ needs.version.outputs.build }} CLI/CLI.csproj
 
     - name: Upload CLI artifact
       uses: actions/upload-artifact@v7
@@ -129,7 +140,7 @@ jobs:
     - uses: ./.github/actions/setup-dotnet-cache
 
     - name: Publish GUI
-      run: dotnet publish --configuration Release --self-contained --runtime win-x64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} -p:ProjectBaseVersion=${{ needs.version.outputs.base }} -p:ProjectBuildNumber=${{ needs.version.outputs.build }} GUI/GUI.csproj
+      run: dotnet publish --configuration Release --self-contained --runtime win-x64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} -p:ProjectVersion=${{ needs.version.outputs.version }} -p:ProjectBuildNumber=${{ needs.version.outputs.build }} GUI/GUI.csproj
 
     # The in-app updater only installs an executable whose hash this workflow attested,
     # on master for dev builds and on the release tag for stable builds
@@ -202,8 +213,8 @@ jobs:
           jq --arg version "$VERSION" --arg tag "$TAG" --arg notes "https://github.com/$REPOSITORY/releases/tag/$TAG" --argjson assets "$asset" \
             '.stable = {version: $version, tag: $tag, releaseNotesUrl: $notes, assets: $assets}' previous.json > release/latest.json
         elif [[ "$REF" == "refs/heads/master" ]]; then
-          jq --argjson build "$BUILD" --argjson assets "$asset" \
-            '.dev = {buildNumber: $build, assets: $assets}' previous.json > release/latest.json
+          jq --arg version "$VERSION" --argjson build "$BUILD" --argjson assets "$asset" \
+            '.dev = {version: $version, buildNumber: $build, assets: $assets}' previous.json > release/latest.json
         else
           # The updater only accepts dev builds attested on master
           echo "::warning::$REF is not master, the update manifest is carried over unchanged"

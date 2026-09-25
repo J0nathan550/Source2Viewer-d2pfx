@@ -3,11 +3,12 @@
     <!-- The SDK version is pinned in global.json -->
     <TargetFramework>net10.0</TargetFramework>
 
-    <!-- Versions are major.minor.patch.build. Release builds pass the build number (and the base when
-         the pushed tag is a full version), see .github/workflows/release-build.yml. Local builds are .0 -->
+    <!-- Versions are major.minor.patch.revision. Release builds pass the full version and their sequential
+         build number, see .github/workflows/release-build.yml. Local builds are build 0 with version base.0 -->
     <ProjectBaseVersion>1.0.0</ProjectBaseVersion>
     <ProjectBuildNumber Condition="'$(ProjectBuildNumber)' == ''">0</ProjectBuildNumber>
-    <ProjectVersion>$(ProjectBaseVersion).$(ProjectBuildNumber)</ProjectVersion>
+    <ProjectVersion>$(ProjectBaseVersion).0</ProjectVersion>
+    <DefineConstants Condition="'$(ProjectBuildNumber)' != '0'">$(DefineConstants);CI_BUILD</DefineConstants>
     <DefineConstants Condition="'$(GITHUB_REF_TYPE)' == 'tag'">$(DefineConstants);CI_RELEASE_BUILD</DefineConstants>
 
     <AssemblyVersion>$(ProjectVersion)</AssemblyVersion>

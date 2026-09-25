@@ -394,10 +394,9 @@ static class UpdateInstaller
 
         // The file is what the manifest promised, now make sure the manifest promised the right build
         var fileVersion = FileVersionInfo.GetVersionInfo(downloadPath).FileVersion;
-        var matches = Version.TryParse(fileVersion, out var version) && (Version.TryParse(UpdateChecker.NewVersion, out var expectedVersion)
-            ? version == expectedVersion
-            // Dev builds are identified by build number alone
-            : int.TryParse(UpdateChecker.NewVersion, out var expectedBuild) && UpdateChecker.GetBuildNumber(version) == expectedBuild);
+        var matches = Version.TryParse(fileVersion, out var version)
+            && Version.TryParse(UpdateChecker.NewVersion, out var expectedVersion)
+            && version == expectedVersion;
 
         if (!matches)
         {

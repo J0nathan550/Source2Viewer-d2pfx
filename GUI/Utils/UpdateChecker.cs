@@ -54,6 +54,9 @@ static partial class UpdateChecker
     /// </summary>
     public class DevUpdate
     {
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
+
         [JsonPropertyName("buildNumber")]
         public int BuildNumber { get; set; }
 
@@ -97,7 +100,7 @@ static partial class UpdateChecker
     public static bool IsNewer { get; private set; }
     public static bool IsNewVersionStableBuild { get; private set; }
     public static string? NewVersion { get; private set; }
-    /// <summary>The offered version as shown to the user, e.g. "20.0" or "dev build 7125".</summary>
+    /// <summary>The offered version as shown to the user, e.g. "1.1.0.0" or "dev build 1.0.1.1".</summary>
     public static string? NewVersionText { get; private set; }
     public static string? ReleaseNotesUrl { get; private set; }
     public static string? ReleaseNotesVersion { get; private set; }
@@ -111,7 +114,7 @@ static partial class UpdateChecker
     /// The newest dev build known from this session's check, if it is newer than the running build, regardless of the selected channel.
     /// Never performs a request, so it is safe to consult from error handlers.
     /// </summary>
-    public static int? NewerDevBuild
+    public static Version? NewerDevBuild
     {
         get
         {
@@ -127,16 +130,14 @@ static partial class UpdateChecker
                 return null;
             }
 
-            var currentVersion = GetCurrentVersion();
-
-            if (IsLocalBuild(currentVersion))
+            if (IsLocalBuild())
             {
                 return null;
             }
 
             var dev = manifestTask.Result?.Dev;
 
-            return dev is { BuildNumber: > 0 } && dev.BuildNumber > GetBuildNumber(currentVersion) ? dev.BuildNumber : null;
+            return Version.TryParse(dev?.Version, out var devVersion) && devVersion > GetCurrentVersion() ? devVersion : null;
         }
     }
 
@@ -212,17 +213,12 @@ static partial class UpdateChecker
         return new Version(versionPlus > 0 ? version[..versionPlus] : version);
     }
 
-    /// <summary>
-    /// Versions are major.minor.patch.build, and the build number is shared by both channels.
-    /// </summary>
-    public static int GetBuildNumber(Version version) => Math.Max(version.Revision, 0);
-
-    private static bool IsLocalBuild(Version currentVersion)
+    private static bool IsLocalBuild()
     {
-#if TEST_NON_LOCAL_BUILD
+#if TEST_NON_LOCAL_BUILD || CI_BUILD
         return false;
 #else
-        return GetBuildNumber(currentVersion) == 0;
+        return true;
 #endif
     }
 
@@ -230,7 +226,7 @@ static partial class UpdateChecker
     {
         var currentVersion = GetCurrentVersion();
 
-        if (IsLocalBuild(currentVersion))
+        if (IsLocalBuild())
         {
             Settings.Config.Update.UpdateAvailable = false;
             IsNewVersionAvailable = false;
@@ -269,12 +265,13 @@ static partial class UpdateChecker
                 assets = stable.Assets;
             }
         }
-        else if (dev is { BuildNumber: > 0 })
+        else if (dev is { Version.Length: > 0 })
         {
-            NewVersion = dev.BuildNumber.ToString(CultureInfo.InvariantCulture);
+            NewVersion = dev.Version;
 
-            // Tag and branch builds share one build number sequence, so this compares across channels too
-            IsNewer = dev.BuildNumber > GetBuildNumber(currentVersion);
+            // Tag and branch builds share one version sequence, so this compares across channels too
+            var devVersion = Version.TryParse(NewVersion, out var parsed) ? parsed : new Version(0, 0);
+            IsNewer = devVersion > currentVersion;
             ProvenanceRef = "refs/heads/master";
             assets = dev.Assets;
         }
@@ -295,7 +292,7 @@ static partial class UpdateChecker
 
     private static async Task<UpdateManifest?> GetManifestAsync()
     {
-        if (IsLocalBuild(GetCurrentVersion()))
+        if (IsLocalBuild())
         {
             return null; // Local builds have nothing to compare against
         }

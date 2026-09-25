@@ -3,33 +3,18 @@ name: CI
 permissions:
   contents: read
 
+# Only run on demand from the "Run workflow" button in the Actions tab.
+# Release artifacts are built by release-build.yml.
 on:
-  push:
-    branches:
-    - master
-    tags:
-    - '*'
-    paths-ignore:
-    - '.github/*_TEMPLATE/**'
-    - 'docs/**'
-    - '*.md'
-  pull_request:
-    paths-ignore:
-    - '.github/*_TEMPLATE/**'
-    - 'docs/**'
-    - '*.md'
   workflow_dispatch:
-  schedule:
-  - cron: "37 10 * * 2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/master' }}
+  cancel-in-progress: true
 
 env:
   NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
   SKIP_ANALYSIS: -p:RunAnalyzersDuringBuild=false
-  PUBLISH_ARGS: -p:PublishReadyToRun=${{ github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   build:
@@ -53,91 +38,9 @@ jobs:
 #      if: matrix.os == 'ubuntu-latest'
 #      run: dotnet format --verify-no-changes
 
-    - name: Publish CLI (Windows x64)
-      if: matrix.os == 'windows-latest'
-      run: dotnet publish --configuration Release --self-contained --runtime win-x64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} CLI/CLI.csproj
-
-    - name: Publish CLI (Windows arm64)
-      if: matrix.os == 'windows-11-arm'
-      run: dotnet publish --configuration Release --self-contained --runtime win-arm64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} CLI/CLI.csproj
-
-    - name: Publish CLI (Linux arm64)
-      if: matrix.os == 'ubuntu-24.04-arm'
-      run: dotnet publish --configuration Release --self-contained --runtime linux-arm64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} CLI/CLI.csproj
-
-    - name: Publish CLI (macOS arm64)
-      if: matrix.os == 'macos-latest'
-      run: dotnet publish --configuration Release --self-contained --runtime osx-arm64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} CLI/CLI.csproj
-
     - name: Build misc projects
       if: matrix.os == 'ubuntu-24.04-arm'
       run: dotnet build Misc/MiscVrfProjects.slnx
-
-    - name: Upload CLI (Windows x64)
-      uses: actions/upload-artifact@v7
-      if: matrix.os == 'windows-latest'
-      with:
-        name: cli-windows-x64
-        path: |
-          CLI/bin/Release/win-x64/publish
-          !**/*.pdb
-
-    - name: Upload CLI (Windows arm64)
-      uses: actions/upload-artifact@v7
-      if: matrix.os == 'windows-11-arm'
-      with:
-        name: cli-windows-arm64
-        path: |
-          CLI/bin/Release/win-arm64/publish
-          !**/*.pdb
-
-    - name: Upload CLI (Linux arm64)
-      uses: actions/upload-artifact@v7
-      if: matrix.os == 'ubuntu-24.04-arm'
-      with:
-        name: cli-linux-arm64
-        path: |
-          CLI/bin/Release/linux-arm64/publish
-          !**/*.pdb
-
-    - name: Upload CLI (macOS arm64)
-      uses: actions/upload-artifact@v7
-      if: matrix.os == 'macos-latest'
-      with:
-        name: cli-macos-arm64
-        path: |
-          CLI/bin/Release/osx-arm64/publish
-          !**/*.pdb
-
-  source2viewer-rel:
-    name: Source2Viewer (win-x64)
-    runs-on: windows-latest
-
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-
-    steps:
-    - uses: actions/checkout@v7
-    - uses: ./.github/actions/setup-dotnet-cache
-
-    - name: Publish
-      run: dotnet publish --configuration Release --self-contained --runtime win-x64 ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} GUI/GUI.csproj
-
-    - name: Attest build provenance
-      if: github.event_name != 'pull_request'
-      uses: actions/attest-build-provenance@v4
-      with:
-        subject-path: GUI/bin/Release/win-x64/publish/Source2Viewer.exe
-
-    - name: Upload
-      uses: actions/upload-artifact@v7
-      with:
-        # Uploaded as a bare file so that the artifact can be served as a direct download,
-        # the artifact is named after the file
-        archive: false
-        path: 'GUI/bin/Release/win-x64/publish/Source2Viewer.exe'
 
   analyze:
     name: Run all analyzers
