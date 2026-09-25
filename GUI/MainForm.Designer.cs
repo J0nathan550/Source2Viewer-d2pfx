@@ -57,6 +57,9 @@ namespace GUI
             validateShadersToolStripMenuItem = new ThemedToolStripMenuItem();
             explorerToolStripMenuItem = new ThemedToolStripMenuItem();
             findToolStripButton = new ThemedToolStripMenuItem();
+            toolsToolStripMenuItem = new ThemedToolStripMenuItem();
+            toolsExportCharacterAssetsToolStripMenuItem = new ThemedToolStripMenuItem();
+            toolsVtexCreateToolStripMenuItem = new ThemedToolStripMenuItem();
             settingsToolStripMenuItem = new ThemedToolStripMenuItem();
             aboutToolStripMenuItem = new ThemedToolStripMenuItem();
             recoverDeletedToolStripMenuItem = new ThemedToolStripMenuItem();
@@ -111,7 +114,7 @@ namespace GUI
             menuStrip.BackColor = System.Drawing.Color.FromArgb(218, 218, 218);
             menuStrip.Dock = DockStyle.Fill;
             menuStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
-            menuStrip.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, explorerToolStripMenuItem, findToolStripButton, settingsToolStripMenuItem, aboutToolStripMenuItem });
+            menuStrip.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, explorerToolStripMenuItem, findToolStripButton, toolsToolStripMenuItem, settingsToolStripMenuItem, aboutToolStripMenuItem });
             menuStrip.Location = new System.Drawing.Point(38, 0);
             menuStrip.Name = "menuStrip";
             menuStrip.Padding = new Padding(0, 8, 0, 8);
@@ -197,7 +200,33 @@ namespace GUI
             findToolStripButton.SVGImageResourceName = "GUI.Icons.Find.svg";
             findToolStripButton.Text = "&Find";
             findToolStripButton.Click += FindToolStripMenuItem_Click;
+            //
+            // toolsToolStripMenuItem
+            //
+            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { toolsExportCharacterAssetsToolStripMenuItem, toolsVtexCreateToolStripMenuItem });
+            toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
+            toolsToolStripMenuItem.Padding = new Padding(4);
+            toolsToolStripMenuItem.Size = new System.Drawing.Size(72, 32);
+            toolsToolStripMenuItem.SVGImageResourceName = "GUI.Icons.Tools.svg";
+            toolsToolStripMenuItem.Text = "&Tools";
+            toolsToolStripMenuItem.DropDownOpening += OnToolsMenuDropDownOpening;
+            //
+            // toolsExportCharacterAssetsToolStripMenuItem
+            //
+            toolsExportCharacterAssetsToolStripMenuItem.Name = "toolsExportCharacterAssetsToolStripMenuItem";
+            toolsExportCharacterAssetsToolStripMenuItem.Size = new System.Drawing.Size(320, 30);
+            toolsExportCharacterAssetsToolStripMenuItem.SVGImageResourceName = "GUI.Icons.Decompile.svg";
+            toolsExportCharacterAssetsToolStripMenuItem.Text = "Export character assets (items_game.txt)...";
+            toolsExportCharacterAssetsToolStripMenuItem.Click += OnToolsExportCharacterAssetsClick;
             // 
+            // toolsVtexCreateToolStripMenuItem
+            // 
+            toolsVtexCreateToolStripMenuItem.Name = "toolsVtexCreateToolStripMenuItem";
+            toolsVtexCreateToolStripMenuItem.Size = new System.Drawing.Size(320, 30);
+            toolsVtexCreateToolStripMenuItem.SVGImageResourceName = "GUI.Icons.AssetTypes.tex.svg";
+            toolsVtexCreateToolStripMenuItem.Text = "VTEX Create";
+            toolsVtexCreateToolStripMenuItem.Click += OnVtexCompilerItemClick;
+            //
             // settingsToolStripMenuItem
             // 
             settingsToolStripMenuItem.Name = "settingsToolStripMenuItem";
@@ -591,6 +620,9 @@ namespace GUI
         private ThemedToolStripMenuItem closeToolStripMenuItemsToRight;
         private ThemedToolStripMenuItem closeToolStripMenuItems;
         private ThemedToolStripMenuItem findToolStripButton;
+        private ThemedToolStripMenuItem toolsToolStripMenuItem;
+        private ThemedToolStripMenuItem toolsExportCharacterAssetsToolStripMenuItem;
+        private ThemedToolStripMenuItem toolsVtexCreateToolStripMenuItem;
         private ThemedToolStripMenuItem openWithoutViewerToolStripMenuItem;
         private ThemedToolStripMenuItem openWithDefaultAppToolStripMenuItem;
         private ThemedToolStripMenuItem decompileToolStripMenuItem;

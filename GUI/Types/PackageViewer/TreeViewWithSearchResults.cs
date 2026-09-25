@@ -73,6 +73,7 @@ namespace GUI.Types.PackageViewer
 
         public bool DeletedFilesRecovered { get; private set; }
         public PackageViewer Viewer { get; }
+        public VrfGuiContext? VrfGuiContext => mainTreeView.VrfGuiContext;
 
         public CancellationTokenSource? PreviewTokenSource { get; private set; }
 

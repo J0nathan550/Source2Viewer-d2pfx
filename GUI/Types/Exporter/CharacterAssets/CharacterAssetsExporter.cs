@@ -24,8 +24,13 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// </summary>
     static class CharacterAssetsExporter
     {
-        public static bool CanExport(Control? owner)
-            => GetContext(owner)?.CurrentPackage is { } package && ItemsGameCatalog.IsAvailable(package);
+        /// <summary>
+        /// Whether the package has the items_game.txt and hero scripts an export is read from.
+        /// </summary>
+        public static bool CanExport(VrfGuiContext? context)
+            => context?.CurrentPackage is { } package && ItemsGameCatalog.IsAvailable(package);
+
+        public static bool CanExport(Control? owner) => CanExport(GetContext(owner));
 
         public static async Task ExportFromContextMenu(object sender)
         {
@@ -36,7 +41,18 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             var context = GetContext(owner);
 
-            if (context?.CurrentPackage == null)
+            if (context != null)
+            {
+                await ExportAsync(context).ConfigureAwait(true);
+            }
+        }
+
+        /// <summary>
+        /// Asks for a hero and its items from the context's package, then exports them.
+        /// </summary>
+        public static async Task ExportAsync(VrfGuiContext context)
+        {
+            if (context.CurrentPackage == null)
             {
                 return;
             }

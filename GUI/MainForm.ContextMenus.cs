@@ -64,7 +64,7 @@ namespace GUI
             var selectedItems = ContextMenuSelection.GetSelectedItems(control);
             decompileCustomVmdlToolStripMenuItem.Visible = ContextMenuSelection.ContainsFileType(selectedItems, "vmdl_c");
             decompileCustomVmatToolStripMenuItem.Visible = ContextMenuSelection.ContainsFileType(selectedItems, CustomVmatExporter.MaterialTypeName);
-            exportCharacterAssetsToolStripMenuItem.Visible = CharacterAssetsExporter.CanExport(control);
+            exportCharacterAssetsToolStripMenuItem.Visible = isRootNode && CharacterAssetsExporter.CanExport(control);
 
             vpkContextMenu.Show(control, position);
         }
