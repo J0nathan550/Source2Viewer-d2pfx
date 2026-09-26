@@ -46,10 +46,15 @@ namespace GUI.Types.Exporter
         }.Select(static (type, index) => (Key: type.GetExtension() + GameFileLoader.CompiledFileSuffix, Index: index))
         .ToFrozenDictionary(static x => x.Key, static x => x.Index);
 
+        /// <param name="OutputPath">Where the file goes, relative to the chosen folder, using '/' separators.</param>
+        private record struct QueuedFile(PackageEntry Entry, string OutputPath);
+
         private readonly bool decompile;
         private readonly ExportData exportData;
         private readonly Dictionary<string, FileTypeToExtract> fileTypesToExtract = [];
-        private readonly List<PackageEntry> filesToExtract = [];
+        private readonly List<QueuedFile> filesToExtract = [];
+        private readonly HashSet<PackageEntry> queuedEntries = [];
+        private readonly HashSet<string> queuedOutputPaths = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> extractedFiles = [];
         private string? path;
         private string? lastCreatedDirectory;
@@ -67,36 +72,56 @@ namespace GUI.Types.Exporter
             this.decompile = decompile;
         }
 
-        public void QueueFiles(IBetterBaseItem root)
+        /// <summary>
+        /// Queues a selected file or folder for extraction.
+        /// </summary>
+        /// <param name="item">The selected file or folder.</param>
+        /// <param name="includeSubfolders">Whether to recurse into the subfolders of a selected folder, or only take the files directly inside it.</param>
+        /// <param name="keepPackageStructure">Whether files keep their full package path, or are placed relative to the selection
+        /// (a selected file lands directly in the output folder, a selected folder keeps only its own name and contents).</param>
+        public void QueueSelection(IBetterBaseItem item, bool includeSubfolders, bool keepPackageStructure)
         {
-            if (root.IsFolder)
+            if (item.PackageEntry != null)
             {
-                if (root.PkgNode != null)
-                {
-                    QueueFiles(root.PkgNode);
-                }
+                QueueFile(item.PackageEntry, keepPackageStructure ? item.PackageEntry.GetFullPath() : item.PackageEntry.GetFileName());
             }
-            else if (root.PackageEntry != null)
+            else if (item.PkgNode != null)
             {
-                QueueFiles(root.PackageEntry);
+                var relativeFolder = keepPackageStructure || item.PkgNode.Parent == null ? string.Empty : item.PkgNode.Name;
+                QueueFolder(item.PkgNode, includeSubfolders, keepPackageStructure, relativeFolder);
             }
         }
 
-        public void QueueFiles(VirtualPackageNode root)
+        private void QueueFolder(VirtualPackageNode folder, bool includeSubfolders, bool keepPackageStructure, string relativeFolder)
         {
-            foreach (var node in root.Folders)
+            foreach (var file in folder.Files)
             {
-                QueueFiles(node.Value);
+                var outputPath = keepPackageStructure
+                    ? file.GetFullPath()
+                    : CombinePackagePath(relativeFolder, file.GetFileName());
+
+                QueueFile(file, outputPath);
             }
 
-            foreach (var file in root.Files)
+            if (!includeSubfolders)
             {
-                QueueFiles(file);
+                return;
+            }
+
+            foreach (var (name, subfolder) in folder.Folders)
+            {
+                QueueFolder(subfolder, includeSubfolders, keepPackageStructure, CombinePackagePath(relativeFolder, name));
             }
         }
 
-        public void QueueFiles(PackageEntry file)
+        private void QueueFile(PackageEntry file, string outputPath)
         {
+            // A folder and files inside it can be selected together
+            if (!queuedEntries.Add(file))
+            {
+                return;
+            }
+
             if (fileTypesToExtract.TryGetValue(file.TypeName, out var fileType))
             {
                 fileType.Count++;
@@ -106,8 +131,34 @@ namespace GUI.Types.Exporter
                 fileTypesToExtract[file.TypeName] = new FileTypeToExtract(); // Type to be filled in later
             }
 
-            filesToExtract.Add(file);
+            filesToExtract.Add(new QueuedFile(file, GetUniqueOutputPath(outputPath)));
         }
+
+        // Without the package structure, files with the same name from different folders would overwrite each other
+        private string GetUniqueOutputPath(string outputPath)
+        {
+            if (queuedOutputPaths.Add(outputPath))
+            {
+                return outputPath;
+            }
+
+            var directory = Path.GetDirectoryName(outputPath)?.Replace(Path.DirectorySeparatorChar, Package.DirectorySeparatorChar) ?? string.Empty;
+            var name = Path.GetFileNameWithoutExtension(outputPath);
+            var extension = Path.GetExtension(outputPath);
+
+            for (var suffix = 2; ; suffix++)
+            {
+                var candidate = CombinePackagePath(directory, $"{name} ({suffix}){extension}");
+
+                if (queuedOutputPaths.Add(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        private static string CombinePackagePath(string folder, string name)
+            => folder.Length == 0 ? name : $"{folder}{Package.DirectorySeparatorChar}{name}";
 
         /// <summary>
         /// Asks for output types and a destination folder, then extracts all queued files behind a modal progress dialog.
@@ -144,7 +195,8 @@ namespace GUI.Types.Exporter
         /// </summary>
         public Task ExecuteSingleFileExtractAsync(Resource resource, string inFilePath, string outFilePath, string initialText)
         {
-            RunInDialog(cancellationToken => ExtractFileAsync(resource, inFilePath, outFilePath, true, cancellationToken), initialText, out var workCompletion);
+            var subfileFolder = Path.GetDirectoryName(inFilePath) ?? string.Empty;
+            RunInDialog(cancellationToken => ExtractFileAsync(resource, inFilePath, outFilePath, subfileFolder, true, cancellationToken), initialText, out var workCompletion);
             return workCompletion;
         }
 
@@ -294,11 +346,11 @@ namespace GUI.Types.Exporter
 
             // Within each type, read the package in storage order to avoid seeking back and forth between entries
             var files = filesToExtract
-                .OrderBy(file => decompile ? ExtractOrder.GetValueOrDefault(file.TypeName, ExtractOrder.Count) : 0)
-                .ThenBy(static file => file.ArchiveIndex)
-                .ThenBy(static file => file.Offset);
+                .OrderBy(file => decompile ? ExtractOrder.GetValueOrDefault(file.Entry.TypeName, ExtractOrder.Count) : 0)
+                .ThenBy(static file => file.Entry.ArchiveIndex)
+                .ThenBy(static file => file.Entry.Offset);
 
-            foreach (var packageFile in files)
+            foreach (var (packageFile, relativeOutPath) in files)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -326,7 +378,7 @@ namespace GUI.Types.Exporter
 
                 progress.SetProgress(fileFullName);
 
-                var outFilePath = Path.Combine(outputPath, fileFullName);
+                var outFilePath = Path.Combine(outputPath, relativeOutPath);
 
                 if (outputFormat != null)
                 {
@@ -369,11 +421,13 @@ namespace GUI.Types.Exporter
                     continue;
                 }
 
-                await ExtractFileAsync(resource, fileFullName, outFilePath, false, cancellationToken).ConfigureAwait(false);
+                var subfileFolder = Path.GetDirectoryName(relativeOutPath) ?? string.Empty;
+                await ExtractFileAsync(resource, fileFullName, outFilePath, subfileFolder, false, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        private async Task ExtractFileAsync(Resource resource, string inFilePath, string outFilePath, bool flatSubfiles, CancellationToken cancellationToken)
+        /// <param name="subfileFolder">Folder relative to the output path that sub files are written to, unless flattened.</param>
+        private async Task ExtractFileAsync(Resource resource, string inFilePath, string outFilePath, string subfileFolder, bool flatSubfiles, CancellationToken cancellationToken)
         {
             var outExtension = Path.GetExtension(outFilePath);
 
@@ -459,7 +513,7 @@ namespace GUI.Types.Exporter
 
                 extractedFiles.Add(inFilePath);
 
-                var inFileContentRelativeFolder = flatSubfiles ? string.Empty : Path.GetDirectoryName(inFilePath) ?? string.Empty;
+                var inFileContentRelativeFolder = flatSubfiles ? string.Empty : subfileFolder;
 
                 await ExtractSubfilesAsync(inFileContentRelativeFolder, contentFile, cancellationToken).ConfigureAwait(false);
             }

@@ -13,8 +13,12 @@ namespace GUI.Types.Exporter
     {
         public static List<IBetterBaseItem> GetSelectedItems(Control? owner) => owner switch
         {
-            BetterTreeView { SelectedNode: IBetterBaseItem node } => [node],
-            BetterListView listView => [.. listView.GetSelectedVirtualItems().OfType<IBetterBaseItem>()],
+            BetterTreeView tree => tree.GetSelectedItems(),
+
+            // The ".." item navigates to the parent folder, it is never meant to be acted on as part of a selection
+            BetterListView listView => [.. listView.GetSelectedVirtualItems()
+                .Where(static item => item.Tag is not BetterListViewItem.ParentNavigationTag)
+                .OfType<IBetterBaseItem>()],
             _ => [],
         };
 

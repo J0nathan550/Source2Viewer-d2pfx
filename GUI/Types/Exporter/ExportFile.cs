@@ -1,8 +1,6 @@
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using GUI.Types.PackageViewer;
 using GUI.Utils;
 using ValvePak;
@@ -147,29 +145,71 @@ namespace GUI.Types.Exporter
             }
         }
 
-        public static async Task ExtractFilesFromTreeNode(IBetterBaseItem selectedNode, VrfGuiContext vrfGuiContext, bool decompile)
+        /// <summary>
+        /// Extracts the files and folders selected in the package viewer, asking whether to recurse into subfolders
+        /// and whether to recreate the package folder structure when those choices matter.
+        /// </summary>
+        public static async Task ExtractSelectedItems(List<IBetterBaseItem> items, VrfGuiContext vrfGuiContext, bool decompile)
         {
-            if (!selectedNode.IsFolder)
+            if (items.Count == 0)
             {
-                var file = selectedNode.PackageEntry;
-                Debug.Assert(file != null);
-                await ExtractFileFromPackageEntry(file, vrfGuiContext, decompile).ConfigureAwait(true);
+                return;
             }
-            else
+
+            var includeSubfolders = true;
+
+            if (items.Any(static item => item.PkgNode is { Folders.Count: > 0 }))
             {
-                var exportData = new ExportData
+                var answer = await AppMessageDialogs.AskYesNoCancelAsync(
+                    """
+                    The selection contains folders with subfolders.
+
+                    Yes: export everything, including all subfolders and their files.
+                    No: export only the files directly inside the selected folders.
+                    """,
+                    "Export subfolders").ConfigureAwait(true);
+
+                if (answer == null)
                 {
-                    VrfGuiContext = vrfGuiContext,
-                };
+                    return;
+                }
 
-                var exporter = new PackageExporter(exportData, null, decompile);
-                exporter.QueueFiles(selectedNode);
-                exporter.ExecuteMultipleFileExtract();
+                includeSubfolders = answer.Value;
             }
-        }
 
-        public static void ExtractFilesFromListViewNodes(List<ListViewItem> items, VrfGuiContext vrfGuiContext, bool decompile)
-        {
+            // Only files and folders below a top level folder have parent folders to recreate
+            var examplePath = items
+                .Select(static item => item.PackageEntry?.GetFullPath() ?? $"{item.PkgNode?.GetFullPath()}{Package.DirectorySeparatorChar}")
+                .FirstOrDefault(static path => path.TrimEnd(Package.DirectorySeparatorChar).Contains(Package.DirectorySeparatorChar, StringComparison.Ordinal));
+
+            var keepPackageStructure = false;
+
+            if (examplePath != null)
+            {
+                var answer = await AppMessageDialogs.AskYesNoCancelAsync(
+                    $"""
+                    Export with the folder structure of the package?
+
+                    Yes: recreate the parent folders, e.g. "{examplePath}".
+                    No: place the selected files and folders directly in the chosen location.
+                    """,
+                    "Export folder structure").ConfigureAwait(true);
+
+                if (answer == null)
+                {
+                    return;
+                }
+
+                keepPackageStructure = answer.Value;
+            }
+
+            // A single file placed as is gets the regular save dialog, so it can be renamed or exported as another format
+            if (!keepPackageStructure && items is [{ PackageEntry: { } singleFile }])
+            {
+                await ExtractFileFromPackageEntry(singleFile, vrfGuiContext, decompile).ConfigureAwait(true);
+                return;
+            }
+
             var exportData = new ExportData
             {
                 VrfGuiContext = vrfGuiContext,
@@ -177,11 +217,9 @@ namespace GUI.Types.Exporter
 
             var exporter = new PackageExporter(exportData, null, decompile);
 
-            // When queuing files this way, it'll preserve the original tree
-            // which is probably unwanted behaviour? It works tho /shrug
-            foreach (var item in items.Cast<IBetterBaseItem>())
+            foreach (var item in items)
             {
-                exporter.QueueFiles(item);
+                exporter.QueueSelection(item, includeSubfolders, keepPackageStructure);
             }
 
             exporter.ExecuteMultipleFileExtract();

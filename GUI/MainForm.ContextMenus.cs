@@ -24,7 +24,7 @@ namespace GUI
             if (control is BetterTreeView treeView)
             {
                 var nodeAtMouse = treeView.GetNodeAt(treeView.PointToClient(Cursor.Position));
-                if (nodeAtMouse != null)
+                if (nodeAtMouse != null && !treeView.IsNodeSelected(nodeAtMouse))
                 {
                     treeView.SelectedNode = nodeAtMouse;
                 }
@@ -150,12 +150,7 @@ namespace GUI
             {
                 context = treeView.VrfGuiContext;
 
-                if (treeView.SelectedNode is not IBetterBaseItem selectedNode)
-                {
-                    return;
-                }
-
-                selectedNodes = [selectedNode];
+                selectedNodes = treeView.GetSelectedItems();
             }
             else if (control is BetterListView listView)
             {
@@ -294,22 +289,14 @@ namespace GUI
             {
                 context = treeView.VrfGuiContext;
 
-                if (treeView.SelectedNode is not IBetterBaseItem treeNode)
+                var selectedNodes = treeView.GetSelectedItems();
+
+                if (selectedNodes.Any(static node => node.IsFolder))
                 {
                     return;
                 }
 
-                if (treeNode.IsFolder)
-                {
-                    return;
-                }
-
-                if (treeNode.PackageEntry == null)
-                {
-                    return;
-                }
-
-                selectedFiles = [treeNode.PackageEntry];
+                selectedFiles = [.. selectedNodes.Select(static node => node.PackageEntry).OfType<PackageEntry>()];
             }
             else if (control is BetterListView listView)
             {
@@ -467,32 +454,19 @@ namespace GUI
                 throw new InvalidDataException("Invalid context menu structure");
             }
 
-            // Clicking context menu item in left side of the package view
-            if (owner is BetterTreeView tree)
+            // Clicking context menu item in either side of the package view
+            if (owner is BetterTreeView or BetterListView)
             {
-                if (tree.SelectedNode is IBetterBaseItem treeNode && tree.VrfGuiContext != null)
+                var context = owner switch
                 {
-                    await ExportFile.ExtractFilesFromTreeNode(treeNode, tree.VrfGuiContext, decompile).ConfigureAwait(true);
-                }
-            }
-            // Clicking context menu item in right side of the package view
-            else if (owner is BetterListView listView)
-            {
-                if (listView.VrfGuiContext == null)
-                {
-                    return;
-                }
+                    BetterTreeView tree => tree.VrfGuiContext,
+                    BetterListView listView => listView.VrfGuiContext,
+                    _ => null,
+                };
 
-                var selectedItems = listView.GetSelectedVirtualItems();
-
-                if (selectedItems.Count > 1)
+                if (context != null)
                 {
-                    // We're selecting multiple files
-                    ExportFile.ExtractFilesFromListViewNodes(selectedItems, listView.VrfGuiContext, decompile);
-                }
-                else if (selectedItems.Count == 1)
-                {
-                    await ExportFile.ExtractFilesFromTreeNode((IBetterBaseItem)selectedItems[0], listView.VrfGuiContext, decompile).ConfigureAwait(true);
+                    await ExportFile.ExtractSelectedItems(ContextMenuSelection.GetSelectedItems(owner), context, decompile).ConfigureAwait(true);
                 }
             }
             // Clicking context menu item when right clicking a tab

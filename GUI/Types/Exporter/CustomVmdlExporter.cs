@@ -26,42 +26,20 @@ namespace GUI.Types.Exporter
                 throw new InvalidDataException("Invalid context menu structure");
             }
 
-            VrfGuiContext? context;
+            var context = owner switch
+            {
+                BetterTreeView tree => tree.VrfGuiContext,
+                BetterListView listView => listView.VrfGuiContext,
+                _ => throw new InvalidDataException("Unknown state"),
+            };
+
             var paths = new List<string>();
-            IBetterBaseItem? singleSelectedNode = null;
+            var selectedItems = ContextMenuSelection.GetSelectedItems(owner);
+            var singleSelectedNode = selectedItems.Count == 1 ? selectedItems[0] : null;
 
-            if (owner is BetterTreeView tree)
+            foreach (var selectedNode in selectedItems)
             {
-                context = tree.VrfGuiContext;
-
-                if (tree.SelectedNode is IBetterBaseItem selectedNode)
-                {
-                    singleSelectedNode = selectedNode;
-                    CollectVmdlPaths(selectedNode, paths);
-                }
-            }
-            else if (owner is BetterListView listView)
-            {
-                context = listView.VrfGuiContext;
-
-                var selectedItems = listView.GetSelectedVirtualItems();
-
-                if (selectedItems.Count == 1 && selectedItems[0] is IBetterBaseItem onlyNode)
-                {
-                    singleSelectedNode = onlyNode;
-                }
-
-                foreach (var item in selectedItems)
-                {
-                    if (item is IBetterBaseItem selectedNode)
-                    {
-                        CollectVmdlPaths(selectedNode, paths);
-                    }
-                }
-            }
-            else
-            {
-                throw new InvalidDataException("Unknown state");
+                CollectVmdlPaths(selectedNode, paths);
             }
 
             if (context == null)

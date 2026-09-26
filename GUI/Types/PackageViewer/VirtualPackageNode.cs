@@ -35,5 +35,20 @@ namespace GUI.Types.PackageViewer
         /// Files in this folder.
         /// </summary>
         public List<PackageEntry> Files { get; } = [];
+
+        /// <summary>
+        /// Path of this folder inside the package, empty for the root.
+        /// </summary>
+        public string GetFullPath()
+        {
+            var names = new Stack<string>();
+
+            for (var node = this; node.Parent != null; node = node.Parent)
+            {
+                names.Push(node.Name);
+            }
+
+            return string.Join(Package.DirectorySeparatorChar, names);
+        }
     }
 }

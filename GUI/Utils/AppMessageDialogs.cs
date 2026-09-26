@@ -34,6 +34,22 @@ public static class AppMessageDialogs
         return Task.FromResult(result is DialogResult.OK or DialogResult.Yes);
     }
 
+    /// <summary>
+    /// Asks a yes or no question that can also be cancelled.
+    /// </summary>
+    /// <returns><see langword="null"/> when cancelled.</returns>
+    public static Task<bool?> AskYesNoCancelAsync(string message, string title, MessageIcon icon = MessageIcon.Question)
+    {
+        var result = MessageBox.Show(message, title, MessageBoxButtons.YesNoCancel, ToWinForms(icon));
+
+        return Task.FromResult<bool?>(result switch
+        {
+            DialogResult.Yes => true,
+            DialogResult.No => false,
+            _ => null,
+        });
+    }
+
     private static MessageBoxIcon ToWinForms(MessageIcon icon) => icon switch
     {
         MessageIcon.Info => MessageBoxIcon.Information,

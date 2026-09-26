@@ -801,7 +801,11 @@ namespace GUI.Types.PackageViewer
         {
             if (e.Button == MouseButtons.Right && e.Node is BetterTreeNode node)
             {
-                mainTreeView.SelectedNode = e.Node;
+                // Right clicking inside a multi selection keeps it, so the context menu acts on all of it
+                if (!mainTreeView.IsNodeSelected(node))
+                {
+                    mainTreeView.SelectedNode = node;
+                }
 
                 if (node.PackageEntry != null)
                 {
