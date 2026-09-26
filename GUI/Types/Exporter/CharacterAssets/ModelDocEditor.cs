@@ -794,7 +794,8 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// A copy of an animation to be layered on other sequences: hidden and without an activity, so it is never
-        /// played by itself, and masked to the bones it is layered on.
+        /// played by itself, and masked to the bones it is layered on. Looping ones are timed by the clock rather than
+        /// by those sequences.
         /// </summary>
         private static string CopyLayerAnimation(string vmdl, AnimFileNode animation, string name, string weightList)
         {
@@ -803,10 +804,32 @@ namespace GUI.Types.Exporter.CharacterAssets
                 (animation.Name.Index, animation.Name.Length, name),
             };
 
-            foreach (var (start, end) in animation.ActivityModifiers)
+            var removed = animation.Looping ? animation.ActivityModifiers.Concat(animation.CycleOverrides) : animation.ActivityModifiers;
+
+            foreach (var (start, end) in removed)
             {
                 var lineStart = GetLineStart(vmdl, start);
                 edits.Add((lineStart, GetLineEnd(vmdl, end) - lineStart, string.Empty));
+            }
+
+            var depth = GetIndentation(vmdl, animation.Start);
+
+            // A layer's cycle follows the sequence it is layered on, which squeezes a whole loop into every sequence
+            // of the hero, e.g. into a short attack. Taken from the clock it plays at its own speed instead. One-shot
+            // animations, e.g. of dying, stay timed to the sequence so they play once along with it.
+            if (animation.Looping)
+            {
+                var cycleOverride = """
+                    {
+                        _class = "AnimCycleOverride"
+                        cycle_type = "Auto Cycle"
+                        pose_param_name = ""
+                    },
+                    """;
+
+                edits.Add(animation.ChildrenIndex is { } childrenIndex
+                    ? (childrenIndex, 0, "\n" + Indent(cycleOverride, depth + 2))
+                    : (animation.Name.Index + animation.Name.Length + 1, 0, "\n" + Indent($"children =\n[\n{Indent(cycleOverride, 1)}\n]", depth + 1)));
             }
 
             if (animation.ActivityValue is { } activity)
@@ -825,7 +848,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
             else
             {
-                var indent = new string('\t', GetIndentation(vmdl, animation.Start) + 1);
+                var indent = new string('\t', depth + 1);
                 edits.Add((animation.Name.Index + animation.Name.Length + 1, 0, $"\n{indent}weight_list_name = \"{weightList}\""));
             }
 
@@ -877,10 +900,9 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var looping = FindOwn(LoopingRegex())?.Groups["value"];
                 var childrenArray = FindOwn(ChildrenArrayRegex());
 
-                var activityModifiers = children
+                List<(int Start, int End)> ChildrenOfClass(string className) => [.. children
                     .Where(child => ObjectHeaderRegex().Match(vmdl, child.Start) is { Success: true } childHeader
-                        && childHeader.Groups["class"].Value == "ActivityModifier")
-                    .ToList();
+                        && childHeader.Groups["class"].Value == className)];
 
                 animations.Add(new AnimFileNode(start, end, header.Groups["name"], activity?.Value, hidden?.Value == "true", looping?.Value == "true",
                     childrenArray == null ? null : childrenArray.Index + childrenArray.Length)
@@ -888,7 +910,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                     ActivityValue = activity,
                     HiddenValue = hidden,
                     WeightListValue = FindOwn(WeightListNameRegex())?.Groups["name"],
-                    ActivityModifiers = activityModifiers,
+                    ActivityModifiers = ChildrenOfClass("ActivityModifier"),
+                    CycleOverrides = ChildrenOfClass("AnimCycleOverride"),
                 });
             }
 
@@ -902,6 +925,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             public Group? HiddenValue { get; init; }
             public Group? WeightListValue { get; init; }
             public List<(int Start, int End)> ActivityModifiers { get; init; } = [];
+            public List<(int Start, int End)> CycleOverrides { get; init; } = [];
         }
 
         /// <summary>
