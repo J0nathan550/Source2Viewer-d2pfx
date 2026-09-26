@@ -36,6 +36,7 @@ namespace GUI.Forms
 
         // Slots whose item was picked by hand, which choosing a set leaves alone unless the set has an item for them
         private readonly HashSet<string> pickedSlots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Color> slotRecolors = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, List<(string Name, string[] Materials)>> materialGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<(IconSlot Slot, ComboBox ComboBox, PictureBox Picture)> iconRows = [];
         private readonly HashSet<IconSlot> pickedIcons = [];
@@ -75,7 +76,7 @@ namespace GUI.Forms
         {
             HeroModel = heroModelCheckBox.Checked,
             ItemModels = itemModelsCheckBox.Checked,
-            Materials = materialsCheckBox.Checked,
+            Materials = materialsCheckBox.Checked || slotRecolors.Count > 0,
             MergeAdditionalWearables = mergeWearablesCheckBox.Checked,
             ItemParticles = itemParticlesCheckBox.Checked,
             ItemEffects = GetItemEffects(),
@@ -92,8 +93,14 @@ namespace GUI.Forms
             Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
+
             RenameModels = renameModelsCheckBox.Checked,
             AnimateOwnParts = animatePartsCheckBox.Checked,
+
+            RecolorOptions = slotRecolors.ToDictionary(
+                k => k.Key,
+                v => new ItemRecolorOption(v.Value),
+                StringComparer.OrdinalIgnoreCase),
         };
 
         public CharacterSelectForm(ItemsGameCatalog catalog, VrfGuiContext guiContext, Package package)
@@ -605,8 +612,17 @@ namespace GUI.Forms
 
             slotsTable.Controls.Clear();
             slotsTable.RowStyles.Clear();
-            slotsTable.RowCount = 0;
+            slotsTable.ColumnStyles.Clear();
             slotRows.Clear();
+
+            slotsTable.ColumnCount = 5;
+            slotsTable.RowCount = 0;
+
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));                // 0: Название слота (Weapon, Head...)
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));           // 1: Выбор предмета (растягивается)
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));                // 2: Стиль
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));                // 3: Скин
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, this.AdjustForDPI(34))); // 4: Колонка под кнопку цвета
 
             var slots = catalog.GetSlots(hero)
                 .Select(slot => (Slot: slot, Items: catalog.GetItems(hero, slot.Name), Text: GetSlotText(slot)))
@@ -639,6 +655,57 @@ namespace GUI.Forms
                     DropDownWidth = this.AdjustForDPI(360),
                     MaxDropDownItems = 20,
                     Tag = slot,
+                };
+
+                var colorButton = new Button
+                {
+                    Text = "🎨",
+                    Width = this.AdjustForDPI(32),
+                    Height = this.AdjustForDPI(26),
+                    FlatStyle = FlatStyle.Flat,
+                    UseVisualStyleBackColor = false,
+                    BackColor = slotRecolors.TryGetValue(slot.Name, out var savedColor) ? savedColor : Color.Transparent,
+                    Margin = new Padding(2),
+                    Cursor = Cursors.Hand,
+                };
+                colorButton.Font = new Font("Segoe UI Emoji", 9f);
+
+                toolTip.SetToolTip(colorButton, slotRecolors.TryGetValue(slot.Name, out var c)
+                    ? $"Recolor: R:{c.R} G:{c.G} B:{c.B} (ПКМ для сброса)"
+                    : "Recolor: выбрать кастомный RGB цвет (ПКМ для сброса)");
+
+                // Выбор цвета по клику
+                colorButton.Click += (s, e) =>
+                {
+                    using var colorDialog = new ColorDialog
+                    {
+                        AllowFullOpen = true,
+                        FullOpen = true,
+                    };
+
+                    if (slotRecolors.TryGetValue(slot.Name, out var currentColor))
+                    {
+                        colorDialog.Color = currentColor;
+                    }
+
+                    if (colorDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        slotRecolors[slot.Name] = colorDialog.Color;
+
+                        colorButton.BackColor = colorDialog.Color;
+                        toolTip.SetToolTip(colorButton, $"Recolor: R:{colorDialog.Color.R} G:{colorDialog.Color.G} B:{colorDialog.Color.B} (ПКМ для сброса)");
+                    }
+                };
+
+                // Сброс цвета по правой кнопке мыши
+                colorButton.MouseDown += (s, e) =>
+                {
+                    if (e.Button == MouseButtons.Right)
+                    {
+                        slotRecolors.Remove(slot.Name);
+                        colorButton.BackColor = Color.Transparent;
+                        toolTip.SetToolTip(colorButton, "Recolor: выбрать кастомный RGB цвет (ПКМ для сброса)");
+                    }
                 };
 
                 comboBox.Items.Add(ItemChoice.None);
@@ -689,6 +756,7 @@ namespace GUI.Forms
                 slotsTable.Controls.Add(comboBox, 1, row);
                 slotsTable.Controls.Add(styleComboBox, 2, row);
                 slotsTable.Controls.Add(skinComboBox, 3, row);
+                slotsTable.Controls.Add(colorButton, 4, row);
 
                 slotRows.Add((slot, comboBox, styleComboBox, skinComboBox));
             }
