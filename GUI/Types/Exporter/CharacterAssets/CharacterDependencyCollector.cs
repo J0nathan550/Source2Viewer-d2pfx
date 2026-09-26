@@ -8,6 +8,7 @@ using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.ResourceTypes.ModelAnimation;
 using ValveResourceFormat.Serialization.KeyValues;
 
 namespace GUI.Types.Exporter.CharacterAssets
@@ -146,7 +147,14 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// <summary>
     /// A model whose meshes are added to another one, see <see cref="ModelReplacement.Merged"/>.
     /// </summary>
-    sealed record MergedModel(string Model, int Skin, Dictionary<string, int> BodyGroups);
+    sealed record MergedModel(string Model, int Skin, Dictionary<string, int> BodyGroups)
+    {
+        /// <summary>
+        /// The model's bones the hero does not have, which its own animations move, see
+        /// <see cref="ModelDocEditor.AddLayeredAnimations"/>. Empty when only the hero's skeleton moves it.
+        /// </summary>
+        public IReadOnlyList<string> AnimatedBones { get; init; } = [];
+    }
 
     /// <summary>
     /// A particle written over another one, see <see cref="CharacterExportOptions.ReplaceDefaults"/>.
@@ -659,7 +667,21 @@ namespace GUI.Types.Exporter.CharacterAssets
                         ? personaModels.Targets.GetValueOrDefault(item)
                         : loadout.GetDefaultModel(item.Item.Slot);
 
-                    if (defaultModel != null)
+                    if (options.HeroModel && hero.Model != null && GetAnimatedBones(loadout, item, model) is { Count: > 0 } animatedBones)
+                    {
+                        // Written over the slot's default model it would be combined into the hero and stand still
+                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
+                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups) { AnimatedBones = animatedBones });
+                        heroParticles.AddRange(createdParticles);
+
+                        if (defaultModel != null)
+                        {
+                            plan.HiddenModels.Add(NormalizePath(defaultModel));
+                        }
+
+                        plan.Notes.Add($"{NormalizePath(model)} animates parts of its own, it was added to the hero's model with its animations played on them");
+                    }
+                    else if (defaultModel != null)
                     {
                         var (skin, bodyGroups) = GetLook(model, item.Skin);
 
@@ -800,6 +822,48 @@ namespace GUI.Types.Exporter.CharacterAssets
                     ActivityModifiers = activityModifiers,
                     Rename = rename,
                 });
+            }
+        }
+
+        /// <summary>
+        /// The bones an item's model moves with animations of its own that the hero's model does not have. The game keeps
+        /// such items apart from the hero so they play their own sequences, but an addon hero's wearables are all
+        /// combined into it, where nothing would move those bones. Empty for items the game combines too, or whose
+        /// model only has the hero's bones.
+        /// </summary>
+        private List<string> GetAnimatedBones(CharacterLoadout loadout, EquippedItem item, string model)
+        {
+            if (!item.Item.SkipModelCombine || !loadout.IsWornByHero(item.Item.Slot) || (loadout.HeroModel ?? loadout.Hero.Model) is not { } heroModelPath)
+            {
+                return [];
+            }
+
+            try
+            {
+                using var resource = fileLoader.LoadFileCompiled(NormalizePath(model));
+                using var heroResource = fileLoader.LoadFileCompiled(NormalizePath(heroModelPath));
+
+                if (resource?.DataBlock is not Model itemModel || heroResource?.DataBlock is not Model heroModel)
+                {
+                    return [];
+                }
+
+                var animated = itemModel.GetAllAnimations(fileLoader)
+                    .Any(static animation => animation is SequenceAnimation { IsLooping: true, Hidden: false });
+
+                if (!animated)
+                {
+                    return [];
+                }
+
+                var heroBones = heroModel.Skeleton.Bones.Select(static bone => bone.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                return [.. itemModel.Skeleton.Bones.Select(static bone => bone.Name).Where(bone => !heroBones.Contains(bone))];
+            }
+            catch (Exception e)
+            {
+                progress?.Report($"  ! failed to read the bones of \"{model}\": {e.Message}");
+                return [];
             }
         }
 

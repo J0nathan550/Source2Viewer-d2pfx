@@ -88,6 +88,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Whether the item comes in unusual versions, which play one of the unusual effects on it.</summary>
         public bool CanBeUnusual { get; init; }
 
+        /// <summary>
+        /// Whether the game keeps the item's model apart from the hero's rather than combining it into it, so the model
+        /// plays its own sequences, e.g. a wind-up key that turns on its own.
+        /// </summary>
+        public bool SkipModelCombine { get; init; }
+
         /// <summary>The item's styles, empty when it has only the one look.</summary>
         public List<ItemStyle> Styles { get; } = [];
 
@@ -426,6 +432,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 Skin = visuals is { ValueType: KVValueType.Collection } ? ParseInt(GetValue(visuals, "skin")) ?? 0 : 0,
                 CanBeUnusual = itemData.GetSubCollection("static_attributes") is { ValueType: KVValueType.Collection } staticAttributes
                     && GetValue(staticAttributes, "can roll unusual") == "1",
+                SkipModelCombine = visuals is { ValueType: KVValueType.Collection } && GetValue(visuals, "skip_model_combine") == "1",
             };
 
             foreach (var (heroName, value) in usedByHeroes)

@@ -375,8 +375,22 @@ namespace GUI.Types.Exporter.CharacterAssets
                         {
                             var mergedVmdl = ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, plan.StyleMaterialRemaps.GetValueOrDefault(merged.Model), progress, details: null);
 
-                            vmdl = ModelDocEditor.MergeModel(vmdl, mergedVmdl, Path.GetFileNameWithoutExtension(merged.Model));
+                            var prefix = Path.GetFileNameWithoutExtension(merged.Model);
+
+                            vmdl = ModelDocEditor.MergeModel(vmdl, mergedVmdl, prefix);
                             details.Add($"with the meshes of {merged.Model}");
+
+                            if (merged.AnimatedBones.Count > 0)
+                            {
+                                try
+                                {
+                                    vmdl = ModelDocEditor.AddLayeredAnimations(vmdl, mergedVmdl, prefix, merged.AnimatedBones, details);
+                                }
+                                catch (Exception e)
+                                {
+                                    progress.Report($"  ! {replacement.Target}: the animations of {merged.Model} were not added: {e.Message}");
+                                }
+                            }
                         }
                         catch (Exception e)
                         {

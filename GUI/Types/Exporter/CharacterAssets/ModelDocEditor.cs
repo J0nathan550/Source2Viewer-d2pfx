@@ -656,6 +656,253 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// Plays another model's animations on the bones its meshes add to this one, as layers of this model's
+        /// sequences. The game only plays a wearable's own sequences while it is a model of its own, e.g. to turn a
+        /// wind-up key, but it combines an addon hero's wearables into the hero, where nothing moves those bones. Each
+        /// sequence plays the other model's sequence of the same activity, or else its idle one, masked to those bones
+        /// so the rest of the hero moves as before.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text of the model that gets the animations, with the other model's meshes merged in.</param>
+        /// <param name="otherVmdl">The .vmdl text of the model whose animations are added.</param>
+        /// <param name="prefix">Prepended to the names of the added animations and of their bone mask.</param>
+        /// <param name="bones">The other model's bones this model does not have.</param>
+        /// <param name="details">Receives a description of what now plays.</param>
+        public static string AddLayeredAnimations(string vmdl, string otherVmdl, string prefix, IReadOnlyCollection<string> bones,
+            ICollection<string>? details = null)
+        {
+            var otherAnimations = GetAnimFiles(otherVmdl).Where(static animation => !animation.Hidden).ToList();
+            var idle = otherAnimations.FirstOrDefault(static animation => animation.Activity == "ACT_DOTA_IDLE")
+                ?? otherAnimations.FirstOrDefault(static animation => animation.Looping)
+                ?? throw new InvalidDataException("The model has no idle animation to play");
+
+            var weightList = $"{prefix}_bones";
+            var used = new Dictionary<string, AnimFileNode>(StringComparer.Ordinal);
+            var insertions = new List<(int Index, string Text)>();
+
+            foreach (var animation in GetAnimFiles(vmdl))
+            {
+                if (animation.Hidden)
+                {
+                    continue;
+                }
+
+                var layer = otherAnimations.FirstOrDefault(other => other.Activity is { Length: > 0 } activity
+                    && activity.Equals(animation.Activity, StringComparison.OrdinalIgnoreCase)) ?? idle;
+
+                used.TryAdd(layer.Name.Value, layer);
+
+                // Start and end at the same frame keep it at full weight throughout the sequence
+                var node = $$"""
+                    {
+                        _class = "AnimBlendLayer"
+                        anim_name = "{{prefix}}_{{layer.Name.Value}}"
+                        spline = false
+                        xfade = false
+                        no_blend = false
+                        local_space = true
+                        start_frame = 0
+                        peak_frame = 0
+                        tail_frame = 0
+                        end_frame = 0
+                    },
+                    """;
+
+                var depth = GetIndentation(vmdl, animation.Start);
+
+                insertions.Add(animation.ChildrenIndex is { } childrenIndex
+                    ? (childrenIndex, "\n" + Indent(node, depth + 2))
+                    : (animation.Name.Index + animation.Name.Length + 1, "\n" + Indent($"children =\n[\n{Indent(node, 1)}\n]", depth + 1)));
+            }
+
+            if (insertions.Count == 0)
+            {
+                throw new InvalidDataException("The model has no sequences to play the animations with");
+            }
+
+            var animations = new StringBuilder();
+
+            foreach (var animation in used.Values)
+            {
+                animations.Append('\n').Append(CopyLayerAnimation(otherVmdl, animation, $"{prefix}_{animation.Name.Value}", weightList));
+            }
+
+            var animationList = AnimationListChildrenRegex().Match(vmdl);
+
+            if (!animationList.Success)
+            {
+                throw new InvalidDataException("The model's animation list was not found");
+            }
+
+            insertions.Add((animationList.Index + animationList.Length, animations.ToString()));
+
+            var weights = string.Join('\n', bones.Select(static bone => $$"""
+                        {
+                            bone = "{{bone}}"
+                            weight = 1.0
+                        },
+                """));
+
+            var weightListNode = $$"""
+
+                {
+                    _class = "WeightList"
+                    name = "{{weightList}}"
+                    weights =
+                    [
+                {{weights}}
+                    ]
+                    master_morph_weight = 0.0
+                    morph_weights = [  ]
+                    default_weight = 0.0
+                },
+                """;
+
+            if (WeightListListChildrenRegex().Match(vmdl) is { Success: true } weightListList)
+            {
+                insertions.Add((weightListList.Index + weightListList.Length, Indent(weightListNode, 5)));
+            }
+            else if (RootNodeChildrenRegex().Match(vmdl) is { Success: true } rootChildren)
+            {
+                var listNode = $$"""
+
+                    {
+                        _class = "WeightListList"
+                        children =
+                        [{{Indent(weightListNode, 2)}}
+                        ]
+                    },
+                    """;
+
+                insertions.Add((rootChildren.Index + rootChildren.Length, Indent(listNode, 3)));
+            }
+            else
+            {
+                throw new InvalidDataException("The model's root node was not found");
+            }
+
+            foreach (var (index, text) in insertions.OrderByDescending(static insertion => insertion.Index))
+            {
+                vmdl = vmdl.Insert(index, text);
+            }
+
+            details?.Add($"{insertions.Count - 2} sequences play {string.Join(", ", used.Keys)} on {string.Join(", ", bones)}");
+
+            return Validate(vmdl);
+        }
+
+        /// <summary>
+        /// A copy of an animation to be layered on other sequences: hidden and without an activity, so it is never
+        /// played by itself, and masked to the bones it is layered on.
+        /// </summary>
+        private static string CopyLayerAnimation(string vmdl, AnimFileNode animation, string name, string weightList)
+        {
+            var edits = new List<(int Index, int Length, string Text)>
+            {
+                (animation.Name.Index, animation.Name.Length, name),
+            };
+
+            foreach (var (start, end) in animation.ActivityModifiers)
+            {
+                var lineStart = GetLineStart(vmdl, start);
+                edits.Add((lineStart, GetLineEnd(vmdl, end) - lineStart, string.Empty));
+            }
+
+            if (animation.ActivityValue is { } activity)
+            {
+                edits.Add((activity.Index, activity.Length, string.Empty));
+            }
+
+            if (animation.HiddenValue is { } hidden)
+            {
+                edits.Add((hidden.Index, hidden.Length, "true"));
+            }
+
+            if (animation.WeightListValue is { } weightListValue)
+            {
+                edits.Add((weightListValue.Index, weightListValue.Length, weightList));
+            }
+            else
+            {
+                var indent = new string('\t', GetIndentation(vmdl, animation.Start) + 1);
+                edits.Add((animation.Name.Index + animation.Name.Length + 1, 0, $"\n{indent}weight_list_name = \"{weightList}\""));
+            }
+
+            var lineStartOfNode = GetLineStart(vmdl, animation.Start);
+            var text = new StringBuilder(vmdl[lineStartOfNode..animation.End]);
+
+            foreach (var (index, length, replacement) in edits.OrderByDescending(static edit => edit.Index))
+            {
+                text.Remove(index - lineStartOfNode, length).Insert(index - lineStartOfNode, replacement);
+            }
+
+            return text.Append(',').ToString();
+        }
+
+        /// <summary>
+        /// The model's animations, with where their own settings are, as opposed to those of their children.
+        /// </summary>
+        private static List<AnimFileNode> GetAnimFiles(string vmdl)
+        {
+            var objects = FindObjects(vmdl);
+            var animations = new List<AnimFileNode>();
+
+            foreach (var (start, end) in objects)
+            {
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header
+                    || header.Groups["class"].Value != "AnimFile"
+                    || !header.Groups["name"].Success)
+                {
+                    continue;
+                }
+
+                var children = objects.Where(child => child.Start > start && child.End <= end).ToList();
+
+                Match? FindOwn(Regex regex)
+                {
+                    for (var match = regex.Match(vmdl, start, end - start); match.Success; match = match.NextMatch())
+                    {
+                        if (!children.Any(child => match.Index > child.Start && match.Index < child.End))
+                        {
+                            return match;
+                        }
+                    }
+
+                    return null;
+                }
+
+                var activity = FindOwn(ActivityNameRegex())?.Groups["name"];
+                var hidden = FindOwn(HiddenRegex())?.Groups["value"];
+                var looping = FindOwn(LoopingRegex())?.Groups["value"];
+                var childrenArray = FindOwn(ChildrenArrayRegex());
+
+                var activityModifiers = children
+                    .Where(child => ObjectHeaderRegex().Match(vmdl, child.Start) is { Success: true } childHeader
+                        && childHeader.Groups["class"].Value == "ActivityModifier")
+                    .ToList();
+
+                animations.Add(new AnimFileNode(start, end, header.Groups["name"], activity?.Value, hidden?.Value == "true", looping?.Value == "true",
+                    childrenArray == null ? null : childrenArray.Index + childrenArray.Length)
+                {
+                    ActivityValue = activity,
+                    HiddenValue = hidden,
+                    WeightListValue = FindOwn(WeightListNameRegex())?.Groups["name"],
+                    ActivityModifiers = activityModifiers,
+                });
+            }
+
+            return animations;
+        }
+
+        /// <param name="ChildrenIndex">Where its children array opens, null when it has none.</param>
+        private sealed record AnimFileNode(int Start, int End, Group Name, string? Activity, bool Hidden, bool Looping, int? ChildrenIndex)
+        {
+            public Group? ActivityValue { get; init; }
+            public Group? HiddenValue { get; init; }
+            public Group? WeightListValue { get; init; }
+            public List<(int Start, int End)> ActivityModifiers { get; init; } = [];
+        }
+
+        /// <summary>
         /// Adds particles to the model's game data, so the model creates them when it spawns.
         /// </summary>
         public static string AddParticles(string vmdl, IEnumerable<ModelParticle> particles)
@@ -1116,6 +1363,24 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"_class\s*=\s*""GameDataList""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex GameDataListChildrenRegex();
+
+        [GeneratedRegex(@"_class\s*=\s*""AnimationList""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex AnimationListChildrenRegex();
+
+        [GeneratedRegex(@"_class\s*=\s*""WeightListList""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex WeightListListChildrenRegex();
+
+        [GeneratedRegex(@"\bhidden\s*=\s*(?<value>true|false)\b", RegexOptions.CultureInvariant)]
+        private static partial Regex HiddenRegex();
+
+        [GeneratedRegex(@"\blooping\s*=\s*(?<value>true|false)\b", RegexOptions.CultureInvariant)]
+        private static partial Regex LoopingRegex();
+
+        [GeneratedRegex(@"\bchildren\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex ChildrenArrayRegex();
+
+        [GeneratedRegex(@"\bweight_list_name\s*=\s*""(?<name>[^""]*)""", RegexOptions.CultureInvariant)]
+        private static partial Regex WeightListNameRegex();
 
         [GeneratedRegex(@"_class\s*=\s*""RootNode""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex RootNodeChildrenRegex();
