@@ -88,6 +88,7 @@ namespace GUI.Forms
             materialsCheckBox = new System.Windows.Forms.CheckBox();
             mergeWearablesCheckBox = new System.Windows.Forms.CheckBox();
             renameModelsCheckBox = new System.Windows.Forms.CheckBox();
+            animatePartsCheckBox = new System.Windows.Forms.CheckBox();
             outputGroupBox = new ThemedGroupBox();
             outputTable = new System.Windows.Forms.TableLayoutPanel();
             contentFolderLabel = new System.Windows.Forms.Label();
@@ -486,10 +487,13 @@ namespace GUI.Forms
             includeTable.Controls.Add(mergeWearablesCheckBox, 2, 5);
             includeTable.Controls.Add(renameModelsCheckBox, 0, 6);
             includeTable.SetColumnSpan(renameModelsCheckBox, 3);
+            includeTable.Controls.Add(animatePartsCheckBox, 0, 7);
+            includeTable.SetColumnSpan(animatePartsCheckBox, 3);
             includeTable.Dock = System.Windows.Forms.DockStyle.Top;
             includeTable.Location = new System.Drawing.Point(3, 21);
             includeTable.Name = "includeTable";
-            includeTable.RowCount = 7;
+            includeTable.RowCount = 8;
+            includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
@@ -652,6 +656,16 @@ namespace GUI.Forms
             renameModelsCheckBox.TabIndex = 15;
             renameModelsCheckBox.Text = "Rename models over the defaults, disabling unused styles";
             renameModelsCheckBox.UseVisualStyleBackColor = true;
+            //
+            // animatePartsCheckBox
+            //
+            animatePartsCheckBox.AutoSize = true;
+            animatePartsCheckBox.Checked = true;
+            animatePartsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            animatePartsCheckBox.Name = "animatePartsCheckBox";
+            animatePartsCheckBox.TabIndex = 16;
+            animatePartsCheckBox.Text = "Add items that animate parts of their own to the hero's model";
+            animatePartsCheckBox.UseVisualStyleBackColor = true;
             //
             // outputGroupBox
             //
@@ -879,6 +893,7 @@ namespace GUI.Forms
         private System.Windows.Forms.CheckBox materialsCheckBox;
         private System.Windows.Forms.CheckBox mergeWearablesCheckBox;
         private System.Windows.Forms.CheckBox renameModelsCheckBox;
+        private System.Windows.Forms.CheckBox animatePartsCheckBox;
         private ThemedGroupBox outputGroupBox;
         private System.Windows.Forms.TableLayoutPanel outputTable;
         private System.Windows.Forms.Label contentFolderLabel;

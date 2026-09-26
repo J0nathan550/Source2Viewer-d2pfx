@@ -670,7 +670,9 @@ namespace GUI.Types.Exporter.CharacterAssets
         public static string AddLayeredAnimations(string vmdl, string otherVmdl, string prefix, IReadOnlyCollection<string> bones,
             ICollection<string>? details = null)
         {
-            var otherAnimations = GetAnimFiles(otherVmdl).Where(static animation => !animation.Hidden).ToList();
+            var otherAnimations = GetAnimFiles(otherVmdl)
+                .Where(static animation => !animation.Hidden && !IsLoadoutAnimation(animation.Name.Value))
+                .ToList();
             var idle = otherAnimations.FirstOrDefault(static animation => animation.Activity == "ACT_DOTA_IDLE")
                 ?? otherAnimations.FirstOrDefault(static animation => animation.Looping)
                 ?? throw new InvalidDataException("The model has no idle animation to play");
@@ -979,6 +981,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             return new ModelParticle(particle, config);
         }
+
+        /// <summary>
+        /// Whether an animation is made for the loadout screen, e.g. a cape swept into a pose to be shown off, even when
+        /// it is the model's idle one. Layered on the hero's sequences in game it would hold that pose throughout.
+        /// </summary>
+        public static bool IsLoadoutAnimation(string name) => name.Contains("loadout", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Whether a particle only comes with control point configurations for the loadout screen that put all of its

@@ -117,9 +117,19 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// like renaming drow_arcana_weapon to drow_weapon by hand. Body group choices the items pick are kept enabled
         /// and the others are disabled rather than removed, see <see cref="ModelDocEditor.DisableBodyGroupChoices"/>.
         /// The picked style's skin is made the default material group, extra wearables are not merged, and the
-        /// particles items create and the activity modifiers are still added.
+        /// particles items create and the activity modifiers are still added. Items without a default model of their
+        /// own take the place of the model they swap to fit them, e.g. a helmet renamed over the hero's head in place of
+        /// the face refit that goes under it; without this they are added to that model with it.
         /// </summary>
         public bool RenameModels { get; set; } = true;
+
+        /// <summary>
+        /// With <see cref="ReplaceDefaults"/>, adds items the game keeps apart from the hero so they play animations of
+        /// their own, e.g. a wind-up key, to the hero's model with those animations layered on the hero's, see
+        /// <see cref="ModelDocEditor.AddLayeredAnimations"/>. Otherwise they are written over the default models like
+        /// other items, and those parts stand still in game.
+        /// </summary>
+        public bool AnimateOwnParts { get; set; } = true;
     }
 
     /// <summary>
@@ -222,8 +232,9 @@ namespace GUI.Types.Exporter.CharacterAssets
         public List<string> UnplacedModels { get; } = [];
 
         /// <summary>
-        /// Default models of the hero's own slots written as empty models, since the persona wears nothing in their place,
-        /// see <see cref="CharacterLoadout.PersonaModels"/>.
+        /// Default models of the hero's own slots written as empty models, since nothing is worn in their place: the
+        /// persona has no item for them, see <see cref="CharacterLoadout.PersonaModels"/>, or the item was added to the
+        /// hero's model, see <see cref="CharacterExportOptions.AnimateOwnParts"/>.
         /// </summary>
         public List<string> HiddenModels { get; } = [];
 
@@ -593,6 +604,9 @@ namespace GUI.Types.Exporter.CharacterAssets
             // Particles of items without a model of their own play on the hero, as do those of models added to the hero's
             var heroParticles = new List<string>();
             var merged = new List<MergedModel>();
+
+            // Items with no model of the hero's to be written over, with the models their own swaps write over
+            var slotless = new List<(MergedModel Model, List<string> Particles, List<string> Companions)>();
             var replacedParticles = new Dictionary<string, ParticleReplacement>(StringComparer.OrdinalIgnoreCase);
             var usedParticles = GetUsedParticles(loadout, equippedAssets);
             var unitSwaps = options.ItemModels ? loadout.UnitModelSwaps.ToList() : [];
@@ -667,7 +681,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                         ? personaModels.Targets.GetValueOrDefault(item)
                         : loadout.GetDefaultModel(item.Item.Slot);
 
-                    if (options.HeroModel && hero.Model != null && GetAnimatedBones(loadout, item, model) is { Count: > 0 } animatedBones)
+                    if (options.AnimateOwnParts && options.HeroModel && hero.Model != null && GetAnimatedBones(loadout, item, model) is { Count: > 0 } animatedBones)
                     {
                         // Written over the slot's default model it would be combined into the hero and stand still
                         var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
@@ -695,16 +709,17 @@ namespace GUI.Types.Exporter.CharacterAssets
                             });
                         }
                     }
-                    else if (!isDefault && loadout.IsWornByHero(item.Item.Slot) && rename)
-                    {
-                        plan.Notes.Add($"{NormalizePath(model)} has no default model to be renamed over, it was exported as is");
-                    }
                     else if (!isDefault && loadout.IsWornByHero(item.Item.Slot))
                     {
-                        // Nothing of the hero's to write it over, e.g. a head for a hero without a default one
+                        // Nothing of the hero's to write it over, e.g. a helmet for a hero whose head is a slot of its own.
+                        // Left as is it would not show at all, so it goes with a model it swaps to fit it, else the hero's.
                         var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
-                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups));
-                        heroParticles.AddRange(createdParticles);
+                        var companions = item.Modifiers
+                            .Where(static modifier => modifier.Type == "model" && IsAssetPath(modifier.Asset))
+                            .Select(static modifier => NormalizePath(modifier.Asset!))
+                            .ToList();
+
+                        slotless.Add((new MergedModel(NormalizePath(model), skin, bodyGroups), createdParticles, companions));
                     }
                     else if (!isDefault)
                     {
@@ -765,6 +780,42 @@ namespace GUI.Types.Exporter.CharacterAssets
                     replacedParticles.Add(replacement.Target, replacement);
                     plan.ParticleReplacements.Add(replacement);
                     Enqueue(replacement.Source);
+                }
+            }
+
+            foreach (var (model, particles, companions) in slotless)
+            {
+                var companionIndex = plan.ModelReplacements.FindIndex(replacement => companions.Contains(replacement.Target, StringComparer.OrdinalIgnoreCase));
+
+                if (companionIndex >= 0 && rename)
+                {
+                    // The swapped in model only fills in under the item, e.g. a face refit hidden inside a helmet
+                    var companion = plan.ModelReplacements[companionIndex];
+
+                    plan.ModelReplacements[companionIndex] = new ModelReplacement(model.Model, companion.Target, model.Skin,
+                        [.. companion.Particles.Union(particles, StringComparer.OrdinalIgnoreCase)])
+                    {
+                        BodyGroups = model.BodyGroups,
+                        Merged = companion.Merged,
+                        ActivityModifiers = companion.ActivityModifiers,
+                        Rename = true,
+                    };
+
+                    plan.Notes.Add($"{model.Model} has no default model of its own, it was renamed over {companion.Target} in place of {companion.Source}, which it swaps to fit under it");
+                }
+                else if (companionIndex >= 0)
+                {
+                    var companion = plan.ModelReplacements[companionIndex];
+
+                    companion.Merged.Add(model);
+                    companion.Particles.AddRange(particles.Except(companion.Particles, StringComparer.OrdinalIgnoreCase));
+                    plan.Notes.Add($"{model.Model} has no default model of its own, it was added to {companion.Target}, which it swaps to fit it");
+                }
+                else
+                {
+                    merged.Add(model);
+                    heroParticles.AddRange(particles);
+                    plan.Notes.Add($"{model.Model} has no default model of its own, it was added to the hero's model");
                 }
             }
 
@@ -849,7 +900,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
 
                 var animated = itemModel.GetAllAnimations(fileLoader)
-                    .Any(static animation => animation is SequenceAnimation { IsLooping: true, Hidden: false });
+                    .Any(static animation => animation is SequenceAnimation { IsLooping: true, Hidden: false }
+                        && !ModelDocEditor.IsLoadoutAnimation(animation.Name));
 
                 if (!animated)
                 {

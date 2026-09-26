@@ -93,6 +93,7 @@ namespace GUI.Forms
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
             RenameModels = renameModelsCheckBox.Checked,
+            AnimateOwnParts = animatePartsCheckBox.Checked,
         };
 
         public CharacterSelectForm(ItemsGameCatalog catalog, VrfGuiContext guiContext, Package package)
@@ -134,6 +135,11 @@ namespace GUI.Forms
                 "like renaming drow_arcana_weapon to drow_weapon. Body group choices of styles not picked are disabled, not removed,\n" +
                 "so they can be turned back on in ModelDoc, and the _dummy choices are removed. The style's skin becomes the default one.\n" +
                 "No extra meshes are merged. Particles items create and activity modifiers are still added.");
+            toolTip.SetToolTip(animatePartsCheckBox,
+                "When replacing default assets, add items that animate parts of their own, e.g. a wind-up key, to the hero's model,\n" +
+                "with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
+                "The game combines an addon hero's items into it, where such parts would otherwise stand still.\n" +
+                "Untick it for models this does not suit, they are then written over the default models like other items.");
 
             if (preferences.Options != null)
             {
@@ -147,6 +153,7 @@ namespace GUI.Forms
 
             replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
             renameModelsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
+            animatePartsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
 
             // The game folder goes first, so one chosen by hand is not replaced by the one that goes with the content folder
             gameFolderTextBox.Text = Settings.Config.CharacterExportGameDir;
@@ -381,12 +388,14 @@ namespace GUI.Forms
             replaceDefaultsCheckBox.Checked = options.ReplaceDefaults;
             replaceSharedParticlesCheckBox.Checked = options.ReplaceSharedParticles;
             renameModelsCheckBox.Checked = options.RenameModels;
+            animatePartsCheckBox.Checked = options.AnimateOwnParts;
         }
 
         private void ReplaceDefaultsCheckBox_CheckedChanged(object? sender, EventArgs e)
         {
             replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
             renameModelsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
+            animatePartsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
         }
 
         protected override void OnLoad(EventArgs e)

@@ -446,7 +446,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
                     File.WriteAllText(targetPath, ModelDocEditor.EmptyModel);
 
-                    progress.Report($"  {hidden} <- empty model, the persona wears nothing in its place");
+                    progress.Report($"  {hidden} <- empty model, nothing is worn in its place");
                 }
                 catch (Exception e)
                 {
