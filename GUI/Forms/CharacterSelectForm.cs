@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Controls;
@@ -29,11 +28,7 @@ namespace GUI.Forms
         // Width of the controls next to the preview at 96 DPI, until the divider is dragged
         private const int DefaultControlsWidth = 540;
 
-        // Remembered for the next time the dialog opens
-        private static string? lastHeroName;
-        private static CharacterExportOptions? lastOptions;
-        private static bool lastPreviewEffects = true;
-
+        private readonly CharacterExportPreferences preferences = CharacterExportPreferences.Load();
         private readonly ItemsGameCatalog catalog;
         private readonly VrfGuiContext guiContext;
         private readonly Package package;
@@ -126,6 +121,7 @@ namespace GUI.Forms
             toolTip.SetToolTip(replaceDefaultsCheckBox,
                 "Write the chosen look over the hero's default assets, so it shows without the items being equipped:\n" +
                 "the arcana or persona model as the hero's model, chosen items over the default items' models,\n" +
+                "a persona's items over the hero's own default items, hiding the ones it has nothing in place of,\n" +
                 "particles the items swap in over the ones they replace, and particles items create added to their models");
             toolTip.SetToolTip(materialsCheckBox,
                 "Decompile the materials the exported models use, with their textures, so the addon compiles its own copies.\n" +
@@ -139,12 +135,12 @@ namespace GUI.Forms
                 "so they can be turned back on in ModelDoc, and the _dummy choices are removed. The style's skin becomes the default one.\n" +
                 "No extra meshes are merged. Particles items create and activity modifiers are still added.");
 
-            if (lastOptions != null)
+            if (preferences.Options != null)
             {
-                ApplyOptions(lastOptions);
+                ApplyOptions(preferences.Options);
             }
 
-            previewEffectsCheckBox.Checked = lastPreviewEffects;
+            previewEffectsCheckBox.Checked = preferences.PreviewEffects;
             toolTip.SetToolTip(previewEffectsCheckBox,
                 "Play the ticked effects and the unusual effects on the preview. Only roughly how the game shows them,\n" +
                 "not everything particles do is supported.");
@@ -163,35 +159,205 @@ namespace GUI.Forms
             heroSearchTextBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
             heroSearchTextBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
 
-            var lastHeroIndex = FindHero(hero => hero.Name.Equals(lastHeroName, StringComparison.OrdinalIgnoreCase));
+            var lastHeroIndex = FindHero(hero => hero.Name.Equals(preferences.LastHero, StringComparison.OrdinalIgnoreCase));
             SelectHero(Math.Max(lastHeroIndex, 0));
         }
 
         /// <summary>
         /// The item chosen in every slot, its style and the skin picked for it, skipping slots left empty.
         /// </summary>
-        public List<EquippedItem> GetEquippedItems()
-        {
-            var items = new List<EquippedItem>();
+        public List<EquippedItem> GetEquippedItems() => [.. slotRows.Select(GetEquippedItem).OfType<EquippedItem>()];
 
-            foreach (var (_, comboBox, styleComboBox, skinComboBox) in slotRows)
+        private EquippedItem? GetEquippedItem((HeroSlot Slot, ComboBox ComboBox, ComboBox StyleComboBox, ComboBox SkinComboBox) row)
+        {
+            if (GetItem(row.ComboBox) is not { } item)
             {
+                return null;
+            }
+
+            var equipped = new EquippedItem(item, (row.StyleComboBox.SelectedItem as ItemStyle)?.Index ?? 0, Unusual: pickedUnusuals.GetValueOrDefault(item));
+
+            return row.SkinComboBox.SelectedItem is SkinChoice skin && skin.Index != equipped.DefaultSkin
+                ? equipped with { SkinOverride = skin.Index }
+                : equipped;
+        }
+
+        /// <summary>
+        /// Remembers the selected hero's loadout, or forgets it when it is back to the default items, so heroes that were
+        /// only looked at open with the items the game currently has as their defaults.
+        /// </summary>
+        private void SaveLoadout()
+        {
+            if (SelectedHero is not { } hero)
+            {
+                return;
+            }
+
+            if (IsLoadoutPicked())
+            {
+                preferences.Loadouts[hero.Name] = GetSavedLoadout();
+            }
+            else
+            {
+                preferences.Loadouts.Remove(hero.Name);
+            }
+        }
+
+        /// <summary>
+        /// Whether anything differs from the default items <see cref="ResetLoadout"/> equips for the hero.
+        /// </summary>
+        private bool IsLoadoutPicked()
+        {
+            if (pickedEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0)
+            {
+                return true;
+            }
+
+            foreach (var row in slotRows)
+            {
+                if (GetEquippedItem(row) is not { } equipped)
+                {
+                    // Emptied by hand, persona slots are empty without the persona
+                    if (!IsPersonaSlot(row.Slot.Name) && row.ComboBox.Items.OfType<ItemChoice>().Any(static choice => choice.Item?.IsDefault == true))
+                    {
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (!equipped.Item.IsDefault || equipped.SkinOverride != null || equipped.Style != (equipped.Item.Styles.FirstOrDefault()?.Index ?? 0))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The loadout as picked, to be restored the next time the hero is selected.
+        /// </summary>
+        private SavedLoadout GetSavedLoadout()
+        {
+            var saved = new SavedLoadout
+            {
+                Effects = new(pickedEffects),
+            };
+
+            foreach (var row in slotRows)
+            {
+                var equipped = GetEquippedItem(row);
+
+                saved.Slots[row.Slot.Name] = new SavedSlot
+                {
+                    Item = equipped?.Item.DefIndex,
+                    Style = equipped?.Style ?? 0,
+                    Skin = equipped?.SkinOverride,
+                    Unusual = equipped?.Unusual?.Id,
+                };
+            }
+
+            foreach (var (slot, comboBox, _) in iconRows)
+            {
+                if (pickedIcons.Contains(slot) && comboBox.SelectedItem is IconChoice choice)
+                {
+                    saved.Icons[SavedLoadout.GetIconKey(slot)] = choice.Icon;
+                }
+            }
+
+            foreach (var (slot, comboBox) in soundRows)
+            {
+                if (pickedSounds.Contains(slot) && comboBox.SelectedItem is SoundChoice choice)
+                {
+                    saved.Sounds[slot.Event] = choice.Event;
+                }
+            }
+
+            if (pickedVoice && voiceComboBox?.SelectedItem is VoiceChoice voice)
+            {
+                saved.VoicePicked = true;
+                saved.Voice = voice.Criteria;
+            }
+
+            return saved;
+        }
+
+        /// <summary>
+        /// Picks the loadout saved for the hero, leaving what no longer exists, e.g. a removed item, as it is.
+        /// </summary>
+        private void RestoreLoadout(SavedLoadout saved)
+        {
+            foreach (var (slot, comboBox, styleComboBox, skinComboBox) in slotRows)
+            {
+                if (!saved.Slots.TryGetValue(slot.Name, out var savedSlot))
+                {
+                    continue;
+                }
+
+                // In this order, since picking an item resets its style, and picking a style resets its skin
+                SelectItem(comboBox, item => item.DefIndex == savedSlot.Item);
+
+                if (styleComboBox.Items.OfType<ItemStyle>().FirstOrDefault(style => style.Index == savedSlot.Style) is { } savedStyle)
+                {
+                    styleComboBox.SelectedItem = savedStyle;
+                }
+
+                if (skinComboBox.Items.OfType<SkinChoice>().FirstOrDefault(skin => skin.Index == savedSlot.Skin) is { } savedSkin)
+                {
+                    skinComboBox.SelectedItem = savedSkin;
+                }
+
                 if (GetItem(comboBox) is not { } item)
                 {
                     continue;
                 }
 
-                var equipped = new EquippedItem(item, (styleComboBox.SelectedItem as ItemStyle)?.Index ?? 0, Unusual: pickedUnusuals.GetValueOrDefault(item));
-
-                if (skinComboBox.SelectedItem is SkinChoice skin && skin.Index != equipped.DefaultSkin)
+                if (!item.IsDefault)
                 {
-                    equipped = equipped with { SkinOverride = skin.Index };
+                    pickedSlots.Add(slot.Name);
                 }
 
-                items.Add(equipped);
+                if (catalog.GetUnusualEffects(item).FirstOrDefault(effect => effect.Id == savedSlot.Unusual) is { } unusual)
+                {
+                    pickedUnusuals[item] = unusual;
+                }
             }
 
-            return items;
+            if (pickedSlots.Count > 0)
+            {
+                itemSetComboBox.SelectedIndex = -1;
+            }
+
+            foreach (var (particle, enabled) in saved.Effects)
+            {
+                pickedEffects[particle] = enabled;
+            }
+
+            // Picking these by hand marks them picked, so the equipped items' choices do not replace them
+            foreach (var (slot, comboBox, _) in iconRows)
+            {
+                if (saved.Icons.TryGetValue(SavedLoadout.GetIconKey(slot), out var icon)
+                    && slot.Choices.FirstOrDefault(choice => choice.Icon.Equals(icon, StringComparison.OrdinalIgnoreCase)) is { } choice)
+                {
+                    comboBox.SelectedItem = choice;
+                }
+            }
+
+            foreach (var (slot, comboBox) in soundRows)
+            {
+                if (saved.Sounds.TryGetValue(slot.Event, out var sound)
+                    && slot.Choices.FirstOrDefault(choice => choice.Event.Equals(sound, StringComparison.OrdinalIgnoreCase)) is { } choice)
+                {
+                    comboBox.SelectedItem = choice;
+                }
+            }
+
+            if (saved.VoicePicked && voiceComboBox?.Items.OfType<VoiceChoice>()
+                .FirstOrDefault(choice => string.Equals(choice.Criteria, saved.Voice, StringComparison.OrdinalIgnoreCase)) is { } voice)
+            {
+                voiceComboBox.SelectedItem = voice;
+            }
         }
 
         public CharacterLoadout CreateLoadout()
@@ -260,11 +426,13 @@ namespace GUI.Forms
 
             if (SelectedHero != null)
             {
-                lastHeroName = SelectedHero.Name;
+                preferences.LastHero = SelectedHero.Name;
+                SaveLoadout();
             }
 
-            lastOptions = Options;
-            lastPreviewEffects = previewEffectsCheckBox.Checked;
+            preferences.Options = Options;
+            preferences.PreviewEffects = previewEffectsCheckBox.Checked;
+            preferences.Save();
 
             var controlsWidth = (int)MathF.Round(mainSplitContainer.Panel2.Width * 96f / DeviceDpi);
 
@@ -381,6 +549,8 @@ namespace GUI.Forms
                 return;
             }
 
+            SaveLoadout();
+
             heroIndex = (index % catalog.Heroes.Count + catalog.Heroes.Count) % catalog.Heroes.Count;
 
             var hero = catalog.Heroes[heroIndex];
@@ -398,6 +568,11 @@ namespace GUI.Forms
                 pickedUnusuals.Clear();
                 pickedSlots.Clear();
                 ResetLoadout(persona: false);
+
+                if (preferences.Loadouts.GetValueOrDefault(hero.Name) is { } saved)
+                {
+                    RestoreLoadout(saved);
+                }
             }
             finally
             {
@@ -567,7 +742,7 @@ namespace GUI.Forms
         /// <summary>
         /// Slots of the hero's persona, which only apply while the persona is equipped.
         /// </summary>
-        private static bool IsPersonaSlot(string slotName) => PersonaSlotRegex().IsMatch(slotName);
+        private static bool IsPersonaSlot(string slotName) => CharacterLoadout.IsPersonaSlot(slotName);
 
         /// <summary>
         /// Slots that apply to both the hero and its persona.
@@ -1795,9 +1970,6 @@ namespace GUI.Forms
 
             return [.. models.Select(model => new PreviewModel(model.Path, model.Skin, loadout.GetBodyGroupChoices(model.Path), model.Particles))];
         }
-
-        [GeneratedRegex(@"_persona_\d+$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-        private static partial Regex PersonaSlotRegex();
 
         /// <summary>
         /// One of the material groups of an item's model.

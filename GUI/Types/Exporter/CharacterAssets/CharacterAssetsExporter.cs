@@ -331,7 +331,8 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         private static int ApplyReplacements(CharacterExportPlan plan, string outputRoot, IFileLoader fileLoader, IProgress<string> progress)
         {
-            if (plan.ModelReplacements.Count == 0 && plan.ParticleReplacements.Count == 0 && plan.SkippedSharedParticles.Count == 0 && plan.UnplacedModels.Count == 0)
+            if (plan.ModelReplacements.Count == 0 && plan.ParticleReplacements.Count == 0 && plan.SkippedSharedParticles.Count == 0 && plan.UnplacedModels.Count == 0
+                && plan.HiddenModels.Count == 0)
             {
                 return 0;
             }
@@ -423,8 +424,28 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
             }
 
+            foreach (var hidden in plan.HiddenModels)
+            {
+                try
+                {
+                    var targetPath = GetOutputPath(outputRoot, hidden);
+                    Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                    File.WriteAllText(targetPath, ModelDocEditor.EmptyModel);
+
+                    progress.Report($"  {hidden} <- empty model, the persona wears nothing in its place");
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED to hide {hidden}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to hide '{hidden}': {e}");
+                }
+            }
+
             // Only once every replacement is written, another one may have been made from the same model
-            foreach (var source in renamed.Except(plan.ModelReplacements.Select(static replacement => replacement.Target), StringComparer.OrdinalIgnoreCase))
+            var written = plan.ModelReplacements.Select(static replacement => replacement.Target).Concat(plan.HiddenModels);
+
+            foreach (var source in renamed.Except(written, StringComparer.OrdinalIgnoreCase))
             {
                 try
                 {

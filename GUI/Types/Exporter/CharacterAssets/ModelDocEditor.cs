@@ -31,6 +31,25 @@ namespace GUI.Types.Exporter.CharacterAssets
     static partial class ModelDocEditor
     {
         /// <summary>
+        /// A model with nothing in it, written over a model to hide it wherever the game shows it.
+        /// </summary>
+        public const string EmptyModel = """
+            <!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:modeldoc41:version{12fc9d44-453a-4ae4-b4d9-7e2ac0bbd4e0} -->
+            {
+            	rootNode =
+            	{
+            		_class = "RootNode"
+            		children = [  ]
+            		model_archetype = ""
+            		primary_associated_entity = ""
+            		anim_graph_name = ""
+            		base_model_name = ""
+            	}
+            }
+
+            """;
+
+        /// <summary>
         /// Makes a material group the default one, so the model shows that skin without anything picking it.
         /// </summary>
         /// <param name="vmdl">The .vmdl text.</param>

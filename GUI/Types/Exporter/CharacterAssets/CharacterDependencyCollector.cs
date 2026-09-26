@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Serialization;
 using System.Threading;
 using ValveKeyValue;
 using ValvePak;
@@ -12,7 +13,8 @@ using ValveResourceFormat.Serialization.KeyValues;
 namespace GUI.Types.Exporter.CharacterAssets
 {
     /// <summary>
-    /// What to export for a character besides the selected items' own models.
+    /// What to export for a character besides the selected items' own models. The switches are saved between runs of the
+    /// app, see <see cref="CharacterExportPreferences"/>, the choices that come from the loadout are not.
     /// </summary>
     sealed class CharacterExportOptions
     {
@@ -41,6 +43,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// Whether each of the particles the equipped items create is exported, see <see cref="CharacterLoadout.CreatedEffects"/>,
         /// by package source path. The ones left out are exported when the game shows them with the equipped items.
         /// </summary>
+        [JsonIgnore]
         public IReadOnlyDictionary<string, bool> ItemEffects { get; set; } = new Dictionary<string, bool>();
 
         /// <summary>Every particle in the hero's particle folder, which covers its abilities.</summary>
@@ -68,6 +71,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         public bool Icons { get; set; } = true;
 
         /// <summary>The icons to write when <see cref="Icons"/> is set.</summary>
+        [JsonIgnore]
         public IReadOnlyList<IconReplacement> IconReplacements { get; set; } = [];
 
         /// <summary>
@@ -77,12 +81,14 @@ namespace GUI.Types.Exporter.CharacterAssets
         public bool Sounds { get; set; } = true;
 
         /// <summary>The sound events to write over others when <see cref="Sounds"/> is set.</summary>
+        [JsonIgnore]
         public IReadOnlyList<SoundReplacement> SoundReplacements { get; set; } = [];
 
         /// <summary>
         /// The voice whose lines are written over the hero's own when <see cref="Sounds"/> is set, see
         /// <see cref="HeroResponseRules.MapVoice"/>, or null to keep the hero's voice.
         /// </summary>
+        [JsonIgnore]
         public VoiceChoice? Voice { get; set; }
 
         /// <summary>
@@ -93,7 +99,8 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// Writes the equipped look over the hero's default assets, so it shows without the items being equipped: the
-        /// arcana or persona model as the hero's model, chosen items over the default items' models, particles the items
+        /// arcana or persona model as the hero's model, chosen items over the default items' models, the persona's items
+        /// over the hero's own default items, see <see cref="CharacterLoadout.PersonaModels"/>, particles the items
         /// swap in over the ones they replace, the particles items create added to their models, and the skin and
         /// animations items pick for the hero made its defaults.
         /// </summary>
@@ -205,6 +212,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>Equipped models that are neither worn by the hero nor written over another model, e.g. a summon's.</summary>
         public List<string> UnplacedModels { get; } = [];
+
+        /// <summary>
+        /// Default models of the hero's own slots written as empty models, since the persona wears nothing in their place,
+        /// see <see cref="CharacterLoadout.PersonaModels"/>.
+        /// </summary>
+        public List<string> HiddenModels { get; } = [];
 
         /// <summary>Compiled icons copied into the game folder, as package paths.</summary>
         public List<IconReplacement> IconReplacements { get; } = [];
@@ -575,6 +588,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             var replacedParticles = new Dictionary<string, ParticleReplacement>(StringComparer.OrdinalIgnoreCase);
             var usedParticles = GetUsedParticles(loadout, equippedAssets);
             var unitSwaps = options.ItemModels ? loadout.UnitModelSwaps.ToList() : [];
+            var personaModels = options.ItemModels ? loadout.PersonaModels : null;
             var rename = options.RenameModels;
 
             (int Skin, Dictionary<string, int> BodyGroups) GetLook(string model, int skin)
@@ -590,7 +604,8 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             foreach (var item in loadout.Items)
             {
-                var createdParticles = options.ItemParticles && !item.Item.IsDefault
+                var isDefault = loadout.IsAppliedByGame(item);
+                var createdParticles = options.ItemParticles && !isDefault
                     ? loadout.CreatedEffects
                         .Where(effect => effect.Item == item && IsEffectEnabled(loadout, options, effect))
                         .Select(static effect => effect.Particle)
@@ -628,11 +643,23 @@ namespace GUI.Types.Exporter.CharacterAssets
                         heroParticles.AddRange(createdParticles);
                     }
                 }
+                else if (personaModels != null && !CharacterLoadout.IsPersonaSlot(item.Item.Slot) && loadout.IsWornByHero(item.Item.Slot))
+                {
+                    // The persona's own items take the place of the hero's
+                    if (!isDefault)
+                    {
+                        plan.Notes.Add($"{NormalizePath(model)} is not worn by the persona, it was left out");
+                    }
+                }
                 else
                 {
                     Enqueue(model);
 
-                    if (loadout.GetDefaultModel(item.Item.Slot) is { } defaultModel)
+                    var defaultModel = personaModels != null && CharacterLoadout.IsPersonaSlot(item.Item.Slot)
+                        ? personaModels.Targets.GetValueOrDefault(item)
+                        : loadout.GetDefaultModel(item.Item.Slot);
+
+                    if (defaultModel != null)
                     {
                         var (skin, bodyGroups) = GetLook(model, item.Skin);
 
@@ -646,18 +673,18 @@ namespace GUI.Types.Exporter.CharacterAssets
                             });
                         }
                     }
-                    else if (!item.Item.IsDefault && loadout.IsWornByHero(item.Item.Slot) && rename)
+                    else if (!isDefault && loadout.IsWornByHero(item.Item.Slot) && rename)
                     {
                         plan.Notes.Add($"{NormalizePath(model)} has no default model to be renamed over, it was exported as is");
                     }
-                    else if (!item.Item.IsDefault && loadout.IsWornByHero(item.Item.Slot))
+                    else if (!isDefault && loadout.IsWornByHero(item.Item.Slot))
                     {
                         // Nothing of the hero's to write it over, e.g. a head for a hero without a default one
                         var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
                         merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups));
                         heroParticles.AddRange(createdParticles);
                     }
-                    else if (!item.Item.IsDefault)
+                    else if (!isDefault)
                     {
                         plan.UnplacedModels.Add(NormalizePath(model));
                     }
@@ -668,7 +695,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     AddTransformationReplacements(loadout, item, rename, plan);
                 }
 
-                if (!options.ItemParticles || item.Item.IsDefault)
+                if (!options.ItemParticles || isDefault)
                 {
                     continue;
                 }
@@ -721,7 +748,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             if (options.ItemModels)
             {
-                foreach (var (item, wearable) in loadout.AdditionalWearables.Where(static wearable => !wearable.Item.Item.IsDefault))
+                foreach (var (item, wearable) in loadout.AdditionalWearables.Where(wearable => !loadout.IsAppliedByGame(wearable.Item)))
                 {
                     if (rename)
                     {
@@ -735,6 +762,11 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                     Enqueue(wearable);
                 }
+            }
+
+            if (personaModels != null)
+            {
+                plan.HiddenModels.AddRange(personaModels.Hidden.Select(NormalizePath));
             }
 
             if (!options.HeroModel || hero.Model == null)

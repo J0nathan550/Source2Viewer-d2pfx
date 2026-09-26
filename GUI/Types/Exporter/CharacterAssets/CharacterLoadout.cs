@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace GUI.Types.Exporter.CharacterAssets
 {
@@ -70,10 +71,17 @@ namespace GUI.Types.Exporter.CharacterAssets
     }
 
     /// <summary>
+    /// Where the models worn in the persona's slots go, see <see cref="CharacterLoadout.PersonaModels"/>.
+    /// </summary>
+    /// <param name="Targets">The default model of the hero's own slots each persona item's model is written over.</param>
+    /// <param name="Hidden">The default models of the hero's own slots no persona item is written over.</param>
+    sealed record PersonaModelTargets(Dictionary<EquippedItem, string> Targets, List<string> Hidden);
+
+    /// <summary>
     /// A hero with the items it wears, and what that makes it look like: which model the hero ends up with, and which
     /// model each item shows once other items have swapped it.
     /// </summary>
-    sealed class CharacterLoadout
+    sealed partial class CharacterLoadout
     {
         /// <summary>
         /// The body group the game switches on every model the hero wears to the arcana level, which is how arcanas pick
@@ -158,6 +166,75 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// The model the hero wears in the slot when nothing else is equipped, if it has one.
         /// </summary>
         public string? GetDefaultModel(string slot) => defaultModels.GetValueOrDefault(slot);
+
+        /// <summary>
+        /// Whether an equipped item turns the hero into its persona, which wears the items of its own slots instead of
+        /// the hero's, see <see cref="IsPersonaSlot"/>.
+        /// </summary>
+        public bool IsPersona => Items.Any(static item => item.Modifiers.Any(static modifier => modifier.Type == "persona"));
+
+        /// <summary>
+        /// Slots of the hero's persona, which only apply while the persona is equipped, e.g. "weapon_persona_1" mirrors
+        /// "weapon".
+        /// </summary>
+        public static bool IsPersonaSlot(string slot) => PersonaSlotRegex().IsMatch(slot);
+
+        /// <summary>
+        /// Whether the game applies what the item does to the hero by itself. It equips the default items of the hero's
+        /// own slots, but not those of the persona's, which only a persona item switches to.
+        /// </summary>
+        public bool IsAppliedByGame(EquippedItem item) => item.Item.IsDefault && !(IsPersona && IsPersonaSlot(item.Item.Slot));
+
+        /// <summary>
+        /// With the persona equipped, where the models worn in its slots go. The game only has the hero wear the default
+        /// items of its own slots, so the persona's models are written over those: each over the one of the slot it
+        /// mirrors, the rest over the ones left in slot order. Those still left would show on the persona, so they get
+        /// hidden. Null without the persona.
+        /// </summary>
+        public PersonaModelTargets? PersonaModels
+        {
+            get
+            {
+                if (!IsPersona)
+                {
+                    return null;
+                }
+
+                var free = slots.Values
+                    .Where(slot => slot.WornByHero && !IsPersonaSlot(slot.Name) && defaultModels.ContainsKey(slot.Name))
+                    .OrderBy(static slot => slot.Index)
+                    .Select(slot => (slot.Name, Model: defaultModels[slot.Name]))
+                    .ToList();
+
+                var worn = Items.Where(item => IsPersonaSlot(item.Item.Slot) && IsWornByHero(item.Item.Slot) && GetItemModel(item) != null).ToList();
+                var targets = new Dictionary<EquippedItem, string>();
+
+                foreach (var item in worn)
+                {
+                    var mirrored = PersonaSlotRegex().Replace(item.Item.Slot, string.Empty);
+                    var index = free.FindIndex(slot => slot.Name.Equals(mirrored, StringComparison.OrdinalIgnoreCase));
+
+                    if (index >= 0)
+                    {
+                        targets.Add(item, free[index].Model);
+                        free.RemoveAt(index);
+                    }
+                }
+
+                foreach (var item in worn.Where(item => !targets.ContainsKey(item)))
+                {
+                    if (free.Count == 0)
+                    {
+                        break;
+                    }
+
+                    targets.Add(item, free[0].Model);
+                    free.RemoveAt(0);
+                }
+
+                return new PersonaModelTargets(targets, [.. free.Select(static slot => slot.Model)]);
+            }
+        }
 
         /// <summary>
         /// Whether items of the slot are worn on the hero's body, see <see cref="HeroSlot.WornByHero"/>.
@@ -394,5 +471,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         private static bool IsModelPath(string? path) => path != null && path.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase);
 
         public static string NormalizePath(string path) => path.Replace('\\', '/').TrimStart('/');
+
+        [GeneratedRegex(@"_persona_\d+$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+        private static partial Regex PersonaSlotRegex();
     }
 }
