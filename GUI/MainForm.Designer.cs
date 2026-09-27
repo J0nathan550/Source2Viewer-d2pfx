@@ -60,6 +60,7 @@ namespace GUI
             toolsToolStripMenuItem = new ThemedToolStripMenuItem();
             toolsExportCharacterAssetsToolStripMenuItem = new ThemedToolStripMenuItem();
             toolsVtexCreateToolStripMenuItem = new ThemedToolStripMenuItem();
+            toolsParticlesRecolorToolStripMenuItem = new ThemedToolStripMenuItem();
             settingsToolStripMenuItem = new ThemedToolStripMenuItem();
             aboutToolStripMenuItem = new ThemedToolStripMenuItem();
             recoverDeletedToolStripMenuItem = new ThemedToolStripMenuItem();
@@ -203,7 +204,7 @@ namespace GUI
             //
             // toolsToolStripMenuItem
             //
-            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { toolsExportCharacterAssetsToolStripMenuItem, toolsVtexCreateToolStripMenuItem });
+            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { toolsExportCharacterAssetsToolStripMenuItem, toolsVtexCreateToolStripMenuItem, toolsParticlesRecolorToolStripMenuItem, });
             toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
             toolsToolStripMenuItem.Padding = new Padding(4);
             toolsToolStripMenuItem.Size = new System.Drawing.Size(72, 32);
@@ -226,6 +227,14 @@ namespace GUI
             toolsVtexCreateToolStripMenuItem.SVGImageResourceName = "GUI.Icons.AssetTypes.tex.svg";
             toolsVtexCreateToolStripMenuItem.Text = "VTEX Create";
             toolsVtexCreateToolStripMenuItem.Click += OnVtexCompilerItemClick;
+            //
+            // toolsParticlesRecolorToolStripMenuItem
+            //
+            toolsParticlesRecolorToolStripMenuItem.Name = "toolsParticlesRecolorToolStripMenuItem";
+            toolsParticlesRecolorToolStripMenuItem.Size = new System.Drawing.Size(320, 30);
+            toolsParticlesRecolorToolStripMenuItem.SVGImageResourceName = "GUI.Icons.AssetTypes.pcf.svg";
+            toolsParticlesRecolorToolStripMenuItem.Text = "Particles recolor";
+            toolsParticlesRecolorToolStripMenuItem.Click += OnVpcfCompilerItemClick;
             //
             // settingsToolStripMenuItem
             // 
@@ -623,6 +632,7 @@ namespace GUI
         private ThemedToolStripMenuItem toolsToolStripMenuItem;
         private ThemedToolStripMenuItem toolsExportCharacterAssetsToolStripMenuItem;
         private ThemedToolStripMenuItem toolsVtexCreateToolStripMenuItem;
+        private ThemedToolStripMenuItem toolsParticlesRecolorToolStripMenuItem;
         private ThemedToolStripMenuItem openWithoutViewerToolStripMenuItem;
         private ThemedToolStripMenuItem openWithDefaultAppToolStripMenuItem;
         private ThemedToolStripMenuItem decompileToolStripMenuItem;

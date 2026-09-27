@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
 using ValveKeyValue;
+using System.Drawing;
 using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
@@ -130,7 +131,16 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// other items, and those parts stand still in game.
         /// </summary>
         public bool AnimateOwnParts { get; set; } = true;
+
+        /// <summary>
+        /// Need to apply recolor options to a model
+        /// </summary>
+        public Dictionary<string, ItemRecolorOption> RecolorOptions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, Color> ParticleRecolorOptions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     }
+
+    public sealed record ItemRecolorOption(Color Color, bool Enabled = true);
 
     /// <summary>
     /// A model written over another one, see <see cref="CharacterExportOptions.ReplaceDefaults"/>.

@@ -15,6 +15,8 @@ using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
 using VmdlExtractor;
+using ValveResourceFormat.ResourceTypes;
+using System.Text.RegularExpressions;
 
 namespace GUI.Types.Exporter.CharacterAssets
 {
@@ -238,13 +240,37 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var failed = 0;
 
                 failed += ExportModels(plan.Models, vpkPath, contentRoot, fileLoader, progress, cancellationToken);
-                failed += ExportMaterials(plan.Materials, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
+                failed += ExportMaterials(plan.Materials, contentRoot, fileLoader, loadout, options, progress, writtenFiles, cancellationToken);
                 failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportRawFiles(plan.RawFiles, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ApplyParticleRedirects(plan.ParticleRedirects, contentRoot, fileLoader, progress);
                 failed += ApplyControlPoints(plan.ParticleControlPoints, contentRoot, progress);
                 failed += ApplyReplacements(plan, contentRoot, fileLoader, progress);
+                if (options.ParticleRecolorOptions.Count > 0)
+                {
+                    progress.Report("Applying Prismatic particle recolors (VPCF-Editor)...");
+                    var processedParticles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var (particlePath, targetColor) in options.ParticleRecolorOptions)
+                    {
+                        try
+                        {
+                            VpcfColorEditor.RecolorParticleSystem(
+                                particlePath,
+                                targetColor,
+                                contentRoot,
+                                fileLoader,
+                                processedParticles,
+                                progress);
+                        }
+                        catch (Exception ex)
+                        {
+                            progress.Report($"  ! Failed to recolor particle '{particlePath}': {ex.Message}");
+                        }
+                    }
+                }
                 failed += ApplySoundReplacements(plan.SoundEventEdits, contentRoot, fileLoader, progress);
+                failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportIcons(plan.IconReplacements, gameRoot, fileLoader, progress, cancellationToken);
 
                 foreach (var note in plan.Notes)
@@ -734,46 +760,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// Decompiles the materials with their textures, so the addon compiles its own copies rather than using the
         /// game's, which some item materials render semi-transparent with.
         /// </summary>
-        private static int ExportMaterials(List<string> materials, string outputRoot, GameFileLoader fileLoader,
-            IProgress<string> progress, HashSet<string> writtenFiles, CancellationToken cancellationToken)
-        {
-            if (materials.Count == 0)
-            {
-                return 0;
-            }
-
-            progress.Report($"Exporting {materials.Count} materials with the custom VMAT exporter...");
-
-            var failed = 0;
-
-            foreach (var material in materials)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                try
-                {
-                    using var resource = fileLoader.LoadFile(material) ?? throw new FileNotFoundException("Could not be read");
-
-                    var vmatPath = GetOutputPath(outputRoot, Path.ChangeExtension(StripCompiledSuffix(material), "vmat"));
-                    progress.Report($"  {material}");
-
-                    CustomVmatExporter.ExportMaterial(resource, vmatPath, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception e)
-                {
-                    failed++;
-                    progress.Report($"  FAILED {material}: {e.Message}");
-                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to export '{material}': {e}");
-                }
-            }
-
-            return failed;
-        }
-
+        /// 
         private static int ExportResources(List<string> resources, string outputRoot, GameFileLoader fileLoader,
             IProgress<string> progress, HashSet<string> writtenFiles, CancellationToken cancellationToken)
         {
@@ -938,6 +925,245 @@ namespace GUI.Types.Exporter.CharacterAssets
             stream.CopyTo(buffer);
 
             return buffer.ToArray();
+        }
+        /// <summary>
+        /// Decompiles the materials with their textures, so the addon compiles its own copies rather than using the
+        /// game's, which some item materials render semi-transparent with.
+        /// </summary>
+        private static int ExportMaterials(List<string> materials, string outputRoot, GameFileLoader fileLoader,
+            CharacterLoadout loadout, CharacterExportOptions options,
+            IProgress<string> progress, HashSet<string> writtenFiles, CancellationToken cancellationToken)
+        {
+            if (materials.Count == 0)
+            {
+                return 0;
+            }
+
+            progress.Report($"Exporting {materials.Count} materials with the custom VMAT exporter...");
+
+            // Сопоставляем каждый экспортируемый материал с цветом
+            var materialRecolors = CollectRecolorMaterials(loadout, options, materials, progress);
+
+            var failed = 0;
+
+            foreach (var material in materials)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    using var resource = fileLoader.LoadFile(material) ?? throw new FileNotFoundException("Could not be read");
+
+                    var cleanMatRelative = StripCompiledSuffix(material);
+                    var vmatPath = GetOutputPath(outputRoot, Path.ChangeExtension(cleanMatRelative, "vmat"));
+                    progress.Report($"  {material}");
+
+                    // Экспортируем стандартный VMAT и его текстуры на диск
+                    CustomVmatExporter.ExportMaterial(resource, vmatPath, outputRoot, fileLoader, progress, writtenFiles, cancellationToken);
+
+                    // Применяем перекраску
+                    var normalizedMat = CharacterLoadout.NormalizePath(Path.ChangeExtension(cleanMatRelative, "vmat"));
+                    if (materialRecolors.TryGetValue(normalizedMat, out var recolor))
+                    {
+                        ApplyRecolorToExportedVmat(vmatPath, outputRoot, recolor, progress, writtenFiles);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    progress.Report($"  FAILED {material}: {e.Message}");
+                    Log.Error(nameof(CharacterAssetsExporter), $"Failed to export '{material}': {e}");
+                }
+            }
+
+            return failed;
+        }
+
+        /// <summary>
+        /// Связывает каждый экспортируемый VMAT с нужным цветом без единого пропуска.
+        /// </summary>
+        private static Dictionary<string, ItemRecolorOption> CollectRecolorMaterials(
+            CharacterLoadout loadout, CharacterExportOptions options, List<string> exportedMaterials, IProgress<string> progress)
+        {
+            var recolors = new Dictionary<string, ItemRecolorOption>(StringComparer.OrdinalIgnoreCase);
+
+            if (options.RecolorOptions.Count == 0)
+            {
+                return recolors;
+            }
+
+            // Основной цвет (для тела и как fallback для всего, что не распозналось отдельно)
+            ItemRecolorOption? primaryRecolor = null;
+            string[] bodyPriorities = ["body", "armor", "shoulder", "chest", "head", "weapon"];
+            foreach (var slot in bodyPriorities)
+            {
+                if (options.RecolorOptions.TryGetValue(slot, out var r) && r.Enabled)
+                {
+                    primaryRecolor = r;
+                    break;
+                }
+            }
+            primaryRecolor ??= options.RecolorOptions.Values.FirstOrDefault(r => r.Enabled);
+
+            foreach (var material in exportedMaterials)
+            {
+                var cleanMat = CharacterLoadout.NormalizePath(Path.ChangeExtension(StripCompiledSuffix(material), "vmat"));
+                var fileName = Path.GetFileNameWithoutExtension(cleanMat);
+
+                ItemRecolorOption? matchedRecolor = null;
+                string matchReason = "";
+
+                // 1. Прямой поиск: имя слота есть в названии VMAT (head, belt и т.д.)
+                foreach (var (slotName, recolor) in options.RecolorOptions)
+                {
+                    if (!recolor.Enabled) continue;
+
+                    if (fileName.Contains(slotName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matchedRecolor = recolor;
+                        matchReason = $"slot '{slotName}'";
+                        break;
+                    }
+                }
+
+                // 2. Поиск по словам из названий надетых предметов
+                // Например: "Witch Doctor's Bag" -> слово 'bag' находит witchdoctor_bag_color
+                // "Death Ward" -> слово 'ward' находит witchdoctor_ward
+                if (matchedRecolor == null)
+                {
+                    foreach (var item in loadout.Items)
+                    {
+                        var slotName = item.Item.Slot ?? "";
+                        if (!options.RecolorOptions.TryGetValue(slotName, out var recolor) || !recolor.Enabled)
+                        {
+                            continue;
+                        }
+
+                        var words = item.Item.Name.Split([' ', '\'', '-', '_'], StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var word in words)
+                        {
+                            if (word.Length >= 3 && fileName.Contains(word, StringComparison.OrdinalIgnoreCase))
+                            {
+                                matchedRecolor = recolor;
+                                matchReason = $"item '{item.Item.Name}' (Slot: {slotName})";
+                                break;
+                            }
+                        }
+
+                        if (matchedRecolor != null) break;
+                    }
+                }
+
+                // 3. Материал тела героя (любое вхождение body, base, torso)
+                if (matchedRecolor == null && (fileName.Contains("body", StringComparison.OrdinalIgnoreCase)
+                                           || fileName.Contains("base", StringComparison.OrdinalIgnoreCase)
+                                           || fileName.Contains("torso", StringComparison.OrdinalIgnoreCase)))
+                {
+                    matchedRecolor = primaryRecolor;
+                    matchReason = "hero body";
+                }
+
+                // 4. ЖЕЛЕЗНЫЙ FALLBACK: если ни одно условие выше не сработало, 
+                // но пользователь перекрашивает персонажа — красим в основной цвет!
+                if (matchedRecolor == null && primaryRecolor != null)
+                {
+                    matchedRecolor = primaryRecolor;
+                    matchReason = "primary recolor fallback";
+                }
+
+                if (matchedRecolor != null)
+                {
+                    recolors[cleanMat] = matchedRecolor;
+                    progress.Report($"  Mapped: {fileName} -> {matchReason}");
+                }
+            }
+
+            return recolors;
+        }
+
+        /// <summary>
+        /// Считывает текстовый VMDL файл с диска и вытаскивает из него все используемые пути к .vmat.
+        /// </summary>
+        private static List<string> ExtractVmatsFromVmdl(string vmdlDiskPath)
+        {
+            var list = new List<string>();
+            if (!File.Exists(vmdlDiskPath))
+            {
+                return list;
+            }
+
+            var text = File.ReadAllText(vmdlDiskPath);
+            var matches = Regex.Matches(text, @"""([^""]+\.vmat)""", RegexOptions.IgnoreCase);
+
+            foreach (Match m in matches)
+            {
+                var path = CharacterLoadout.NormalizePath(m.Groups[1].Value);
+                if (!list.Contains(path, StringComparer.OrdinalIgnoreCase))
+                {
+                    list.Add(path);
+                }
+            }
+
+            return list;
+        }
+
+        /// <summary>
+        /// Перекрашивает текстуру цвета на 100% и обновляет VMAT на диске.
+        /// </summary>
+        private static void ApplyRecolorToExportedVmat(
+            string vmatPath, string outputRoot, ItemRecolorOption recolor,
+            IProgress<string> progress, HashSet<string> writtenFiles)
+        {
+            try
+            {
+                if (!File.Exists(vmatPath))
+                {
+                    return;
+                }
+
+                var vmatText = File.ReadAllText(vmatPath);
+                var colorRelPath = VmatTextureRecolorer.FindColorTexturePath(vmatText);
+
+                if (string.IsNullOrEmpty(colorRelPath))
+                {
+                    return;
+                }
+
+                var colorDiskPath = GetOutputPath(outputRoot, colorRelPath);
+                if (!File.Exists(colorDiskPath))
+                {
+                    return;
+                }
+
+                var colorBytes = File.ReadAllBytes(colorDiskPath);
+
+                // Перекрашиваем 100% площади текстуры
+                var recoloredBytes = VmatTextureRecolorer.RecolorDiffuse(colorBytes, recolor.Color);
+
+                var dir = Path.GetDirectoryName(colorRelPath)?.Replace('\\', '/') ?? "";
+                var nameWithoutExt = Path.GetFileNameWithoutExtension(colorRelPath);
+                var newTexRelPath = string.IsNullOrEmpty(dir) ? $"{nameWithoutExt}_recolor.png" : $"{dir}/{nameWithoutExt}_recolor.png";
+                var newDiskPath = GetOutputPath(outputRoot, newTexRelPath);
+
+                // Записываем _recolor.png
+                File.WriteAllBytes(newDiskPath, recoloredBytes);
+                writtenFiles.Add(newDiskPath);
+                progress.Report($"    + {newTexRelPath} (recolored)");
+
+                // Обновляем ссылку TextureColor в VMAT
+                var updatedVmatText = VmatTextureRecolorer.RedirectColorTextureInVmat(vmatText, newTexRelPath);
+                File.WriteAllText(vmatPath, updatedVmatText);
+                progress.Report($"    ✓ {Path.GetFileName(vmatPath)} -> {Path.GetFileName(newTexRelPath)}");
+            }
+            catch (Exception ex)
+            {
+                progress.Report($"  ! Failed to recolor {Path.GetFileName(vmatPath)}: {ex.Message}");
+                Log.Error(nameof(CharacterAssetsExporter), $"Failed to recolor '{vmatPath}': {ex}");
+            }
         }
 
         private static void WriteFile(string outputRoot, string relativePath, byte[] data, IProgress<string> progress, HashSet<string> writtenFiles)

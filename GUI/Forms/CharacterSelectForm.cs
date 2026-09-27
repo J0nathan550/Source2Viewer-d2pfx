@@ -36,6 +36,9 @@ namespace GUI.Forms
 
         // Slots whose item was picked by hand, which choosing a set leaves alone unless the set has an item for them
         private readonly HashSet<string> pickedSlots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Color> slotRecolors = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Color> effectRecolors = new(StringComparer.OrdinalIgnoreCase);
+        private static Color lastPickedColor = VmatTextureRecolorer.LoadLastColor();
         private readonly Dictionary<string, List<(string Name, string[] Materials)>> materialGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<(IconSlot Slot, ComboBox ComboBox, PictureBox Picture)> iconRows = [];
         private readonly HashSet<IconSlot> pickedIcons = [];
@@ -75,7 +78,7 @@ namespace GUI.Forms
         {
             HeroModel = heroModelCheckBox.Checked,
             ItemModels = itemModelsCheckBox.Checked,
-            Materials = materialsCheckBox.Checked,
+            Materials = materialsCheckBox.Checked || slotRecolors.Count > 0,
             MergeAdditionalWearables = mergeWearablesCheckBox.Checked,
             ItemParticles = itemParticlesCheckBox.Checked,
             ItemEffects = GetItemEffects(),
@@ -91,9 +94,16 @@ namespace GUI.Forms
             Voice = voiceComboBox?.SelectedItem is VoiceChoice { Criteria: not null } voice ? voice : null,
             Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
+            ParticleRecolorOptions = new Dictionary<string, Color>(effectRecolors, StringComparer.OrdinalIgnoreCase),
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
+
             RenameModels = renameModelsCheckBox.Checked,
             AnimateOwnParts = animatePartsCheckBox.Checked,
+
+            RecolorOptions = slotRecolors.ToDictionary(
+                k => k.Key,
+                v => new ItemRecolorOption(v.Value),
+                StringComparer.OrdinalIgnoreCase),
         };
 
         public CharacterSelectForm(ItemsGameCatalog catalog, VrfGuiContext guiContext, Package package)
@@ -200,6 +210,8 @@ namespace GUI.Forms
                 return;
             }
 
+            SaveHeroColors(hero.Name);
+
             if (IsLoadoutPicked())
             {
                 preferences.Loadouts[hero.Name] = GetSavedLoadout();
@@ -215,7 +227,8 @@ namespace GUI.Forms
         /// </summary>
         private bool IsLoadoutPicked()
         {
-            if (pickedEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0)
+            if (pickedEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0
+                || slotRecolors.Count > 0 || effectRecolors.Count > 0)
             {
                 return true;
             }
@@ -569,6 +582,7 @@ namespace GUI.Forms
 
             try
             {
+                LoadHeroColors(hero.Name);
                 BuildSlotRows(hero);
                 BuildItemSets(hero);
                 BuildIconRows(hero);
@@ -605,8 +619,17 @@ namespace GUI.Forms
 
             slotsTable.Controls.Clear();
             slotsTable.RowStyles.Clear();
-            slotsTable.RowCount = 0;
+            slotsTable.ColumnStyles.Clear();
             slotRows.Clear();
+
+            slotsTable.ColumnCount = 5;
+            slotsTable.RowCount = 0;
+
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));                // 0: Название слота (Weapon, Head...)
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));           // 1: Выбор предмета (растягивается)
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));                // 2: Стиль
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));                // 3: Скин
+            slotsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, this.AdjustForDPI(34))); // 4: Колонка под кнопку цвета
 
             var slots = catalog.GetSlots(hero)
                 .Select(slot => (Slot: slot, Items: catalog.GetItems(hero, slot.Name), Text: GetSlotText(slot)))
@@ -639,6 +662,59 @@ namespace GUI.Forms
                     DropDownWidth = this.AdjustForDPI(360),
                     MaxDropDownItems = 20,
                     Tag = slot,
+                };
+
+                var colorButton = new Button
+                {
+                    Text = "🎨",
+                    Width = this.AdjustForDPI(32),
+                    Height = this.AdjustForDPI(26),
+                    FlatStyle = FlatStyle.Flat,
+                    UseVisualStyleBackColor = false,
+                    BackColor = slotRecolors.TryGetValue(slot.Name, out var savedColor) ? savedColor : Color.Transparent,
+                    Margin = new Padding(2),
+                    Cursor = Cursors.Hand,
+                };
+                colorButton.Font = new Font("Segoe UI Emoji", 9f);
+
+                toolTip.SetToolTip(colorButton, slotRecolors.TryGetValue(slot.Name, out var c)
+                    ? $"Recolor: R:{c.R} G:{c.G} B:{c.B} (ПКМ для сброса)"
+                    : "Recolor: выбрать кастомный RGB цвет (ПКМ для сброса)");
+
+                // Выбор цвета по клику
+                // Выбор цвета по клику с автоподстановкой последнего цвета
+                colorButton.Click += (s, e) =>
+                {
+                    using var colorDialog = new ColorDialog
+                    {
+                        AllowFullOpen = true,
+                        FullOpen = true,
+                        // Если цвет слота уже был — открываем его, иначе ПОСЛЕДНИЙ использованный:
+                        Color = slotRecolors.TryGetValue(slot.Name, out var currentColor)
+                            ? currentColor
+                            : lastPickedColor,
+                    };
+
+                    if (colorDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        slotRecolors[slot.Name] = colorDialog.Color;
+                        lastPickedColor = colorDialog.Color;
+                        VmatTextureRecolorer.SaveLastColor(lastPickedColor); // Запоминаем цвет в реестр
+
+                        colorButton.BackColor = colorDialog.Color;
+                        toolTip.SetToolTip(colorButton, $"Recolor: R:{colorDialog.Color.R} G:{colorDialog.Color.G} B:{colorDialog.Color.B} (ПКМ для сброса)");
+                    }
+                };
+
+                // Сброс цвета по правой кнопке мыши
+                colorButton.MouseDown += (s, e) =>
+                {
+                    if (e.Button == MouseButtons.Right)
+                    {
+                        slotRecolors.Remove(slot.Name);
+                        colorButton.BackColor = Color.Transparent;
+                        toolTip.SetToolTip(colorButton, "Recolor: выбрать кастомный RGB цвет (ПКМ для сброса)");
+                    }
                 };
 
                 comboBox.Items.Add(ItemChoice.None);
@@ -689,6 +765,7 @@ namespace GUI.Forms
                 slotsTable.Controls.Add(comboBox, 1, row);
                 slotsTable.Controls.Add(styleComboBox, 2, row);
                 slotsTable.Controls.Add(skinComboBox, 3, row);
+                slotsTable.Controls.Add(colorButton, 4, row);
 
                 slotRows.Add((slot, comboBox, styleComboBox, skinComboBox));
             }
@@ -1335,7 +1412,6 @@ namespace GUI.Forms
                 effectsTable.Controls.Add(control, 0, row);
             }
 
-            // The unusual effect is picked from its own list rather than ticked
             var effects = loadout.CreatedEffects.Where(static effect => !effect.Item.Item.IsDefault && !effect.IsUnusual).ToList();
             var items = loadout.Items
                 .Where(item => !item.Item.IsDefault && (catalog.GetUnusualEffects(item.Item).Count > 0 || effects.Any(effect => effect.Item == item)))
@@ -1357,22 +1433,86 @@ namespace GUI.Forms
             {
                 foreach (var item in items)
                 {
-                    AddRow(new Label
+                    var currentItemEffects = effects.Where(effect => effect.Item == item).ToList();
+
+                    // Панель заголовка предмета (название + кнопка палитры для ВСЕХ эффектов предмета)
+                    var headerPanel = new FlowLayoutPanel
                     {
                         AutoSize = true,
+                        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                        WrapContents = false,
+                        Margin = new Padding(3, 8, 3, 3),
+                    };
+
+                    var titleLabel = new Label
+                    {
+                        AutoSize = true,
+                        Anchor = AnchorStyles.Left,
                         Text = item.StyleName is { } styleName ? $"{item.Item.Name} ({styleName})" : item.Item.Name,
                         Font = groupFont ??= new Font(Font, FontStyle.Bold),
-                        Margin = new Padding(3, 8, 3, 3),
-                    });
+                        Margin = new Padding(0, 4, 6, 0),
+                    };
+
+                    // Кнопка палитры для ВСЕХ эффектов предмета (как Призматический самоцвет)
+                    var itemFxBtn = new Button
+                    {
+                        Text = "🎨",
+                        Font = new Font("Segoe UI Emoji", 9f),
+                        Width = this.AdjustForDPI(30),
+                        Height = this.AdjustForDPI(24),
+                        FlatStyle = FlatStyle.Flat,
+                        UseVisualStyleBackColor = false,
+                        BackColor = effectRecolors.TryGetValue(item.Item.Name, out var savedFxColor) ? savedFxColor : Color.Transparent,
+                        Cursor = Cursors.Hand,
+                    };
+                    toolTip.SetToolTip(itemFxBtn, "Prismatic Gem: задать цвет для всех эффектов этого предмета (ПКМ для сброса)");
+
+                    itemFxBtn.Click += (s, e) =>
+                    {
+                        using var cd = new ColorDialog { AllowFullOpen = true, FullOpen = true };
+                        if (effectRecolors.TryGetValue(item.Item.Name, out var curCol)) cd.Color = curCol;
+
+                        if (cd.ShowDialog() == DialogResult.OK)
+                        {
+                            effectRecolors[item.Item.Name] = cd.Color;
+                            itemFxBtn.BackColor = cd.Color;
+
+                            // Красим все дочерние партиклы этого предмета
+                            foreach (var fx in currentItemEffects)
+                            {
+                                effectRecolors[fx.Particle] = cd.Color;
+                            }
+                            SchedulePreviewUpdate();
+                        }
+                    };
+
+                    itemFxBtn.MouseDown += (s, e) =>
+                    {
+                        if (e.Button == MouseButtons.Right)
+                        {
+                            effectRecolors.Remove(item.Item.Name);
+                            foreach (var fx in currentItemEffects)
+                            {
+                                effectRecolors.Remove(fx.Particle);
+                            }
+                            itemFxBtn.BackColor = Color.Transparent;
+                            SchedulePreviewUpdate();
+                        }
+                    };
+
+                    headerPanel.Controls.Add(titleLabel);
+                    headerPanel.Controls.Add(itemFxBtn);
+                    AddRow(headerPanel);
 
                     if (catalog.GetUnusualEffects(item.Item) is { Count: > 0 } unusualEffects)
                     {
                         AddRow(CreateUnusualRow(item, unusualEffects));
                     }
 
-                    foreach (var effect in effects.Where(effect => effect.Item == item))
+                    // Чекбоксы эффектов с индивидуальной палитрой 🎨 для каждого партикла
+                    foreach (var effect in currentItemEffects)
                     {
-                        AddRow(CreateEffectCheckBox(loadout, effect));
+                        AddRow(CreateEffectRow(loadout, effect));
                     }
                 }
             }
@@ -1383,6 +1523,64 @@ namespace GUI.Forms
 
             Themer.ThemeControl(effectsTable);
             effectsTable.ResumeLayout(true);
+        }
+
+        /// <summary>
+        /// Создает строку отдельного партикла с чекбоксом и кнопкой палитры 🎨.
+        /// </summary>
+        private FlowLayoutPanel CreateEffectRow(CharacterLoadout loadout, CreatedEffect effect)
+        {
+            var checkBox = CreateEffectCheckBox(loadout, effect);
+
+            var panel = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Margin = new Padding(12, 1, 3, 1),
+            };
+
+            var fxBtn = new Button
+            {
+                Text = "🎨",
+                Font = new Font("Segoe UI Emoji", 8f),
+                Width = this.AdjustForDPI(26),
+                Height = this.AdjustForDPI(20),
+                FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
+                BackColor = effectRecolors.TryGetValue(effect.Particle, out var c) ? c : Color.Transparent,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(4, 1, 0, 0),
+            };
+            toolTip.SetToolTip(fxBtn, "Prismatic: цвет конкретно для этого эффекта (ПКМ для сброса)");
+
+            fxBtn.Click += (s, e) =>
+            {
+                using var cd = new ColorDialog { AllowFullOpen = true, FullOpen = true };
+                if (effectRecolors.TryGetValue(effect.Particle, out var curCol)) cd.Color = curCol;
+
+                if (cd.ShowDialog() == DialogResult.OK)
+                {
+                    effectRecolors[effect.Particle] = cd.Color;
+                    fxBtn.BackColor = cd.Color;
+                    SchedulePreviewUpdate();
+                }
+            };
+
+            fxBtn.MouseDown += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Right)
+                {
+                    effectRecolors.Remove(effect.Particle);
+                    fxBtn.BackColor = Color.Transparent;
+                    SchedulePreviewUpdate();
+                }
+            };
+
+            panel.Controls.Add(checkBox);
+            panel.Controls.Add(fxBtn);
+
+            return panel;
         }
 
         /// <summary>
@@ -1978,6 +2176,57 @@ namespace GUI.Forms
             }
 
             return [.. models.Select(model => new PreviewModel(model.Path, model.Skin, loadout.GetBodyGroupChoices(model.Path), model.Particles))];
+        }
+
+        private void LoadHeroColors(string heroName)
+        {
+            slotRecolors.Clear();
+            effectRecolors.Clear();
+
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Source2Viewer\HeroColors");
+                if (key?.GetValue(heroName) is string data && !string.IsNullOrEmpty(data))
+                {
+                    var entries = data.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var entry in entries)
+                    {
+                        var parts = entry.Split(':');
+                        if (parts.Length == 2 && int.TryParse(parts[1], out var argb))
+                        {
+                            slotRecolors[parts[0]] = Color.FromArgb(argb);
+                        }
+                    }
+                }
+
+                if (slotRecolors.Count > 0)
+                {
+                    lastPickedColor = slotRecolors.Values.First();
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void SaveHeroColors(string heroName)
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Source2Viewer\HeroColors");
+                if (slotRecolors.Count > 0)
+                {
+                    var data = string.Join(";", slotRecolors.Select(kv => $"{kv.Key}:{kv.Value.ToArgb()}"));
+                    key?.SetValue(heroName, data, Microsoft.Win32.RegistryValueKind.String);
+                }
+                else
+                {
+                    key?.DeleteValue(heroName, false);
+                }
+            }
+            catch
+            {
+            }
         }
 
         /// <summary>
