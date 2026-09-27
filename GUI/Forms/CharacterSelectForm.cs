@@ -37,6 +37,7 @@ namespace GUI.Forms
         // Slots whose item was picked by hand, which choosing a set leaves alone unless the set has an item for them
         private readonly HashSet<string> pickedSlots = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Color> slotRecolors = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Color> effectRecolors = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, List<(string Name, string[] Materials)>> materialGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<(IconSlot Slot, ComboBox ComboBox, PictureBox Picture)> iconRows = [];
         private readonly HashSet<IconSlot> pickedIcons = [];
@@ -92,6 +93,7 @@ namespace GUI.Forms
             Voice = voiceComboBox?.SelectedItem is VoiceChoice { Criteria: not null } voice ? voice : null,
             Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
+            ParticleRecolorOptions = new Dictionary<string, Color>(effectRecolors, StringComparer.OrdinalIgnoreCase),
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
 
             RenameModels = renameModelsCheckBox.Checked,
@@ -1403,7 +1405,6 @@ namespace GUI.Forms
                 effectsTable.Controls.Add(control, 0, row);
             }
 
-            // The unusual effect is picked from its own list rather than ticked
             var effects = loadout.CreatedEffects.Where(static effect => !effect.Item.Item.IsDefault && !effect.IsUnusual).ToList();
             var items = loadout.Items
                 .Where(item => !item.Item.IsDefault && (catalog.GetUnusualEffects(item.Item).Count > 0 || effects.Any(effect => effect.Item == item)))
@@ -1425,22 +1426,86 @@ namespace GUI.Forms
             {
                 foreach (var item in items)
                 {
-                    AddRow(new Label
+                    var currentItemEffects = effects.Where(effect => effect.Item == item).ToList();
+
+                    // Панель заголовка предмета (название + кнопка палитры для ВСЕХ эффектов предмета)
+                    var headerPanel = new FlowLayoutPanel
                     {
                         AutoSize = true,
+                        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                        WrapContents = false,
+                        Margin = new Padding(3, 8, 3, 3),
+                    };
+
+                    var titleLabel = new Label
+                    {
+                        AutoSize = true,
+                        Anchor = AnchorStyles.Left,
                         Text = item.StyleName is { } styleName ? $"{item.Item.Name} ({styleName})" : item.Item.Name,
                         Font = groupFont ??= new Font(Font, FontStyle.Bold),
-                        Margin = new Padding(3, 8, 3, 3),
-                    });
+                        Margin = new Padding(0, 4, 6, 0),
+                    };
+
+                    // Кнопка палитры для ВСЕХ эффектов предмета (как Призматический самоцвет)
+                    var itemFxBtn = new Button
+                    {
+                        Text = "🎨",
+                        Font = new Font("Segoe UI Emoji", 9f),
+                        Width = this.AdjustForDPI(30),
+                        Height = this.AdjustForDPI(24),
+                        FlatStyle = FlatStyle.Flat,
+                        UseVisualStyleBackColor = false,
+                        BackColor = effectRecolors.TryGetValue(item.Item.Name, out var savedFxColor) ? savedFxColor : Color.Transparent,
+                        Cursor = Cursors.Hand,
+                    };
+                    toolTip.SetToolTip(itemFxBtn, "Prismatic Gem: задать цвет для всех эффектов этого предмета (ПКМ для сброса)");
+
+                    itemFxBtn.Click += (s, e) =>
+                    {
+                        using var cd = new ColorDialog { AllowFullOpen = true, FullOpen = true };
+                        if (effectRecolors.TryGetValue(item.Item.Name, out var curCol)) cd.Color = curCol;
+
+                        if (cd.ShowDialog() == DialogResult.OK)
+                        {
+                            effectRecolors[item.Item.Name] = cd.Color;
+                            itemFxBtn.BackColor = cd.Color;
+
+                            // Красим все дочерние партиклы этого предмета
+                            foreach (var fx in currentItemEffects)
+                            {
+                                effectRecolors[fx.Particle] = cd.Color;
+                            }
+                            SchedulePreviewUpdate();
+                        }
+                    };
+
+                    itemFxBtn.MouseDown += (s, e) =>
+                    {
+                        if (e.Button == MouseButtons.Right)
+                        {
+                            effectRecolors.Remove(item.Item.Name);
+                            foreach (var fx in currentItemEffects)
+                            {
+                                effectRecolors.Remove(fx.Particle);
+                            }
+                            itemFxBtn.BackColor = Color.Transparent;
+                            SchedulePreviewUpdate();
+                        }
+                    };
+
+                    headerPanel.Controls.Add(titleLabel);
+                    headerPanel.Controls.Add(itemFxBtn);
+                    AddRow(headerPanel);
 
                     if (catalog.GetUnusualEffects(item.Item) is { Count: > 0 } unusualEffects)
                     {
                         AddRow(CreateUnusualRow(item, unusualEffects));
                     }
 
-                    foreach (var effect in effects.Where(effect => effect.Item == item))
+                    // Чекбоксы эффектов с индивидуальной палитрой 🎨 для каждого партикла
+                    foreach (var effect in currentItemEffects)
                     {
-                        AddRow(CreateEffectCheckBox(loadout, effect));
+                        AddRow(CreateEffectRow(loadout, effect));
                     }
                 }
             }
@@ -1451,6 +1516,64 @@ namespace GUI.Forms
 
             Themer.ThemeControl(effectsTable);
             effectsTable.ResumeLayout(true);
+        }
+
+        /// <summary>
+        /// Создает строку отдельного партикла с чекбоксом и кнопкой палитры 🎨.
+        /// </summary>
+        private FlowLayoutPanel CreateEffectRow(CharacterLoadout loadout, CreatedEffect effect)
+        {
+            var checkBox = CreateEffectCheckBox(loadout, effect);
+
+            var panel = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Margin = new Padding(12, 1, 3, 1),
+            };
+
+            var fxBtn = new Button
+            {
+                Text = "🎨",
+                Font = new Font("Segoe UI Emoji", 8f),
+                Width = this.AdjustForDPI(26),
+                Height = this.AdjustForDPI(20),
+                FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
+                BackColor = effectRecolors.TryGetValue(effect.Particle, out var c) ? c : Color.Transparent,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(4, 1, 0, 0),
+            };
+            toolTip.SetToolTip(fxBtn, "Prismatic: цвет конкретно для этого эффекта (ПКМ для сброса)");
+
+            fxBtn.Click += (s, e) =>
+            {
+                using var cd = new ColorDialog { AllowFullOpen = true, FullOpen = true };
+                if (effectRecolors.TryGetValue(effect.Particle, out var curCol)) cd.Color = curCol;
+
+                if (cd.ShowDialog() == DialogResult.OK)
+                {
+                    effectRecolors[effect.Particle] = cd.Color;
+                    fxBtn.BackColor = cd.Color;
+                    SchedulePreviewUpdate();
+                }
+            };
+
+            fxBtn.MouseDown += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Right)
+                {
+                    effectRecolors.Remove(effect.Particle);
+                    fxBtn.BackColor = Color.Transparent;
+                    SchedulePreviewUpdate();
+                }
+            };
+
+            panel.Controls.Add(checkBox);
+            panel.Controls.Add(fxBtn);
+
+            return panel;
         }
 
         /// <summary>

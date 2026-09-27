@@ -1142,5 +1142,16 @@ namespace GUI
         {
             ShowVtexCompilerDialog();
         }
+
+        public void ShowVpcfCompilerDialog()
+        {
+            using var form = new VpcfCompilerForm();
+            form.ShowDialog(this);
+        }
+
+        private void OnVpcfCompilerItemClick(object? sender, EventArgs e)
+        {
+            ShowVpcfCompilerDialog();
+        }
     }
 }

@@ -246,7 +246,31 @@ namespace GUI.Types.Exporter.CharacterAssets
                 failed += ApplyParticleRedirects(plan.ParticleRedirects, contentRoot, fileLoader, progress);
                 failed += ApplyControlPoints(plan.ParticleControlPoints, contentRoot, progress);
                 failed += ApplyReplacements(plan, contentRoot, fileLoader, progress);
+                if (options.ParticleRecolorOptions.Count > 0)
+                {
+                    progress.Report("Applying Prismatic particle recolors (VPCF-Editor)...");
+                    var processedParticles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var (particlePath, targetColor) in options.ParticleRecolorOptions)
+                    {
+                        try
+                        {
+                            VpcfColorEditor.RecolorParticleSystem(
+                                particlePath,
+                                targetColor,
+                                contentRoot,
+                                fileLoader,
+                                processedParticles,
+                                progress);
+                        }
+                        catch (Exception ex)
+                        {
+                            progress.Report($"  ! Failed to recolor particle '{particlePath}': {ex.Message}");
+                        }
+                    }
+                }
                 failed += ApplySoundReplacements(plan.SoundEventEdits, contentRoot, fileLoader, progress);
+                failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportIcons(plan.IconReplacements, gameRoot, fileLoader, progress, cancellationToken);
 
                 foreach (var note in plan.Notes)

@@ -136,6 +136,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// Need to apply recolor options to a model
         /// </summary>
         public Dictionary<string, ItemRecolorOption> RecolorOptions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, Color> ParticleRecolorOptions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public sealed record ItemRecolorOption(Color Color, bool Enabled = true);
