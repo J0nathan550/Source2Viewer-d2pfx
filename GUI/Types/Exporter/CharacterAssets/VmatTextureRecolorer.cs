@@ -82,6 +82,105 @@ namespace GUI.Types.Exporter.CharacterAssets
             return data.ToArray();
         }
 
+        /// <summary>
+        /// Перекрашивает .vmat файл и связанную с ним диффузную текстуру прямо на диске на месте.
+        /// </summary>
+        public static void RecolorVmatInPlace(string vmatPath, Color targetColor)
+        {
+            var fullVmatPath = Path.GetFullPath(vmatPath);
+            if (!File.Exists(fullVmatPath))
+            {
+                return;
+            }
+
+            var vmatText = File.ReadAllText(fullVmatPath);
+            var colorRelPath = FindColorTexturePath(vmatText);
+
+            if (string.IsNullOrEmpty(colorRelPath))
+            {
+                return;
+            }
+
+            // Ищем текстуру цвета в той же папке или относительно корня
+            var vmatDir = Path.GetDirectoryName(fullVmatPath)!;
+            var textureName = Path.GetFileName(colorRelPath);
+            var sameDirPng = Path.Combine(vmatDir, textureName);
+
+            string? targetPngPath = null;
+            if (File.Exists(sameDirPng))
+            {
+                targetPngPath = sameDirPng;
+            }
+            else
+            {
+                // Проверяем относительный путь от корня
+                var rootGuess = fullVmatPath.Substring(0, fullVmatPath.IndexOf("materials", StringComparison.OrdinalIgnoreCase));
+                var fullFromRoot = Path.Combine(rootGuess, colorRelPath.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(fullFromRoot))
+                {
+                    targetPngPath = fullFromRoot;
+                }
+            }
+
+            if (targetPngPath == null)
+            {
+                return;
+            }
+
+            // Перекрашиваем PNG файл на месте
+            RecolorImageFileInPlace(targetPngPath, targetColor);
+        }
+
+        /// <summary>
+        /// Перекрашивает любой PNG файл текстуры прямо на диске и перезаписывает его.
+        /// </summary>
+        public static void RecolorImageFileInPlace(string pngPath, Color targetColor)
+        {
+            var fullPath = Path.GetFullPath(pngPath);
+            if (!File.Exists(fullPath))
+            {
+                return;
+            }
+
+            var bytes = File.ReadAllBytes(fullPath);
+            var recolored = RecolorDiffuse(bytes, targetColor);
+            File.WriteAllBytes(fullPath, recolored);
+        }
+
+        /// <summary>
+        /// Загружает последний сохраненный цвет материалов из реестра Windows.
+        /// </summary>
+        public static Color LoadLastColor()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Source2Viewer");
+                if (key?.GetValue("CharacterLastColor") is int argb)
+                {
+                    return Color.FromArgb(argb);
+                }
+            }
+            catch
+            {
+            }
+            return Color.Red;
+        }
+
+        /// <summary>
+        /// Сохраняет последний выбранный цвет материалов в реестр Windows.
+        /// </summary>
+        public static void SaveLastColor(Color color)
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Source2Viewer");
+                key?.SetValue("CharacterLastColor", color.ToArgb(), Microsoft.Win32.RegistryValueKind.DWord);
+            }
+            catch
+            {
+            }
+        }
+
         private static SKColor HsvToSKColor(float hue, float sat, float val, byte alpha)
         {
             float c = val * sat;

@@ -38,6 +38,7 @@ namespace GUI.Forms
         private readonly HashSet<string> pickedSlots = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Color> slotRecolors = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Color> effectRecolors = new(StringComparer.OrdinalIgnoreCase);
+        private static Color lastPickedColor = VmatTextureRecolorer.LoadLastColor();
         private readonly Dictionary<string, List<(string Name, string[] Materials)>> materialGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<(IconSlot Slot, ComboBox ComboBox, PictureBox Picture)> iconRows = [];
         private readonly HashSet<IconSlot> pickedIcons = [];
@@ -209,6 +210,8 @@ namespace GUI.Forms
                 return;
             }
 
+            SaveHeroColors(hero.Name);
+
             if (IsLoadoutPicked())
             {
                 preferences.Loadouts[hero.Name] = GetSavedLoadout();
@@ -224,7 +227,8 @@ namespace GUI.Forms
         /// </summary>
         private bool IsLoadoutPicked()
         {
-            if (pickedEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0)
+            if (pickedEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0
+                || slotRecolors.Count > 0 || effectRecolors.Count > 0)
             {
                 return true;
             }
@@ -578,6 +582,7 @@ namespace GUI.Forms
 
             try
             {
+                LoadHeroColors(hero.Name);
                 BuildSlotRows(hero);
                 BuildItemSets(hero);
                 BuildIconRows(hero);
@@ -677,22 +682,24 @@ namespace GUI.Forms
                     : "Recolor: выбрать кастомный RGB цвет (ПКМ для сброса)");
 
                 // Выбор цвета по клику
+                // Выбор цвета по клику с автоподстановкой последнего цвета
                 colorButton.Click += (s, e) =>
                 {
                     using var colorDialog = new ColorDialog
                     {
                         AllowFullOpen = true,
                         FullOpen = true,
+                        // Если цвет слота уже был — открываем его, иначе ПОСЛЕДНИЙ использованный:
+                        Color = slotRecolors.TryGetValue(slot.Name, out var currentColor)
+                            ? currentColor
+                            : lastPickedColor,
                     };
-
-                    if (slotRecolors.TryGetValue(slot.Name, out var currentColor))
-                    {
-                        colorDialog.Color = currentColor;
-                    }
 
                     if (colorDialog.ShowDialog() == DialogResult.OK)
                     {
                         slotRecolors[slot.Name] = colorDialog.Color;
+                        lastPickedColor = colorDialog.Color;
+                        VmatTextureRecolorer.SaveLastColor(lastPickedColor); // Запоминаем цвет в реестр
 
                         colorButton.BackColor = colorDialog.Color;
                         toolTip.SetToolTip(colorButton, $"Recolor: R:{colorDialog.Color.R} G:{colorDialog.Color.G} B:{colorDialog.Color.B} (ПКМ для сброса)");
@@ -2169,6 +2176,57 @@ namespace GUI.Forms
             }
 
             return [.. models.Select(model => new PreviewModel(model.Path, model.Skin, loadout.GetBodyGroupChoices(model.Path), model.Particles))];
+        }
+
+        private void LoadHeroColors(string heroName)
+        {
+            slotRecolors.Clear();
+            effectRecolors.Clear();
+
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Source2Viewer\HeroColors");
+                if (key?.GetValue(heroName) is string data && !string.IsNullOrEmpty(data))
+                {
+                    var entries = data.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var entry in entries)
+                    {
+                        var parts = entry.Split(':');
+                        if (parts.Length == 2 && int.TryParse(parts[1], out var argb))
+                        {
+                            slotRecolors[parts[0]] = Color.FromArgb(argb);
+                        }
+                    }
+                }
+
+                if (slotRecolors.Count > 0)
+                {
+                    lastPickedColor = slotRecolors.Values.First();
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void SaveHeroColors(string heroName)
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Source2Viewer\HeroColors");
+                if (slotRecolors.Count > 0)
+                {
+                    var data = string.Join(";", slotRecolors.Select(kv => $"{kv.Key}:{kv.Value.ToArgb()}"));
+                    key?.SetValue(heroName, data, Microsoft.Win32.RegistryValueKind.String);
+                }
+                else
+                {
+                    key?.DeleteValue(heroName, false);
+                }
+            }
+            catch
+            {
+            }
         }
 
         /// <summary>
