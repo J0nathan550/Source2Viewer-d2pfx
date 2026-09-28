@@ -89,6 +89,10 @@ namespace GUI.Forms
             IncludeAudio = includeAudioCheckBox.Checked,
             Icons = iconsCheckBox.Checked,
             IconReplacements = GetIconReplacements(),
+            SpriteSheet = spriteSheetCheckBox.Checked,
+            SpriteReplacements = GetSpriteReplacements(),
+            DefaultItemsInItemsGame = itemsGameCheckBox.Checked,
+            DefaultItemSwaps = SelectedHero != null ? ItemsGameEditor.GetSwaps(catalog, CreateLoadout()) : [],
             Sounds = soundsCheckBox.Checked,
             SoundReplacements = GetSoundReplacements(),
             Voice = voiceComboBox?.SelectedItem is VoiceChoice { Criteria: not null } voice ? voice : null,
@@ -150,6 +154,17 @@ namespace GUI.Forms
                 "with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
                 "The game combines an addon hero's items into it, where such parts would otherwise stand still.\n" +
                 "Untick it for models this does not suit, they are then written over the default models like other items.");
+            toolTip.SetToolTip(spriteSheetCheckBox,
+                "Point the hero's minimap icon at the one picked on the Icons tab, in a copy of scripts/mod_textures.txt in the game folder.\n" +
+                "The minimap draws hero icons from this sprite sheet, not from the icon images.\n" +
+                "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
+                "A copy an earlier export wrote there is updated, so several heroes can share it.");
+            toolTip.SetToolTip(itemsGameCheckBox,
+                "Write the equipped items over the hero's default items in a copy of scripts/items/items_game.txt in the game folder,\n" +
+                "so the game shows them as the hero's default look, with the picked style. No model has to be replaced for this.\n" +
+                "Slots left at their default item are restored. Items in slots without a default item, and unusual effects, are left out.\n" +
+                "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
+                "A copy an earlier export wrote there is updated, so several heroes can share it.");
 
             if (preferences.Options != null)
             {
@@ -402,6 +417,8 @@ namespace GUI.Forms
             replaceSharedParticlesCheckBox.Checked = options.ReplaceSharedParticles;
             renameModelsCheckBox.Checked = options.RenameModels;
             animatePartsCheckBox.Checked = options.AnimateOwnParts;
+            spriteSheetCheckBox.Checked = options.SpriteSheet;
+            itemsGameCheckBox.Checked = options.DefaultItemsInItemsGame;
         }
 
         private void ReplaceDefaultsCheckBox_CheckedChanged(object? sender, EventArgs e)
@@ -1281,7 +1298,9 @@ namespace GUI.Forms
                 }
             }
 
-            if (GameFolder == null && iconsCheckBox.Checked && GetIconReplacements().Count > 0)
+            if (GameFolder == null && ((iconsCheckBox.Checked && GetIconReplacements().Count > 0)
+                || (spriteSheetCheckBox.Checked && GetSpriteReplacements().Count > 0)
+                || itemsGameCheckBox.Checked))
             {
                 PickGameFolder();
 
@@ -1751,7 +1770,7 @@ namespace GUI.Forms
             iconRows.Clear();
             pickedIcons.Clear();
 
-            var slots = CharacterIcons.GetSlots(catalog, hero, Exists);
+            var slots = CharacterIcons.GetSlots(catalog, hero, Exists, GetPixels);
             string? group = null;
 
             void AddFullRow(Control control)
@@ -1812,7 +1831,9 @@ namespace GUI.Forms
                     Tag = slot,
                 };
 
-                toolTip.SetToolTip(label, slot.Asset);
+                toolTip.SetToolTip(label, slot.SharesSwapsOf is { } shared
+                    ? $"{slot.Asset}\nShows the same picture as {shared}, so it gets the icons items give that ability"
+                    : slot.Asset);
 
                 foreach (var choice in slot.Choices)
                 {
@@ -1879,6 +1900,9 @@ namespace GUI.Forms
 
         private List<IconReplacement> GetIconReplacements()
             => [.. iconRows.SelectMany(row => row.ComboBox.SelectedItem is IconChoice choice ? row.Slot.GetReplacements(choice, Exists) : [])];
+
+        private List<SpriteReplacement> GetSpriteReplacements()
+            => [.. iconRows.Select(static row => row.ComboBox.SelectedItem is IconChoice choice ? row.Slot.GetSpriteReplacement(choice) : null).OfType<SpriteReplacement>()];
 
         /// <summary>
         /// Lists the voices the hero's items switch it to and the sounds they swap, the hero's own sounds before the ones
@@ -2065,6 +2089,38 @@ namespace GUI.Forms
                 .Select(static row => new SoundReplacement(((SoundChoice)row.ComboBox.SelectedItem!).Event, row.Slot.Event))];
 
         private bool Exists(string path) => package.FindEntry(path) != null;
+
+        /// <summary>
+        /// Decodes an image to compare its picture with others, since the compiled files of the same picture differ.
+        /// </summary>
+        private byte[]? GetPixels(string path)
+        {
+            try
+            {
+                if (package.FindEntry(path) is not { } entry)
+                {
+                    return null;
+                }
+
+                using var resource = new Resource { FileName = path };
+                resource.Read(GameFileLoader.GetPackageEntryStream(package, entry));
+
+                if (resource.DataBlock is not Texture texture)
+                {
+                    return null;
+                }
+
+                using var bitmap = texture.GenerateBitmap();
+
+                return bitmap.Bytes;
+            }
+            catch (Exception e)
+            {
+                Log.Warn(nameof(CharacterSelectForm), $"Failed to read the icon \"{path}\": {e.Message}");
+
+                return null;
+            }
+        }
 
         /// <summary>
         /// Decodes an icon to show next to its choice, scaled down to the box it is shown in.

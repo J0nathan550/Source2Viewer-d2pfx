@@ -272,6 +272,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                 failed += ApplySoundReplacements(plan.SoundEventEdits, contentRoot, fileLoader, progress);
                 failed += ExportResources(plan.Resources, contentRoot, fileLoader, progress, writtenFiles, cancellationToken);
                 failed += ExportIcons(plan.IconReplacements, gameRoot, fileLoader, progress, cancellationToken);
+                failed += ExportSprites(plan.SpriteReplacements, gameRoot, package, progress);
+                failed += ExportDefaultItems(plan.DefaultItemSwaps, gameRoot, package, progress);
 
                 foreach (var note in plan.Notes)
                 {
@@ -916,6 +918,97 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return failed;
+        }
+
+        /// <summary>
+        /// Writes a copy of the game's sprite sheet definitions into the game folder, with the replaced sprites cut out
+        /// where their replacements are.
+        /// </summary>
+        private static int ExportSprites(List<SpriteReplacement> sprites, string? gameRoot, Package package, IProgress<string> progress)
+        {
+            if (sprites.Count == 0)
+            {
+                return 0;
+            }
+
+            return EditGameText(CharacterIcons.SpriteSheetFile, gameRoot, package, progress, (original, current) =>
+            {
+                var (text, missing) = CharacterIcons.ReplaceSprites(original, current, sprites);
+
+                foreach (var sprite in sprites)
+                {
+                    progress.Report(missing.Contains(sprite)
+                        ? $"  FAILED {sprite.Target} <- {sprite.Source}: not in {CharacterIcons.SpriteSheetFile}"
+                        : sprite.Source == sprite.Target ? $"  {sprite.Target} restored" : $"  {sprite.Target} <- {sprite.Source}");
+                }
+
+                return (text, missing.Count);
+            });
+        }
+
+        private static int ExportDefaultItems(List<DefaultItemSwap> swaps, string? gameRoot, Package package, IProgress<string> progress)
+        {
+            if (swaps.Count == 0)
+            {
+                return 0;
+            }
+
+            return EditGameText(ItemsGameCatalog.ItemsGamePath, gameRoot, package, progress, (original, current) =>
+            {
+                var (text, missing) = ItemsGameEditor.ReplaceDefaultItems(original, current, swaps);
+
+                foreach (var swap in swaps)
+                {
+                    progress.Report(missing.Contains(swap)
+                        ? $"  FAILED {swap.Description}: its definition was not found"
+                        : $"  {swap.Description}");
+                }
+
+                return (text, missing.Count);
+            });
+        }
+
+        /// <summary>
+        /// Rewrites one of the game's text files into the game folder. A copy an earlier export wrote there is rewritten
+        /// rather than started over from the game's own, so exports of other heroes into the same folder are kept.
+        /// </summary>
+        /// <param name="edit">Rewrites the current text, given the game's own text to take things from, and counts what failed.</param>
+        private static int EditGameText(string path, string? gameRoot, Package package, IProgress<string> progress,
+            Func<string, string, (string Text, int Failed)> edit)
+        {
+            if (gameRoot == null)
+            {
+                progress.Report($"  ! {path} was not written, no game folder was chosen");
+                return 0;
+            }
+
+            try
+            {
+                // Read from the package rather than the search paths, where a mod's copy could stand in for the game's
+                var entry = package.FindEntry(path) ?? throw new FileNotFoundException($"\"{path}\" was not found in the package");
+                package.ReadEntry(entry, out var originalBytes);
+                var original = Encoding.UTF8.GetString(originalBytes);
+
+                var outputPath = GetOutputPath(gameRoot, path);
+                var hasCopy = File.Exists(outputPath);
+                var current = hasCopy ? File.ReadAllText(outputPath) : original;
+
+                progress.Report(hasCopy ? $"Updating the copy of {path} in \"{gameRoot}\"..." : $"Writing a copy of {path} to \"{gameRoot}\"...");
+
+                var (text, failed) = edit(original, current);
+
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                File.WriteAllText(outputPath, text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+                return failed;
+            }
+            catch (Exception e)
+            {
+                progress.Report($"  FAILED {path}: {e.Message}");
+                Log.Error(nameof(CharacterAssetsExporter), $"Failed to write '{path}': {e}");
+
+                return 1;
+            }
         }
 
         private static byte[] ReadRaw(GameFileLoader fileLoader, string path)

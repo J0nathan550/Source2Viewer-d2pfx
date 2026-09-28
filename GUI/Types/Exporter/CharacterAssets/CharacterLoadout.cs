@@ -359,10 +359,13 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public IconChoice GetIcon(IconSlot slot)
         {
+            // The persona's icons are the base the items worn in its slots swap again, e.g. a persona helmet's own
+            // ability icon, however the slots are ordered
             var icon = Items
+                .OrderByDescending(static item => item.Modifiers.Any(static modifier => modifier.Type == "persona"))
                 .SelectMany(static item => item.Modifiers)
                 .LastOrDefault(modifier => modifier.Type == slot.ModifierType && modifier.Modifier != null
-                    && string.Equals(modifier.Asset, slot.Asset, StringComparison.OrdinalIgnoreCase))?
+                    && string.Equals(modifier.Asset, slot.SwappedAsset, StringComparison.OrdinalIgnoreCase))?
                 .Modifier;
 
             return slot.Choices.FirstOrDefault(choice => choice.Icon.Equals(icon, StringComparison.OrdinalIgnoreCase)) ?? slot.Default;

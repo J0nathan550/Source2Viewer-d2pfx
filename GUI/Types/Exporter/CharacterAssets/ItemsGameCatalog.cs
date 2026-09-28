@@ -498,6 +498,14 @@ namespace GUI.Types.Exporter.CharacterAssets
                 });
             }
 
+            // Some personas only name their minimap icon, but the game shows their own portrait too, which is named the same
+            if (item.AssetModifiers.Any(static modifier => modifier.Type == "persona")
+                && !item.AssetModifiers.Any(static modifier => modifier.Type == "icon_replacement_hero")
+                && item.AssetModifiers.FirstOrDefault(static modifier => modifier.Type == "icon_replacement_hero_minimap") is { } minimapIcon)
+            {
+                item.AssetModifiers.Add(minimapIcon with { Type = "icon_replacement_hero" });
+            }
+
             if (visuals.GetSubCollection("styles") is { ValueType: KVValueType.Collection } styles)
             {
                 foreach (var (key, styleData) in styles)

@@ -89,6 +89,8 @@ namespace GUI.Forms
             mergeWearablesCheckBox = new System.Windows.Forms.CheckBox();
             renameModelsCheckBox = new System.Windows.Forms.CheckBox();
             animatePartsCheckBox = new System.Windows.Forms.CheckBox();
+            spriteSheetCheckBox = new System.Windows.Forms.CheckBox();
+            itemsGameCheckBox = new System.Windows.Forms.CheckBox();
             outputGroupBox = new ThemedGroupBox();
             outputTable = new System.Windows.Forms.TableLayoutPanel();
             contentFolderLabel = new System.Windows.Forms.Label();
@@ -489,10 +491,16 @@ namespace GUI.Forms
             includeTable.SetColumnSpan(renameModelsCheckBox, 3);
             includeTable.Controls.Add(animatePartsCheckBox, 0, 7);
             includeTable.SetColumnSpan(animatePartsCheckBox, 3);
+            includeTable.Controls.Add(spriteSheetCheckBox, 0, 8);
+            includeTable.SetColumnSpan(spriteSheetCheckBox, 3);
+            includeTable.Controls.Add(itemsGameCheckBox, 0, 9);
+            includeTable.SetColumnSpan(itemsGameCheckBox, 3);
             includeTable.Dock = System.Windows.Forms.DockStyle.Top;
             includeTable.Location = new System.Drawing.Point(3, 21);
             includeTable.Name = "includeTable";
-            includeTable.RowCount = 8;
+            includeTable.RowCount = 10;
+            includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
             includeTable.RowStyles.Add(new System.Windows.Forms.RowStyle());
@@ -666,6 +674,22 @@ namespace GUI.Forms
             animatePartsCheckBox.TabIndex = 16;
             animatePartsCheckBox.Text = "Add items that animate parts of their own to the hero's model";
             animatePartsCheckBox.UseVisualStyleBackColor = true;
+            //
+            // spriteSheetCheckBox
+            //
+            spriteSheetCheckBox.AutoSize = true;
+            spriteSheetCheckBox.Name = "spriteSheetCheckBox";
+            spriteSheetCheckBox.TabIndex = 17;
+            spriteSheetCheckBox.Text = "Replace the minimap icon (writes a copy of mod_textures.txt)";
+            spriteSheetCheckBox.UseVisualStyleBackColor = true;
+            //
+            // itemsGameCheckBox
+            //
+            itemsGameCheckBox.AutoSize = true;
+            itemsGameCheckBox.Name = "itemsGameCheckBox";
+            itemsGameCheckBox.TabIndex = 18;
+            itemsGameCheckBox.Text = "Make the items the hero's default items (writes a copy of items_game.txt)";
+            itemsGameCheckBox.UseVisualStyleBackColor = true;
             //
             // outputGroupBox
             //
@@ -894,6 +918,8 @@ namespace GUI.Forms
         private System.Windows.Forms.CheckBox mergeWearablesCheckBox;
         private System.Windows.Forms.CheckBox renameModelsCheckBox;
         private System.Windows.Forms.CheckBox animatePartsCheckBox;
+        private System.Windows.Forms.CheckBox spriteSheetCheckBox;
+        private System.Windows.Forms.CheckBox itemsGameCheckBox;
         private ThemedGroupBox outputGroupBox;
         private System.Windows.Forms.TableLayoutPanel outputTable;
         private System.Windows.Forms.Label contentFolderLabel;

@@ -77,6 +77,30 @@ namespace GUI.Types.Exporter.CharacterAssets
         public IReadOnlyList<IconReplacement> IconReplacements { get; set; } = [];
 
         /// <summary>
+        /// Writes <see cref="SpriteReplacements"/> into a copy of <see cref="CharacterIcons.SpriteSheetFile"/> in the
+        /// game folder, which is where the minimap takes the hero's icon from. The copy stands in for the whole file, so
+        /// other mods' changes to it are lost unless they are in the copy too, which is why it is left out by default.
+        /// A copy an earlier export wrote is changed rather than started over.
+        /// </summary>
+        public bool SpriteSheet { get; set; }
+
+        /// <summary>The sprites to write when <see cref="SpriteSheet"/> is set, e.g. the minimap icon.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<SpriteReplacement> SpriteReplacements { get; set; } = [];
+
+        /// <summary>
+        /// Writes <see cref="DefaultItemSwaps"/> into a copy of items_game.txt in the game folder, so the hero's default
+        /// items are defined as the equipped items and the game shows those without any model being replaced. Like
+        /// <see cref="SpriteSheet"/>, the copy stands in for the whole file, so it is left out by default, and a copy an
+        /// earlier export wrote is changed rather than started over.
+        /// </summary>
+        public bool DefaultItemsInItemsGame { get; set; }
+
+        /// <summary>The default items to write when <see cref="DefaultItemsInItemsGame"/> is set.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<DefaultItemSwap> DefaultItemSwaps { get; set; } = [];
+
+        /// <summary>
         /// Writes <see cref="SoundReplacements"/> and the <see cref="Voice"/> lines over the hero's own sounds, in the
         /// sound event files they are defined in.
         /// </summary>
@@ -251,6 +275,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Compiled icons copied into the game folder, as package paths.</summary>
         public List<IconReplacement> IconReplacements { get; } = [];
 
+        /// <summary>Sprites written over others in a copy of the sprite sheet definitions in the game folder.</summary>
+        public List<SpriteReplacement> SpriteReplacements { get; } = [];
+
+        /// <summary>Default items written over in a copy of items_game.txt in the game folder.</summary>
+        public List<DefaultItemSwap> DefaultItemSwaps { get; } = [];
+
         /// <summary>Sound event files rewritten with other events' definitions once everything is exported.</summary>
         public List<SoundEventEdit> SoundEventEdits { get; } = [];
 
@@ -329,6 +359,27 @@ namespace GUI.Types.Exporter.CharacterAssets
                     {
                         plan.Missing.Add(icon.Source);
                     }
+                }
+            }
+
+            if (options.SpriteSheet)
+            {
+                plan.SpriteReplacements.AddRange(options.SpriteReplacements);
+            }
+
+            if (options.DefaultItemsInItemsGame)
+            {
+                plan.DefaultItemSwaps.AddRange(options.DefaultItemSwaps);
+
+                foreach (var item in loadout.Items.Where(item => !item.Item.IsDefault
+                    && !options.DefaultItemSwaps.Any(swap => swap.Item == item.Item.DefIndex)))
+                {
+                    plan.Notes.Add($"{item.Item.Name} is not in items_game.txt's default items, its slot \"{item.Item.Slot}\" has no default item");
+                }
+
+                if (loadout.Items.Any(static item => item.Unusual != null))
+                {
+                    plan.Notes.Add("Unusual effects are not in items_game.txt's default items, they only come with the exported particles");
                 }
             }
 
