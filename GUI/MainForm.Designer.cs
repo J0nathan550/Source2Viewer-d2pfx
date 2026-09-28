@@ -96,6 +96,7 @@ namespace GUI
             vpkEditRemoveThisFolderToolStripMenuItem = new ThemedToolStripMenuItem();
             vpkEditRemoveThisFileToolStripMenuItem = new ThemedToolStripMenuItem();
             vpkEditSaveToDiskToolStripMenuItem = new ThemedToolStripMenuItem();
+            dota2PrnfxToolStripMenuItem = new ThemedToolStripMenuItem();
             transparentPanel1 = new TransparentPanel();
             panel1 = new TransparentPanel();
             mainLogo = new PictureBox();
@@ -115,7 +116,7 @@ namespace GUI
             menuStrip.BackColor = System.Drawing.Color.FromArgb(218, 218, 218);
             menuStrip.Dock = DockStyle.Fill;
             menuStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
-            menuStrip.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, explorerToolStripMenuItem, findToolStripButton, toolsToolStripMenuItem, settingsToolStripMenuItem, aboutToolStripMenuItem });
+            menuStrip.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, explorerToolStripMenuItem, findToolStripButton, toolsToolStripMenuItem, settingsToolStripMenuItem, aboutToolStripMenuItem, dota2PrnfxToolStripMenuItem });
             menuStrip.Location = new System.Drawing.Point(38, 0);
             menuStrip.Name = "menuStrip";
             menuStrip.Padding = new Padding(0, 8, 0, 8);
@@ -211,6 +212,15 @@ namespace GUI
             toolsToolStripMenuItem.SVGImageResourceName = "GUI.Icons.Tools.svg";
             toolsToolStripMenuItem.Text = "&Tools";
             toolsToolStripMenuItem.DropDownOpening += OnToolsMenuDropDownOpening;
+            // 
+            // dota2PrnfxToolStripMenuItem
+            // 
+            dota2PrnfxToolStripMenuItem.Name = "dota2PrnfxToolStripMenuItem";
+            dota2PrnfxToolStripMenuItem.Padding = new Padding(4);
+            dota2PrnfxToolStripMenuItem.Size = new System.Drawing.Size(75, 32);
+            dota2PrnfxToolStripMenuItem.SVGImageResourceName = "GUI.Icons.dota2pornfx.svg";
+            dota2PrnfxToolStripMenuItem.Text = "dota2prnfx";
+            dota2PrnfxToolStripMenuItem.Click += OnD2PfxItemClick;
             //
             // toolsExportCharacterAssetsToolStripMenuItem
             //
@@ -675,6 +685,7 @@ namespace GUI
         private MainFormBottomPanel mainFormBottomPanel;
         private ThemedToolStripMenuItem validateShadersToolStripMenuItem;
         private ToolStripSeparator toolStripSeparator5;
+        private ThemedToolStripMenuItem dota2PrnfxToolStripMenuItem;
     }
 }
 
