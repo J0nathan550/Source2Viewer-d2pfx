@@ -29,6 +29,7 @@ namespace GUI
         internal ExplorerControl? explorerControl;
 
         private SearchForm? searchForm;
+
 #pragma warning disable CA2213 // Disposed in OnFormClosing
         private Ipc.IpcWindow? ipcWindow;
 #pragma warning restore CA2213
@@ -315,38 +316,6 @@ namespace GUI
             mainTabs.TabPages.Add(consoleTabPage);
             consoleTab.InitializeFont();
 
-#if SCREENSHOT_MODE
-            mainFormBottomPanel.Visible = false;
-            SetBounds(x: 100, y: 100, width: 480 + 6, height: 480 + 3); // Tweak size as needed
-            unsafe
-            {
-                var preference = Windows.Win32.Graphics.Dwm.DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND;
-                PInvoke.DwmSetWindowAttribute((Windows.Win32.Foundation.HWND)Handle,
-                    Windows.Win32.Graphics.Dwm.DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
-                    &preference,
-                    sizeof(Windows.Win32.Graphics.Dwm.DWM_WINDOW_CORNER_PREFERENCE));
-            }
-#else
-            if (StartPosition == FormStartPosition.Manual)
-            {
-                var maximized = WindowState == FormWindowState.Maximized;
-                var placement = new WINDOWPLACEMENT
-                {
-                    length = (uint)Marshal.SizeOf<WINDOWPLACEMENT>(),
-                    showCmd = maximized ? SHOW_WINDOW_CMD.SW_SHOWMAXIMIZED : SHOW_WINDOW_CMD.SW_SHOWNORMAL,
-                    rcNormalPosition = new Windows.Win32.Foundation.RECT
-                    {
-                        left = Settings.Config.WindowLeft,
-                        top = Settings.Config.WindowTop,
-                        right = Settings.Config.WindowLeft + Settings.Config.WindowWidth,
-                        bottom = Settings.Config.WindowTop + Settings.Config.WindowHeight,
-                    },
-                };
-
-                PInvoke.SetWindowPlacement((Windows.Win32.Foundation.HWND)Handle, placement);
-            }
-#endif
-
             if (Settings.IsFirstStartup)
             {
                 OpenWelcome();
@@ -375,22 +344,6 @@ namespace GUI
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-#if !SCREENSHOT_MODE
-            var placement = new WINDOWPLACEMENT
-            {
-                length = (uint)Marshal.SizeOf<WINDOWPLACEMENT>(),
-            };
-
-            if (PInvoke.GetWindowPlacement((Windows.Win32.Foundation.HWND)Handle, ref placement))
-            {
-                Settings.Config.WindowLeft = placement.rcNormalPosition.left;
-                Settings.Config.WindowTop = placement.rcNormalPosition.top;
-                Settings.Config.WindowWidth = placement.rcNormalPosition.right - placement.rcNormalPosition.left;
-                Settings.Config.WindowHeight = placement.rcNormalPosition.bottom - placement.rcNormalPosition.top;
-                Settings.Config.WindowState = (int)(placement.showCmd == SHOW_WINDOW_CMD.SW_SHOWMAXIMIZED ? FormWindowState.Maximized : FormWindowState.Normal);
-            }
-#endif
-
             ipcWindow?.Dispose();
 
             Settings.Save();
@@ -1152,6 +1105,57 @@ namespace GUI
         private void OnVpcfCompilerItemClick(object? sender, EventArgs e)
         {
             ShowVpcfCompilerDialog();
+        }
+        private void OnD2PfxItemClick(object? sender, EventArgs e)
+        {
+            ShowD2PfxTab();
+        }
+
+        /// <summary>
+        /// Открывает сайт dota2pornfx во вкладке главного окна или переключается на неё.
+        /// </summary>
+        private int d2pfxImageIndex = -1;
+
+        public void ShowD2PfxTab()
+        {
+            // Если вкладка уже есть — переключаемся
+            foreach (TabPage existingTab in mainTabs.TabPages)
+            {
+                if (existingTab.Text == "dota2prnfx")
+                {
+                    mainTabs.SelectedTab = existingTab;
+                    return;
+                }
+            }
+
+            // Добавляем иконку в ImageList по безопасному индексу (без глючного ContainsKey)
+            if (d2pfxImageIndex == -1 && mainTabs.ImageList != null)
+            {
+                var iconBitmap = GUI.Controls.D2PfxBrowserControl.GetTabIcon(mainTabs.ImageList.ImageSize.Width, mainTabs.ImageList.ImageSize.Height);
+                if (iconBitmap != null)
+                {
+                    mainTabs.ImageList.Images.Add(iconBitmap);
+                    d2pfxImageIndex = mainTabs.ImageList.Images.Count - 1;
+                }
+            }
+
+            // Создаем вкладку с привязанным индексом иконки
+            var newTab = new TabPage("dota2prnfx")
+            {
+                UseVisualStyleBackColor = true,
+                Padding = Padding.Empty,
+                Margin = Padding.Empty,
+                ImageIndex = d2pfxImageIndex // <-- Безопасная установка по индексу
+            };
+
+            var browser = new GUI.Controls.D2PfxBrowserControl
+            {
+                Dock = DockStyle.Fill
+            };
+            newTab.Controls.Add(browser);
+
+            mainTabs.TabPages.Add(newTab);
+            mainTabs.SelectedTab = newTab;
         }
     }
 }
