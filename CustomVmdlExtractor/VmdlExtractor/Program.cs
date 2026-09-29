@@ -1365,7 +1365,8 @@ internal static class Program
                 // models (camera anchors, locator props) that lack normal/texcoord
                 // streams. resourcecompiler.exe segfaults on such DMX. Drop both
                 // the file and the corresponding RenderMeshFile from .vmdl.
-                if (IsMarkerOnlyDmx(subPath))
+                // Physics hulls and meshes never have normals or texcoords, only render meshes can be markers
+                if (!IsPhysicsShapeFile(baseVmdlText, Path.GetFileName(subPath)) && IsMarkerOnlyDmx(subPath))
                 {
                     var basename = Path.GetFileNameWithoutExtension(subPath);
                     markerDmxBasenames.Add(basename);
@@ -4505,6 +4506,22 @@ internal static class Program
             catch { }
         }
         return created;
+    }
+
+    /// <summary>
+    /// Whether a PhysicsHullFile or PhysicsMeshFile node of the .vmdl reads <paramref name="dmxFileName"/>.
+    /// </summary>
+    private static bool IsPhysicsShapeFile(string vmdlText, string dmxFileName)
+    {
+        foreach (Match match in Regex.Matches(vmdlText, @"_class\s*=\s*""Physics(?:Hull|Mesh)File""\s*filename\s*=\s*""(?<path>[^""]*)"""))
+        {
+            if (Path.GetFileName(match.Groups["path"].Value).Equals(dmxFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

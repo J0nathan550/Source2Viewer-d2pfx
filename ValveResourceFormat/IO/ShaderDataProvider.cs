@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Utils;
 using Channel = ValveResourceFormat.CompiledShader.ChannelMapping;
 
 namespace ValveResourceFormat.IO
@@ -276,7 +277,7 @@ namespace ValveResourceFormat.IO
         /// </summary>
         private List<(Channel Channel, string Name)>? GetInputsForTexture_Internal(string textureType, Material material)
         {
-            var shader = fileLoader.LoadShader(material.ShaderName);
+            var shader = LoadShader(material.ShaderName);
             if (shader?.Features == null)
             {
                 return null;
@@ -446,7 +447,7 @@ namespace ValveResourceFormat.IO
         /// </summary>
         private string? GetSuffixForInputTexture_Internal(string inputName, Material material)
         {
-            var shader = fileLoader.LoadShader(material.ShaderName);
+            var shader = LoadShader(material.ShaderName);
             if (shader?.Features != null)
             {
                 foreach (var param in shader.Features.VariableDescriptions)
@@ -459,6 +460,22 @@ namespace ValveResourceFormat.IO
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Loads a shader, or returns null when its files are in a newer format than can be read, so the basic
+        /// mappings are used for it instead.
+        /// </summary>
+        private ShaderCollection? LoadShader(string shaderName)
+        {
+            try
+            {
+                return fileLoader.LoadShader(shaderName);
+            }
+            catch (UnexpectedMagicException)
+            {
+                return null;
+            }
         }
     }
 
@@ -590,8 +607,8 @@ namespace ValveResourceFormat.IO
 
             ["csgo_weapon"] = new()
             {
-                ["g_tColor"] = [(Channel.RGB, "TextureColor")],
-                ["g_tMetalness"] = [(Channel.R, "TextureRoughness"), (Channel.G, "TextureMetalness")],
+                ["g_tColor"] = [(Channel.RGB, "TextureColor1")],
+                ["g_tMetalness"] = [(Channel.R, "TextureRoughness1"), (Channel.G, "TextureMetalness1")],
                 ["g_tAmbientOcclusion"] = [(Channel.R, "TextureAmbientOcclusion")],
             },
 

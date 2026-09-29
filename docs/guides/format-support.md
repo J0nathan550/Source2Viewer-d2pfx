@@ -217,7 +217,7 @@ bytecode back to readable expression text.
 
 Compiled textures are unpacked back into the original input maps (color, normal, roughness,
 masks, ...) using the channel processor metadata in the compiled shader when it is
-available. Without the shader file, a built-in table covers the most common shaders; for
+available. Without the shader file, or when it is a newer version than can be read, a built-in table covers the most common shaders; for
 anything else the textures are extracted as raw RGBA dumps under guessed names. Unpacking is
 skipped for cubemaps, texture arrays, volume textures, and HDR textures; those are written
 out as complete decoded images (per face or slice) instead of channel maps.

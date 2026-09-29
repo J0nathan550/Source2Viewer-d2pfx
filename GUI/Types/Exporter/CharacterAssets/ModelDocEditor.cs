@@ -397,6 +397,77 @@ namespace GUI.Types.Exporter.CharacterAssets
             return Validate(vmdl);
         }
 
+        /// <summary>
+        /// Makes the other choices of a body group render the mesh of one of its choices, by pointing their render
+        /// meshes at its file. Whichever choice the game picks then shows that mesh, without anything having to switch
+        /// the body group.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="isShown">Picks the mesh to show by its name.</param>
+        /// <param name="swapped">Receives a description of every mesh that now shows another.</param>
+        public static string ShowMeshInsteadOf(string vmdl, Func<string, bool> isShown, out List<string> swapped)
+        {
+            var rootChildren = GetRootChildren(vmdl);
+            var meshFiles = GetListNodes(rootChildren, "RenderMeshList")
+                .Where(static node => node.GetStringProperty("_class") == "RenderMeshFile")
+                .Select(static node => (Name: node.GetStringProperty("name", string.Empty), File: node.GetStringProperty("filename", string.Empty)))
+                .Where(static mesh => mesh.Name.Length > 0 && mesh.File.Length > 0)
+                .GroupBy(static mesh => mesh.Name, StringComparer.Ordinal)
+                .ToDictionary(static group => group.Key, static group => group.First().File, StringComparer.Ordinal);
+
+            var targets = new Dictionary<string, (string Mesh, string File)>(StringComparer.Ordinal);
+
+            foreach (var bodyGroup in GetBodyGroups(rootChildren))
+            {
+                var shown = bodyGroup.Choices.SelectMany(static choice => choice.Meshes).FirstOrDefault(mesh => isShown(mesh) && meshFiles.ContainsKey(mesh));
+
+                if (shown == null)
+                {
+                    continue;
+                }
+
+                foreach (var mesh in bodyGroup.Choices.SelectMany(static choice => choice.Meshes).Where(mesh => !isShown(mesh) && meshFiles.ContainsKey(mesh)))
+                {
+                    targets.TryAdd(mesh, (shown, meshFiles[shown]));
+                }
+            }
+
+            swapped = [];
+
+            if (targets.Count == 0)
+            {
+                return vmdl;
+            }
+
+            var edits = new List<(int Start, int End, string Text)>();
+
+            foreach (var (start, end) in FindObjects(vmdl))
+            {
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header
+                    || header.Groups["class"].Value != "RenderMeshFile"
+                    || !targets.TryGetValue(header.Groups["name"].Value, out var target))
+                {
+                    continue;
+                }
+
+                var fileName = FileNameRegex().Match(vmdl, start, end - start);
+
+                if (fileName.Success)
+                {
+                    var path = fileName.Groups["path"];
+                    edits.Add((path.Index, path.Index + path.Length, target.File));
+                    swapped.Add($"{header.Groups["name"].Value} shows the mesh of {target.Mesh}");
+                }
+            }
+
+            foreach (var (start, end, text) in edits.OrderByDescending(static edit => edit.Start))
+            {
+                vmdl = string.Concat(vmdl.AsSpan(0, start), text, vmdl.AsSpan(end));
+            }
+
+            return Validate(vmdl);
+        }
+
         private static bool IsDummy(BodyGroupChoiceNode choice)
             => choice.Name.Equals("_dummy", StringComparison.OrdinalIgnoreCase)
                 || (choice.Meshes.Length > 0 && choice.Meshes.All(static mesh => mesh.Equals("_dummy", StringComparison.OrdinalIgnoreCase)));
@@ -1374,6 +1445,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"\bdisabled\s*=\s*true\b", RegexOptions.CultureInvariant)]
         private static partial Regex DisabledRegex();
+
+        [GeneratedRegex(@"\bfilename\s*=\s*""(?<path>[^""]*)""", RegexOptions.CultureInvariant)]
+        private static partial Regex FileNameRegex();
 
         [GeneratedRegex(@"activity_name\s*=\s*""(?<name>[^""]*)""", RegexOptions.CultureInvariant)]
         private static partial Regex ActivityNameRegex();

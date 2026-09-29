@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using GUI.Types.Exporter.CharacterAssets;
+using GUI.Types.Exporter.WeaponSkins;
 using GUI.Types.PackageViewer;
 using GUI.Utils;
 
@@ -13,6 +14,8 @@ namespace GUI
         {
             UpdatePackageToolItem(toolsExportCharacterAssetsToolStripMenuItem, CharacterAssetsExporter.CanExport,
                 $"Open Dota 2's pak01_dir.vpk, or another package with {ItemsGameCatalog.ItemsGamePath}, to export characters.");
+            UpdatePackageToolItem(toolsExportWeaponSkinToolStripMenuItem, WeaponSkinExporter.CanExport,
+                $"Open Counter-Strike 2's game/csgo/pak01_dir.vpk, which has {WeaponSkinCatalog.ItemsGamePath} and the weapon finishes, to export weapon skins.");
         }
 
         private async void OnToolsExportCharacterAssetsClick(object sender, EventArgs e)
@@ -22,6 +25,16 @@ namespace GUI
             if (context != null)
             {
                 await CharacterAssetsExporter.ExportAsync(context).ConfigureAwait(true);
+            }
+        }
+
+        private async void OnToolsExportWeaponSkinClick(object sender, EventArgs e)
+        {
+            var context = FindPackageForTool(WeaponSkinExporter.CanExport);
+
+            if (context != null)
+            {
+                await WeaponSkinExporter.ExportAsync(context).ConfigureAwait(true);
             }
         }
 
