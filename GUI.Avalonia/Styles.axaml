@@ -1,0 +1,23 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style Selector="TabControl.content > TabItem">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Padding" Value="10,2" />
+    </Style>
+
+    <Style Selector="StackPanel.sidebar TextBlock.groupHeader">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,8,0,2" />
+        <Setter Property="Opacity" Value="0.8" />
+    </Style>
+
+    <Style Selector="StackPanel.sidebar > :is(Control)">
+        <Setter Property="Margin" Value="0,2" />
+    </Style>
+
+    <Style Selector="ComboBoxItem.header">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="IsEnabled" Value="False" />
+    </Style>
+</Styles>

@@ -1,0 +1,63 @@
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using Avalonia.Controls;
+using GUI.Types.GLViewers;
+using GUI.Utils;
+using SkiaSharp;
+
+namespace GUI.Types.Viewers
+{
+    class Image(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
+    {
+        private SKBitmap? bitmap;
+        private GLTextureViewer? glViewer;
+
+        public static bool IsAccepted(uint magic)
+        {
+            return magic == 0x474E5089 || /* png */
+                   magic << 8 == 0xFFD8FF00 || /* jpg */
+                   magic << 8 == 0x46494700; /* gif */
+        }
+
+        public async Task LoadAsync(Stream? stream)
+        {
+            using var codec = (stream != null
+                ? SKCodec.Create(stream)
+                : SKCodec.Create(vrfGuiContext.FileName))
+                ?? throw new InvalidDataException("Failed to decode image");
+
+            var info = codec.Info.WithAlphaType(SKAlphaType.Unpremul);
+            bitmap = SKBitmap.Decode(codec, info);
+
+            var renderContext = vrfGuiContext.CreateRendererContext();
+            try
+            {
+                glViewer = new GLTextureViewer(vrfGuiContext, renderContext, bitmap);
+                glViewer.InitializeLoad();
+                bitmap = null;
+                renderContext = null;
+            }
+            finally
+            {
+                bitmap?.Dispose();
+                renderContext?.Dispose();
+            }
+        }
+
+        public Control Create()
+        {
+            Debug.Assert(glViewer is not null);
+
+            return glViewer.InitializeUiControls();
+        }
+
+        public void NotifyVisible() => glViewer?.NotifyVisible();
+
+        public void Dispose()
+        {
+            bitmap?.Dispose();
+            glViewer?.Dispose();
+        }
+    }
+}

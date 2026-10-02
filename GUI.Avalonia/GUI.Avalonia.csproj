@@ -1,0 +1,121 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RollForward>LatestMajor</RollForward>
+    <Description>Cross-platform Source 2 resource viewer</Description>
+    <ApplicationIcon>..\Misc\Icons\source2viewer.ico</ApplicationIcon>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+    <StartupObject>GUI.Program</StartupObject>
+    <AssemblyName>Source2Viewer.Avalonia</AssemblyName>
+    <!-- Shared GUI sources are compiled here unmodified, so keep their namespaces and resource names -->
+    <RootNamespace>GUI</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <NoWarn>$(NoWarn);NU1901;NU1902;NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
+    <PackageReference Include="AvaloniaEdit.TextMate" Version="12.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+    <!-- Only the platform neutral decoders, output goes through OpenAL -->
+    <PackageReference Include="NAudio.Core" Version="3.1.0" />
+    <PackageReference Include="NLayer" Version="3.0.0" />
+    <PackageReference Include="NLayer.NAudioSupport" Version="3.0.0" />
+    <PackageReference Include="OpenTK" Version="4.9.4" />
+    <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
+    <PackageReference Include="Svg.Skia" Version="5.2.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Renderer\Renderer.csproj" />
+    <ProjectReference Include="..\ValveResourceFormat\ValveResourceFormat.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="ValveResourceFormat.Utils" />
+    <Using Include="ValveResourceFormat.CompiledShader" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\GUI\Utils\industrial_sunset_puresky.vtex_c" LogicalName="GUI.Utils.industrial_sunset_puresky.vtex_c" />
+    <EmbeddedResource Include="..\THIRD_PARTY_NOTICES.txt" LogicalName="GUI.Utils.THIRD_PARTY_NOTICES.txt" />
+    <!-- Named GUI.Icons.* like in the WinForms GUI, the node graph renderer loads its icons by those names -->
+    <EmbeddedResource Include="..\GUI\Icons\**" Link="Icons\%(RecursiveDir)%(Filename)%(Extension)" />
+    <AvaloniaResource Include="..\Misc\Icons\source2viewer.ico" Link="Assets\source2viewer.ico" />
+  </ItemGroup>
+
+  <!--
+    UI-agnostic sources shared with the WinForms GUI. They are compiled in place so both front-ends
+    run the same viewer logic. Anything they need from the UI layer (settings dialogs, the viewer
+    sidebar, input types) is provided by this project under the same names. See README.md.
+  -->
+  <ItemGroup>
+    <Compile Include="..\GUI\Utils\AssertTraceListener.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\GuiLoggerAdapter.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\HighlightLanguage.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\HumanReadableByteSizeFormatter.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\Log.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\Regexes.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\Settings.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\VrfGuiContext.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\GUI\Types\Viewers\BinaryKeyValues1.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\BinaryKeyValues2.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\BinaryKeyValues3.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\ByteViewer.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\ClosedCaptions.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\FlexSceneFile.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\GridNavFile.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\SpirvBinary.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\ToolsAssetInfo.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\ViewerContent.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Viewers\ViewerFactory.cs" Link="Shared\Types\Viewers\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\GUI\Forms\SearchType.cs" Link="Shared\Forms\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\ExportData.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\PackageExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\PackageViewer\IBetterBaseItem.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\PackageViewer\VirtualPackageNode.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\GUI\Types\Graphs\AG1GraphViewer.cs" Link="Shared\Types\Graphs\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\AG2GraphViewer.cs" Link="Shared\Types\Graphs\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\EntityIOGraphViewer.cs" Link="Shared\Types\Graphs\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\PulseGraphViewer.cs" Link="Shared\Types\Graphs\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\Core\GraphPalette.cs" Link="Shared\Types\Graphs\Core\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\Core\GraphView.cs" Link="Shared\Types\Graphs\Core\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\Core\GraphView.Render.cs" Link="Shared\Types\Graphs\Core\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Graphs\Core\GraphWireGeometry.cs" Link="Shared\Types\Graphs\Core\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\GUI\Types\GLViewers\GLAnimationViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLBombDamageViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLFWSurface.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLLockScope.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLMeshViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLModelViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLNavMeshViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLSceneLayerViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLSceneViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLSingleNodeViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLSkyboxViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLSmartPropViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLVoxelVisibilityViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\NativeWindowFactory.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
