@@ -240,6 +240,9 @@ namespace GUI
             ToolTip.SetShowOnDisabled(exportCharacterAssets, true);
             tools.Items.Add(exportCharacterAssets);
 
+            tools.Items.Add(Item("VTEX Create", "AssetTypes.tex", () => RunTool(() => new VtexCompilerWindow().ShowDialog(this))));
+            tools.Items.Add(Item("Particles recolor", "AssetTypes.pcf", () => RunTool(() => new VpcfCompilerWindow().ShowDialog(this))));
+
             tools.SubmenuOpened += (_, _) => UpdatePackageToolItem(exportCharacterAssets, CharacterAssetsExporter.CanExport,
                 $"Open Dota 2's pak01_dir.vpk, or another package with {ItemsGameCatalog.ItemsGamePath}, to export characters.");
 

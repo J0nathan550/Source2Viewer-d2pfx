@@ -28,6 +28,9 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>The last recolor picked as ARGB, offered first for slots without one.</summary>
         public int? LastColor { get; set; }
 
+        /// <summary>The last color particles were recolored to on their own as ARGB.</summary>
+        public int? LastParticleColor { get; set; }
+
         private static string FilePath => Path.Combine(Settings.SettingsFolder, FileName);
 
         /// <summary>
