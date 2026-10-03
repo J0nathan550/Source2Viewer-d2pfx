@@ -55,7 +55,10 @@ namespace GUI
             if (OperatingSystem.IsWindows())
             {
                 ExtendClientAreaToDecorationsHint = true;
-                ExtendClientAreaTitleBarHeightHint = Themer.MainTitleBarHeight;
+
+                // Only as tall as the window buttons, so they sit at the top like the WinForms ones,
+                // the rest of the bar is still dragged through its title bar role below
+                ExtendClientAreaTitleBarHeightHint = 30;
             }
 
             var console = new ConsoleTab();

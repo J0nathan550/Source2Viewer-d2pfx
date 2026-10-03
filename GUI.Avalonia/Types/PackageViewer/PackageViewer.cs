@@ -277,6 +277,9 @@ namespace GUI.Types.PackageViewer
                 CanUserResizeColumns = true,
                 SelectionMode = DataGridSelectionMode.Extended,
                 GridLinesVisibility = DataGridGridLinesVisibility.None,
+                // Row height and text size of the WinForms list view
+                RowHeight = 25,
+                FontSize = 13,
                 HeadersVisibility = DataGridHeadersVisibility.Column,
                 Columns =
                 {
@@ -372,7 +375,7 @@ namespace GUI.Types.PackageViewer
 
         private static Control CreateNameCell()
         {
-            var icon = AppIcons.Create("File");
+            var icon = AppIcons.Create("File", 18);
             icon.VerticalAlignment = VerticalAlignment.Center;
             var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             var cell = new StackPanel
