@@ -224,9 +224,6 @@ namespace GUI
             file.Items.Add(Item("Create VPK from folder", "VPKCreate", CreateVpkFromFolder));
             file.Items.Add(new Separator());
             file.Items.Add(Item("Open welcome screen", "WelcomeScreen", OpenWelcome));
-#if DEBUG
-            file.Items.Add(Item("Validate shaders", "ValidateShaders", ValidateShaders));
-#endif
 
             var tools = CreateTopLevelItem("_Tools", "Tools");
 
@@ -1032,39 +1029,6 @@ namespace GUI
         }
 
         #endregion
-
-#if DEBUG
-        private static void ValidateShaders()
-        {
-            using var progressDialog = new GenericProgressForm
-            {
-                Text = "Compiling shaders\u2026",
-            };
-            progressDialog.OnProcess = _ =>
-            {
-                var window = NativeWindowFactory.Create(new()
-                {
-                    APIVersion = ValveResourceFormat.Renderer.GLEnvironment.RequiredVersion,
-                    Flags = GLBaseControl.Flags | OpenTK.Windowing.Common.ContextFlags.Offscreen,
-                    StartVisible = false,
-                    Title = "Source 2 Viewer Shader Validator",
-                });
-
-                try
-                {
-                    window.MakeCurrent();
-                    ValveResourceFormat.Renderer.Shaders.ShaderLoader.ValidateShaders(new Progress<string>(progressDialog.SetProgress), VrfGuiContext.Logger);
-                }
-                finally
-                {
-                    NativeWindowFactory.Destroy(window);
-                }
-
-                return Task.CompletedTask;
-            };
-            progressDialog.ShowDialog();
-        }
-#endif
 
 #pragma warning disable CA1822 // Shared code calls these on Program.MainForm like on the WinForms form
         /// <summary>Runs <paramref name="action"/> on the UI thread and waits for it, like WinForms Control.Invoke.</summary>
