@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO;
 using System.Text;
 using System.Threading;
 using Avalonia.Threading;
@@ -13,6 +14,10 @@ internal sealed class ConsoleTab
     public readonly record struct LogLine(DateTime Time, Log.Category Category, string Component, string Message);
 
     private const int MaxLines = 20_000;
+
+    // The process's own output rather than Console.Out, which exporters redirect into the log while they run
+    private static readonly StreamWriter StandardOutput = new(Console.OpenStandardOutput(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { AutoFlush = true };
+    private static readonly Lock StandardOutputLock = new();
 
     private readonly ConcurrentQueue<LogLine> pending = new();
     private readonly List<LogLine> lines = [];
@@ -31,7 +36,10 @@ internal sealed class ConsoleTab
         var line = new LogLine(DateTime.Now, category, component, message);
 
         // Still useful on Linux where the app is commonly started from a terminal
-        Console.WriteLine(Format(line));
+        lock (StandardOutputLock)
+        {
+            StandardOutput.WriteLine(Format(line));
+        }
 
         pending.Enqueue(line);
 
