@@ -78,7 +78,7 @@ namespace GUI.Types.Exporter
                         fileNameForSave += "_d";
                     }
 
-                    var pickedFileName = AppFileDialogs.SaveFile("Choose where to save the file", fileNameForSave, extension, filter);
+                    var (pickedFileName, _) = await AppFileDialogs.SaveFileAsync("Choose where to save the file", fileNameForSave, extension, filter).ConfigureAwait(true);
 
                     if (pickedFileName == null)
                     {
@@ -131,7 +131,7 @@ namespace GUI.Types.Exporter
                     content.Dispose();
                 }
 
-                var saveFileName = AppFileDialogs.SaveFile("Choose where to save the file", Path.GetFileName(fileName), null, "All files (*.*)|*.*");
+                var (saveFileName, _) = await AppFileDialogs.SaveFileAsync("Choose where to save the file", Path.GetFileName(fileName), null, "All files (*.*)|*.*").ConfigureAwait(true);
 
                 if (saveFileName != null)
                 {

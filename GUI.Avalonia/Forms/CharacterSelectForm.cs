@@ -316,7 +316,6 @@ namespace GUI.Forms
             exportButton.Click += async (_, _) => await ExportAsync().ConfigureAwait(true);
 
             var cancelButton = new Button { Content = "Cancel", Width = 96, Height = 37, Margin = new(3), IsCancel = true };
-            cancelButton.Click += (_, _) => window.Close();
 
             var buttonsTable = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
             AddCell(buttonsTable, summaryLabel, 0, 0);
@@ -395,6 +394,7 @@ namespace GUI.Forms
             };
             window.Deactivated += (_, _) => RenderLoopThread.SetWindowActive(window, false);
             window.Closed += OnClosed;
+            cancelButton.Click += (_, _) => window.Close();
 
             previewTimer.Tick += (_, _) => PreviewTimer_Tick();
 
@@ -906,7 +906,7 @@ namespace GUI.Forms
         /// <summary>
         /// A small button that picks a recolor, showing the picked color, and forgets it on a right click.
         /// </summary>
-        private Button CreateColorButton(DrawingColor? color, string target, double size, Func<DrawingColor> initialColor,
+        private static Button CreateColorButton(DrawingColor? color, string target, double size, Func<DrawingColor> initialColor,
             Action<DrawingColor> picked, Action reset)
         {
             var button = new Button
@@ -2394,6 +2394,8 @@ namespace GUI.Forms
         public void Dispose()
         {
             previewTimer.Stop();
+            previewViewer?.Dispose();
+            previewViewer = null;
         }
 
         /// <summary>

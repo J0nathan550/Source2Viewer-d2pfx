@@ -85,8 +85,8 @@ namespace GUI.Types.Exporter
             {
                 var suggestedName = Path.GetFileNameWithoutExtension(paths[0]);
 
-                var pickedFileName = AppFileDialogs.SaveFile(
-                    "Choose where to save the file", suggestedName, "vmdl", "vmdl file|*.vmdl");
+                var (pickedFileName, _) = await AppFileDialogs.SaveFileAsync(
+                    "Choose where to save the file", suggestedName, "vmdl", "vmdl file|*.vmdl").ConfigureAwait(true);
 
                 if (pickedFileName == null)
                 {
@@ -101,9 +101,9 @@ namespace GUI.Types.Exporter
             }
             else
             {
-                var pickedFolder = AppFileDialogs.PickFolder(
+                var pickedFolder = await AppFileDialogs.PickFolderAsync(
                     "Choose which folder to export the custom-decompiled models to",
-                    AppFileDialogs.RememberIn.SaveDirectory);
+                    AppFileDialogs.RememberIn.SaveDirectory).ConfigureAwait(true);
 
                 if (pickedFolder == null)
                 {

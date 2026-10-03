@@ -31,7 +31,7 @@ namespace GUI
     /// The main window, laid out like the WinForms MainForm: the logo and menu bar on top, the console and
     /// file tabs, and the status bar with the window title, keybindings and version.
     /// </summary>
-    sealed class MainWindow : Window
+    sealed class MainWindow : Window, IDisposable
     {
         private const string OpenFileFilter = "Valve Resource Format (*.*_c, *.vpk)|*.*_c;*.vpk;*.vcs|All files (*.*)|*.*";
         private const string AppTitle = "Source 2 Viewer";
@@ -594,6 +594,17 @@ namespace GUI
             CloseAllTabs();
         }
 
+        protected override void OnClosed(EventArgs e)
+        {
+            base.OnClosed(e);
+            Dispose();
+        }
+
+        public void Dispose()
+        {
+            consoleTab.Dispose();
+        }
+
         private void RestoreWindowPlacement()
         {
             var config = Settings.Config;
@@ -926,9 +937,20 @@ namespace GUI
                 return;
             }
 
-            // ExtractFileFromStream disposes the stream when done
             var fileStream = File.OpenRead(exportData.VrfGuiContext.FileName);
-            await ExportFile.ExtractFileFromStream(Path.GetFileName(exportData.VrfGuiContext.FileName), fileStream, exportData.VrfGuiContext, decompile).ConfigureAwait(true);
+
+            try
+            {
+                await ExportFile.ExtractFileFromStream(Path.GetFileName(exportData.VrfGuiContext.FileName), fileStream, exportData.VrfGuiContext, decompile).ConfigureAwait(true);
+                fileStream = null; // ExtractFileFromStream disposes the stream when done
+            }
+            finally
+            {
+                if (fileStream != null)
+                {
+                    await fileStream.DisposeAsync().ConfigureAwait(true);
+                }
+            }
         }
 
         #endregion
@@ -1041,11 +1063,17 @@ namespace GUI
             // Packages of installed games get the game's icon
             if (vrfGuiContext.FileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
             {
-                var game = ExplorerControl.SteamGames.FirstOrDefault(game => vrfGuiContext.FileName.StartsWith(game.GamePath, StringComparison.OrdinalIgnoreCase));
-
-                if (game != null && AppIcons.GameIcons.TryGetValue(game.AppID, out var gameIcon))
+                foreach (var game in ExplorerControl.SteamGames)
                 {
-                    tab.SetIconImage(gameIcon);
+                    if (vrfGuiContext.FileName.StartsWith(game.GamePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (AppIcons.GameIcons.TryGetValue(game.AppID, out var gameIcon))
+                        {
+                            tab.SetIconImage(gameIcon);
+                        }
+
+                        break;
+                    }
                 }
             }
 

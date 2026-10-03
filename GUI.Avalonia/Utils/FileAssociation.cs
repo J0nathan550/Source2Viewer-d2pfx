@@ -86,6 +86,7 @@ static partial class FileAssociation
     }
 
     [LibraryImport("shell32.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [SupportedOSPlatform("windows")]
     private static partial void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
 

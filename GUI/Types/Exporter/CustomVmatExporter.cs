@@ -60,11 +60,11 @@ namespace GUI.Types.Exporter
             // each material's path from the package under the picked folder so materials do not collide.
             if (selectedItems is [{ IsFolder: false }] && entries.Count == 1)
             {
-                var pickedFileName = AppFileDialogs.SaveFile(
+                var (pickedFileName, _) = await AppFileDialogs.SaveFileAsync(
                     "Choose where to save the material",
                     Path.GetFileNameWithoutExtension(entries[0].GetFileName()),
                     "vmat",
-                    "vmat file|*.vmat");
+                    "vmat file|*.vmat").ConfigureAwait(true);
 
                 if (pickedFileName == null)
                 {
@@ -76,9 +76,9 @@ namespace GUI.Types.Exporter
             }
             else
             {
-                var pickedFolder = AppFileDialogs.PickFolder(
+                var pickedFolder = await AppFileDialogs.PickFolderAsync(
                     "Choose which folder to export the materials to",
-                    AppFileDialogs.RememberIn.SaveDirectory);
+                    AppFileDialogs.RememberIn.SaveDirectory).ConfigureAwait(true);
 
                 if (pickedFolder == null)
                 {
@@ -91,9 +91,9 @@ namespace GUI.Types.Exporter
                     Path.ChangeExtension(entry.GetFullPath(), "vmat").Replace('/', Path.DirectorySeparatorChar))))];
             }
 
-            var contentRoot = FindContentRoot(outputFolder) ?? AppFileDialogs.PickFolder(
+            var contentRoot = FindContentRoot(outputFolder) ?? await AppFileDialogs.PickFolderAsync(
                 "The export folder is not inside an addon content folder (content/<game>_addons/<addon>). " +
-                "Choose the folder that texture paths in the .vmat should be relative to");
+                "Choose the folder that texture paths in the .vmat should be relative to").ConfigureAwait(true);
 
             if (contentRoot == null)
             {

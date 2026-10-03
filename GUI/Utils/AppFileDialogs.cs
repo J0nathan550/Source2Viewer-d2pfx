@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 #pragma warning disable RS0030 // Banned API: this is where all of the winforms code lives, it will be gone when we switch UI
@@ -38,6 +39,18 @@ public static class AppFileDialogs
         }
 
         return dialog.SelectedPath;
+    }
+
+    // Code shared with the Avalonia GUI awaits the pickers there, the WinForms dialogs are modal and return right away
+    public static Task<string?> PickFolderAsync(string? title, RememberIn remember = RememberIn.None, bool updateRemembered = true)
+    {
+        return Task.FromResult(PickFolder(title, remember, updateRemembered));
+    }
+
+    public static Task<(string? Path, int FilterIndex)> SaveFileAsync(string title, string? defaultFileName, string? defaultExtension, string filter, RememberIn remember = RememberIn.SaveDirectory)
+    {
+        var path = SaveFile(title, defaultFileName, defaultExtension, filter, out var filterIndex, remember);
+        return Task.FromResult((path, filterIndex));
     }
 
     public static string? OpenFile(string? title, string? filter, RememberIn remember = RememberIn.OpenDirectory, bool updateRemembered = true)

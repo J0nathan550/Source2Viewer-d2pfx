@@ -147,7 +147,7 @@ namespace GUI.Forms
 
             if (filterKeys != null)
             {
-                filterKeyComboBox.ItemsSource = new[] { "(No filter)" }.Concat(filterKeys.Keys.Order(NumericComparer)).ToArray();
+                filterKeyComboBox.ItemsSource = filterKeys.Keys.Order(NumericComparer).Prepend("(No filter)").ToArray();
                 filterKeyComboBox.IsEnabled = true;
             }
             else
@@ -168,7 +168,7 @@ namespace GUI.Forms
                 return;
             }
 
-            filterValueComboBox.ItemsSource = new[] { "(Any value)" }.Concat(values).ToArray();
+            filterValueComboBox.ItemsSource = values.Prepend("(Any value)").ToArray();
             filterValueComboBox.SelectedIndex = 0;
             filterValueComboBox.IsVisible = true;
         }

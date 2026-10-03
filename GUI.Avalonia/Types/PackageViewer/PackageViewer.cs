@@ -362,7 +362,7 @@ namespace GUI.Types.PackageViewer
             return root;
         }
 
-        private Control CreateGridItem(ListRow? row, INameScope scope)
+        private StackPanel CreateGridItem(ListRow? row, INameScope scope)
         {
             var size = (double)Enum.GetValues<ThumbnailSizes>()[Math.Clamp(Settings.Config.PackageGridSize, 0, 4)];
             var width = Math.Max(size, 64) + 16;
