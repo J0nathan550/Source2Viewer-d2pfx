@@ -100,6 +100,9 @@ sealed class SearchableComboBox : ComboBox
         };
         popup.Opened += (_, _) => searchTextBox.Focus();
         popup.Closed += (_, _) => Focus();
+
+        // Without a parent the popup's window gets no styles or templates and shows up blank
+        LogicalChildren.Add(popup);
     }
 
     private static FuncDataTemplate<object> CreateTextTemplate(Func<object?, string> text) => new(
