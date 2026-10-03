@@ -61,7 +61,7 @@ namespace GUI.Types.PackageViewer
         private Avalonia.Controls.Slider? gridSizeSlider;
         private Border? toolbar;
         private Panel? contentHost;
-        private DataGrid? fileList;
+        private PackageListView? fileList;
         private ListBox? gridList;
         private TextBlock? gridOverflowText;
         private TabControl? previewTabs;
@@ -218,20 +218,21 @@ namespace GUI.Types.PackageViewer
 
             var tree = new TreeView { SelectionMode = SelectionMode.Multiple };
             tree.Classes.Add("explorer");
+            tree.Classes.Add("packageTree");
             tree.Items.Add(rootNode);
             tree.SelectionChanged += OnTreeSelectionChanged;
             tree.DoubleTapped += OnTreeDoubleTapped;
             tree.ContextRequested += (_, e) => OnContextRequested(tree, e);
             treeView = tree;
 
-            // Toolbar
-            backButton = new Button { Content = AppIcons.Create("NavigateBack", 20), IsEnabled = false, Width = 30 };
-            backButton.Classes.Add("flat");
+            // Toolbar, laid out like the WinForms one: two navigation buttons, the view mode and the grid size
+            backButton = new Button { Content = AppIcons.Create("NavigateBack", 24), IsEnabled = false };
+            backButton.Classes.Add("navigation");
             ToolTip.SetTip(backButton, "Back");
             backButton.Click += (_, _) => NavigateBack();
 
-            forwardButton = new Button { Content = AppIcons.Create("NavigateForward", 20), IsEnabled = false, Width = 30 };
-            forwardButton.Classes.Add("flat");
+            forwardButton = new Button { Content = AppIcons.Create("NavigateForward", 24), IsEnabled = false };
+            forwardButton.Classes.Add("navigation");
             ToolTip.SetTip(forwardButton, "Forward");
             forwardButton.Click += (_, _) => NavigateForward();
 
@@ -239,6 +240,8 @@ namespace GUI.Types.PackageViewer
 
             listRadioButton = new RadioButton { Content = "List", GroupName = "PackageView", IsChecked = !gridView, Margin = new(12, 0, 0, 0) };
             gridRadioButton = new RadioButton { Content = "Grid", GroupName = "PackageView", IsChecked = gridView };
+            listRadioButton.Classes.Add("small");
+            gridRadioButton.Classes.Add("small");
             listRadioButton.IsCheckedChanged += (_, _) => OnViewModeChanged();
 
             gridSizeSlider = new Avalonia.Controls.Slider
@@ -248,8 +251,10 @@ namespace GUI.Types.PackageViewer
                 Value = Settings.Config.PackageGridSize,
                 IsSnapToTickEnabled = true,
                 TickFrequency = 1,
+                TickPlacement = TickPlacement.BottomRight,
                 Width = 107,
                 IsEnabled = gridView,
+                HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Center,
             };
             gridSizeSlider.ValueChanged += (_, _) =>
@@ -258,40 +263,30 @@ namespace GUI.Types.PackageViewer
                 RefreshItems();
             };
 
+            var toolbarGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("36,36,60,60,170") };
+            Grid.SetColumn(forwardButton, 1);
+            Grid.SetColumn(listRadioButton, 2);
+            Grid.SetColumn(gridRadioButton, 3);
+            Grid.SetColumn(gridSizeSlider, 4);
+            toolbarGrid.Children.Add(backButton);
+            toolbarGrid.Children.Add(forwardButton);
+            toolbarGrid.Children.Add(listRadioButton);
+            toolbarGrid.Children.Add(gridRadioButton);
+            toolbarGrid.Children.Add(gridSizeSlider);
+
             toolbar = new Border
             {
                 Height = 40,
                 Padding = new(8, 0, 0, 0),
-                Child = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 6,
-                    Children = { backButton, forwardButton, listRadioButton, gridRadioButton, gridSizeSlider },
-                },
+                Child = toolbarGrid,
             };
+            toolbar.Classes.Add("packageToolbar");
 
             // List and grid
-            var list = new DataGrid
-            {
-                IsReadOnly = true,
-                CanUserSortColumns = true,
-                CanUserResizeColumns = true,
-                SelectionMode = DataGridSelectionMode.Extended,
-                GridLinesVisibility = DataGridGridLinesVisibility.None,
-                // Row height and text size of the WinForms list view
-                RowHeight = 25,
-                FontSize = 13,
-                HeadersVisibility = DataGridHeadersVisibility.Column,
-                Columns =
-                {
-                    NameColumn(),
-                    TextColumn("Size", nameof(ListRow.SizeText), nameof(ListRow.Size), 100),
-                    TextColumn("Type", nameof(ListRow.Type), nameof(ListRow.Type), 100),
-                },
-            };
-            list.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
-            list.KeyDown += OnItemsKeyDown;
-            list.ContextRequested += (_, e) => OnContextRequested(list, e);
+            var list = new PackageListView();
+            list.List.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
+            list.List.KeyDown += OnItemsKeyDown;
+            list.List.ContextRequested += (_, e) => OnContextRequested(list.List, e);
             fileList = list;
 
             var grid = new ListBox
@@ -325,8 +320,9 @@ namespace GUI.Types.PackageViewer
             right.Children.Add(toolbar);
             right.Children.Add(contentHost);
 
-            var body = new Grid { ColumnDefinitions = new ColumnDefinitions($"{SplitterWidth.ToString(CultureInfo.InvariantCulture)},5,*") };
+            var body = new Grid { ColumnDefinitions = new ColumnDefinitions($"{SplitterWidth.ToString(CultureInfo.InvariantCulture)},4,*") };
             var columnSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
+            columnSplitter.Classes.Add("packageSplitter");
             columnSplitter.DragCompleted += (_, _) => SplitterWidth = body.ColumnDefinitions[0].ActualWidth;
             Grid.SetColumn(columnSplitter, 1);
             Grid.SetColumn(right, 2);
@@ -365,50 +361,6 @@ namespace GUI.Types.PackageViewer
 
             return root;
         }
-
-        private static DataGridTemplateColumn NameColumn() => new()
-        {
-            Header = "Name",
-            SortMemberPath = nameof(ListRow.Name),
-            Width = new DataGridLength(1, DataGridLengthUnitType.Star),
-            CellTemplate = new FuncDataTemplate<ListRow>(static (_, _) => CreateNameCell(), supportsRecycling: true),
-        };
-
-        private static Control CreateNameCell()
-        {
-            var icon = AppIcons.Create("File", 18);
-            icon.VerticalAlignment = VerticalAlignment.Center;
-            var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            var cell = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 6,
-                Margin = new(6, 0),
-                Children = { icon, text },
-            };
-
-            // Cells are recycled between rows, so follow the row instead of binding once
-            cell.DataContextChanged += (_, _) =>
-            {
-                if (cell.DataContext is ListRow row)
-                {
-                    icon.IconName = row.IconName;
-                    text.Text = row.Name;
-                }
-            };
-
-            return cell;
-        }
-
-        private static DataGridTextColumn TextColumn(string header, string property, string sortProperty, double width) => new()
-        {
-            Header = header,
-#pragma warning disable IL2026 // Rows are a simple class, reflection binding is fine
-            Binding = new Avalonia.Data.Binding(property),
-#pragma warning restore IL2026
-            SortMemberPath = sortProperty,
-            Width = new DataGridLength(width),
-        };
 
         private Control CreateGridItem(ListRow? row, INameScope scope)
         {
@@ -467,7 +419,7 @@ namespace GUI.Types.PackageViewer
 
             if (grid)
             {
-                fileList.ItemsSource = null;
+                fileList.SetRows([]);
                 gridList.ItemsSource = null;
                 gridList.ItemsSource = currentRows.Count > MaxGridItems ? currentRows.Take(MaxGridItems).ToList() : currentRows;
                 gridOverflowText.IsVisible = currentRows.Count > MaxGridItems;
@@ -476,7 +428,7 @@ namespace GUI.Types.PackageViewer
             else
             {
                 gridList.ItemsSource = null;
-                fileList.ItemsSource = currentRows;
+                fileList.SetRows(currentRows);
                 gridOverflowText.IsVisible = false;
             }
         }
@@ -831,7 +783,7 @@ namespace GUI.Types.PackageViewer
 
         private List<ListRow> SelectedRows()
         {
-            var selected = IsGridMode ? gridList?.SelectedItems : fileList?.SelectedItems;
+            var selected = IsGridMode ? gridList?.SelectedItems : fileList?.List.SelectedItems;
             return selected?.OfType<ListRow>().ToList() ?? [];
         }
 

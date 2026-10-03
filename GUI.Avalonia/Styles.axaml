@@ -233,4 +233,79 @@
     <Style Selector="Ellipse.grip">
         <Setter Property="Fill" Value="{DynamicResource S2vContrastBrush}" />
     </Style>
+
+    <!-- Package browser, colored and spaced like the WinForms TreeViewWithSearchResults -->
+    <Style Selector="TreeView.packageTree">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+    </Style>
+
+    <Style Selector="GridSplitter.packageSplitter">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="MinWidth" Value="0" />
+    </Style>
+
+    <Style Selector="Border.packageToolbar">
+        <Setter Property="Background" Value="{DynamicResource S2vAppSoftBrush}" />
+    </Style>
+
+    <Style Selector="Button.navigation">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="3,4" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- Small round radio buttons, like the native WinForms ones -->
+    <Style Selector="RadioButton.small">
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Padding" Value="2,0,0,0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="RadioButton.small /template/ Ellipse#OuterEllipse, RadioButton.small /template/ Ellipse#CheckOuterEllipse">
+        <Setter Property="Width" Value="14" />
+        <Setter Property="Height" Value="14" />
+    </Style>
+
+    <Style Selector="RadioButton.small /template/ Ellipse#CheckGlyph">
+        <Setter Property="Width" Value="6" />
+        <Setter Property="Height" Value="6" />
+    </Style>
+
+    <Style Selector="ListBox.packageList">
+        <Setter Property="Background" Value="{DynamicResource S2vAppSoftBrush}" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="13" />
+    </Style>
+
+    <Style Selector="ListBox.packageList ListBoxItem">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Height" Value="25" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+    </Style>
+
+    <!-- Column headers drawn like the WinForms BetterListView: a line under them and between the columns -->
+    <Style Selector="Border.listHeader">
+        <Setter Property="Background" Value="{DynamicResource S2vAppSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Border.listHeaderCell, Border.listHeaderLastCell">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+    </Style>
+
+    <Style Selector="Border.listHeaderCell">
+        <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
+
+    <Style Selector="Border.listHeaderCell:pointerover, Border.listHeaderLastCell:pointerover">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+    </Style>
 </Styles>
