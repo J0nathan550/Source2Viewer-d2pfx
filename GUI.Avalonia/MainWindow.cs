@@ -112,9 +112,10 @@ namespace GUI
 
         private DockPanel CreateTopBar()
         {
+            // Placed like the WinForms logo and menu strip, which sit above the middle of the bar
             var logo = AppIcons.Create("Logo", 32);
-            logo.Margin = new(4, 8);
-            logo.VerticalAlignment = VerticalAlignment.Center;
+            logo.Margin = new(4, 2, 4, 0);
+            logo.VerticalAlignment = VerticalAlignment.Top;
             logo.Cursor = new Cursor(StandardCursorType.Hand);
             logo.PointerReleased += (_, e) =>
             {
@@ -126,10 +127,14 @@ namespace GUI
 
             var menu = CreateMenu();
             menu.Classes.Add("main");
-            menu.VerticalAlignment = VerticalAlignment.Center;
+            menu.VerticalAlignment = VerticalAlignment.Top;
             menu.HorizontalAlignment = HorizontalAlignment.Left;
+            menu.ItemsPanel = new FuncTemplate<Panel?>(static () => new MenuStripPanel());
 
-            var topBar = new DockPanel { Height = Themer.MainTitleBarHeight, Margin = new(0, 0, 0, 4) };
+            // Keep clear of the window buttons drawn over the right end of the bar
+            menu.Margin = new(0, 4, ExtendClientAreaToDecorationsHint ? 3 * 45 + 2 * 2 : 0, 0);
+
+            var topBar = new DockPanel { Height = Themer.MainTitleBarHeight };
             topBar.Classes.Add("topBar");
             DockPanel.SetDock(logo, Dock.Left);
             topBar.Children.Add(logo);

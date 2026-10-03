@@ -276,3 +276,46 @@ sealed class TabCloseButton : Control
         }
     }
 }
+
+/// <summary>
+/// Lays out menu bar items in a row and leaves out the ones that no longer fit, like a WinForms menu strip,
+/// instead of drawing them under whatever is next to the menu.
+/// </summary>
+sealed class MenuStripPanel : Panel
+{
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var width = 0.0;
+        var height = 0.0;
+
+        foreach (var child in Children)
+        {
+            child.Measure(new Size(double.PositiveInfinity, availableSize.Height));
+
+            if (width + child.DesiredSize.Width <= availableSize.Width)
+            {
+                width += child.DesiredSize.Width;
+                height = Math.Max(height, child.DesiredSize.Height);
+            }
+        }
+
+        return new Size(width, height);
+    }
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        var x = 0.0;
+        var full = false;
+
+        foreach (var child in Children)
+        {
+            var width = child.DesiredSize.Width;
+            full |= x + width > finalSize.Width;
+
+            child.Arrange(full ? default : new Rect(x, 0, width, finalSize.Height));
+            x += width;
+        }
+
+        return finalSize;
+    }
+}

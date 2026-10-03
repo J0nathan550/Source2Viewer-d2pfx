@@ -249,12 +249,10 @@ namespace GUI.Utils
             SetBrush("MenuFlyoutSubItemBackgroundPointerOver", ToColor(colors.HoverAccent));
             SetBrush("MenuFlyoutSubItemBackgroundSubMenuOpened", ToColor(colors.HoverAccent));
 
-            // Window buttons drawn into the extended title bar, sized and colored like the WinForms ControlsBoxPanel
+            // Window buttons drawn into the extended title bar, colored like the WinForms ControlsBoxPanel
             SetBrush("CaptionButtonBackground", ToColor(colors.ControlBoxHighlight));
             SetBrush("CaptionButtonBorderBrush", ToColor(colors.Border));
             SetBrush("CaptionButtonForeground", ToColor(colors.Contrast));
-            resources["CaptionButtonWidth"] = 50d;
-            resources["CaptionButtonHeight"] = (double)MainTitleBarHeight;
 
             SetBrush("TreeViewItemBackgroundPointerOver", ToColor(colors.HoverAccent, 0x66));
             SetBrush("TreeViewItemBackgroundSelected", ToColor(colors.HoverAccent));
