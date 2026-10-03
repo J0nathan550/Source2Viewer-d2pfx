@@ -14,6 +14,10 @@ The Icons tab lists the hero's portrait, minimap icon, ability icons and the sho
 
 With "Replace default assets" on, the export also writes the chosen look over the hero's default files, so it shows without the items equipped. The arcana or persona model is written as the hero's base model (e.g. `models/heroes/earthshaker/earthshaker.vmdl`) with the chosen style's skin as its default. Chosen items and their refits are written over the default items' models, and items that dress a unit the hero creates are written over that unit's model. Every model the hero wears gets the body group choices the equipped items set, like the "arcana" body group the arcana level switches, and the meshes of the other choices are removed from it. That way a style 2 arcana shows its style 2 meshes, and the parts it hides on other items, like Earthshaker's saddle, stay hidden. Items without a default model to be written over, like a head for a hero without a default head, and the extra models items add, have their meshes added to the hero's base model. Particles the items swap in are written over the ones they replace, and particles the items create are added to the models as model particles. Particles every hero uses, like the blink dagger or stun effects, are only replaced when you also tick "Also shared particles".
 
+## Downloads
+
+Every release has the Windows build (`gui-windows-x64.zip`) and a cross-platform build of the same viewer for Windows (`gui-avalonia-windows-x64.zip`) and Linux (`gui-avalonia-linux-x64.zip`), which has all of the tools above. Both builds check for updates and install them from the About dialog, after verifying that the download was built by this repository's release workflow.
+
 ## Credits
 
 - [Source 2 Viewer / ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat) and its original authors and contributors, whose work this fork is built entirely on top of.
