@@ -70,6 +70,13 @@ sealed class MainBottomPanel : Border
 
     public void RefreshUpdateState()
     {
+        if (UpdateInstaller.InstalledVersionText != null)
+        {
+            updateButton.Content = "Restart to update";
+            updateButton.IsVisible = true;
+            return;
+        }
+
         updateButton.Content = "Update Available";
         updateButton.IsVisible = Settings.Config.Update.CheckAutomatically && Settings.Config.Update.UpdateAvailable;
     }

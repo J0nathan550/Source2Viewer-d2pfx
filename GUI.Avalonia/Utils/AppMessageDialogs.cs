@@ -46,6 +46,15 @@ public static class AppMessageDialogs
     }
 
     /// <summary>
+    /// Asks to confirm something with buttons that say what each choice does, like the WinForms task dialogs.
+    /// </summary>
+    public static async Task<bool> ConfirmAsync(string message, string title, string confirmText, string cancelText, MessageIcon icon = MessageIcon.Question)
+    {
+        var result = await ShowAsync(message, title, icon, [(confirmText, true), (cancelText, false)]).ConfigureAwait(true);
+        return result == true;
+    }
+
+    /// <summary>
     /// Asks a yes or no question that can also be cancelled.
     /// </summary>
     /// <returns><see langword="null"/> when cancelled.</returns>

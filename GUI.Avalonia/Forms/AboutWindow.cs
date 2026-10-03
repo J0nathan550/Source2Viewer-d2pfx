@@ -92,7 +92,7 @@ namespace GUI.Forms
             AddCell(versionGrid, newVersionLabel, 1, 1);
 
             downloadButton = new Button { Content = "Download new version", HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = false };
-            downloadButton.Click += (_, _) => OpenUrl(UpdateChecker.ReleaseNotesUrl ?? $"https://github.com/{UpdateChecker.Repository}/releases");
+            downloadButton.Click += (_, _) => OnDownloadButtonClick();
 
             viewReleaseNotesButton = new Button { Content = "View release notes", HorizontalAlignment = HorizontalAlignment.Stretch };
             viewReleaseNotesButton.Click += (_, _) => OpenUrl(UpdateChecker.ReleaseNotesUrl ?? $"https://github.com/{UpdateChecker.Repository}/releases");
@@ -180,9 +180,21 @@ namespace GUI.Forms
                 return;
             }
 
+            OnUpdateChecked();
+        }
+
+        private void OnUpdateChecked()
+        {
+            var installed = UpdateInstaller.InstalledVersionText;
             var newVersion = UpdateChecker.NewVersionText;
 
-            if (UpdateChecker.IsNewVersionAvailable)
+            if (installed != null)
+            {
+                newVersionLabel.Text = $"{installed} (installed)";
+                downloadButton.Content = "Restart to update";
+                downloadButton.IsEnabled = true;
+            }
+            else if (UpdateChecker.IsNewVersionAvailable)
             {
                 newVersionLabel.Text = newVersion;
                 downloadButton.Content = UpdateChecker.IsNewer
@@ -197,9 +209,43 @@ namespace GUI.Forms
                 downloadButton.IsEnabled = false;
             }
 
+            // Switching channels would not change what the pending restart installs
+            updateChannelComboBox.IsEnabled = installed == null;
+
             if (!string.IsNullOrEmpty(UpdateChecker.ReleaseNotesUrl))
             {
                 viewReleaseNotesButton.Content = $"View release notes for {UpdateChecker.ReleaseNotesVersion}";
+            }
+        }
+
+        private async void OnDownloadButtonClick()
+        {
+            if (UpdateInstaller.InstalledVersionText != null)
+            {
+                UpdateInstaller.Restart();
+                return;
+            }
+
+            // Builds that can not replace themselves, and platforms without a download, get the release page instead
+            if (!UpdateInstaller.CanInstall || UpdateChecker.DownloadUrl == null)
+            {
+                OpenUrl(UpdateChecker.ReleaseNotesUrl ?? $"https://github.com/{UpdateChecker.Repository}/releases");
+                return;
+            }
+
+            downloadButton.IsEnabled = false;
+
+            try
+            {
+                await UpdateInstaller.InstallAsync(this).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                Program.ShowError(ex);
+            }
+            finally
+            {
+                OnUpdateChecked();
             }
         }
 

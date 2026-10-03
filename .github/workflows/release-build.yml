@@ -157,9 +157,56 @@ jobs:
           GUI/bin/Release/win-x64/publish
           !**/*.pdb
 
+  gui-avalonia:
+    name: Avalonia GUI (${{ matrix.rid }})
+    needs: version
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: windows-latest
+          rid: win-x64
+          artifact: gui-avalonia-windows-x64
+          executable: Source2Viewer.Avalonia.exe
+        - os: ubuntu-latest
+          rid: linux-x64
+          artifact: gui-avalonia-linux-x64
+          executable: Source2Viewer.Avalonia
+
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup-dotnet-cache
+
+    # A single executable, which is what the in-app updater downloads and swaps in place
+    - name: Publish Avalonia GUI
+      run: dotnet publish --configuration Release --self-contained --runtime ${{ matrix.rid }} ${{ env.SKIP_ANALYSIS }} ${{ env.PUBLISH_ARGS }} -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:ProjectVersion=${{ needs.version.outputs.version }} -p:ProjectBuildNumber=${{ needs.version.outputs.build }} GUI.Avalonia/GUI.Avalonia.csproj
+
+    # The in-app updater only installs an executable whose hash this workflow attested,
+    # on master for dev builds and on the release tag for stable builds
+    - name: Attest build provenance
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: GUI.Avalonia/bin/Release/${{ matrix.rid }}/publish/${{ matrix.executable }}
+
+    - name: Upload Avalonia GUI artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.artifact }}
+        path: |
+          GUI.Avalonia/bin/Release/${{ matrix.rid }}/publish
+          !**/*.pdb
+
   release:
     name: Create release
-    needs: [version, cli, gui]
+    needs: [version, cli, gui, gui-avalonia]
     runs-on: ubuntu-latest
 
     permissions:
@@ -178,9 +225,14 @@ jobs:
         chmod +x artifacts/cli-linux-x64/Source2Viewer-CLI
         zip -9j release/cli-windows-x64.zip artifacts/cli-windows-x64/*
         zip -9j release/cli-linux-x64.zip artifacts/cli-linux-x64/*
+        chmod +x artifacts/gui-avalonia-linux-x64/Source2Viewer.Avalonia
         zip -9j release/gui-windows-x64.zip artifacts/gui-windows-x64/*
+        zip -9j release/gui-avalonia-windows-x64.zip artifacts/gui-avalonia-windows-x64/*
+        zip -9j release/gui-avalonia-linux-x64.zip artifacts/gui-avalonia-linux-x64/*
         # The in-app updater downloads the bare executable and swaps it in place
         cp artifacts/gui-windows-x64/Source2Viewer.exe release/Source2Viewer.exe
+        cp artifacts/gui-avalonia-windows-x64/Source2Viewer.Avalonia.exe release/Source2Viewer.Avalonia.exe
+        cp artifacts/gui-avalonia-linux-x64/Source2Viewer.Avalonia release/Source2Viewer.Avalonia-linux-x64
 
     # latest.json is what the in-app updater reads, from whichever release is the latest one.
     # It describes both channels, so the entry for the other channel is carried over from the
@@ -201,19 +253,33 @@ jobs:
           echo '{}' > previous.json
         fi
 
-        exe=release/Source2Viewer.exe
-        asset=$(jq -n \
-          --arg name "Source2Viewer.exe" \
-          --arg url "https://github.com/$REPOSITORY/releases/download/$TAG/Source2Viewer.exe" \
-          --argjson size "$(stat -c %s "$exe")" \
-          --arg sha256 "$(sha256sum "$exe" | cut -d ' ' -f 1)" \
-          '{"win-x64": {name: $name, url: $url, size: $size, sha256: $sha256}}')
+        # Each GUI build is found by the key it asks for: the WinForms GUI by its runtime identifier,
+        # the Avalonia GUI by its runtime identifier prefixed with "avalonia-"
+        asset() {
+          local key=$1 file=$2
+          local name
+          name=$(basename "$file")
+
+          jq -n \
+            --arg key "$key" \
+            --arg name "$name" \
+            --arg url "https://github.com/$REPOSITORY/releases/download/$TAG/$name" \
+            --argjson size "$(stat -c %s "$file")" \
+            --arg sha256 "$(sha256sum "$file" | cut -d ' ' -f 1)" \
+            '{($key): {name: $name, url: $url, size: $size, sha256: $sha256}}'
+        }
+
+        assets=$({
+          asset win-x64 release/Source2Viewer.exe
+          asset avalonia-win-x64 release/Source2Viewer.Avalonia.exe
+          asset avalonia-linux-x64 release/Source2Viewer.Avalonia-linux-x64
+        } | jq -s 'add')
 
         if [[ "$REF_TYPE" == "tag" ]]; then
-          jq --arg version "$VERSION" --arg tag "$TAG" --arg notes "https://github.com/$REPOSITORY/releases/tag/$TAG" --argjson assets "$asset" \
+          jq --arg version "$VERSION" --arg tag "$TAG" --arg notes "https://github.com/$REPOSITORY/releases/tag/$TAG" --argjson assets "$assets" \
             '.stable = {version: $version, tag: $tag, releaseNotesUrl: $notes, assets: $assets}' previous.json > release/latest.json
         elif [[ "$REF" == "refs/heads/master" ]]; then
-          jq --arg version "$VERSION" --argjson build "$BUILD" --argjson assets "$asset" \
+          jq --arg version "$VERSION" --argjson build "$BUILD" --argjson assets "$assets" \
             '.dev = {version: $version, buildNumber: $build, assets: $assets}' previous.json > release/latest.json
         else
           # The updater only accepts dev builds attested on master

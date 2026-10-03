@@ -111,6 +111,12 @@ static partial class UpdateChecker
     public static string? ProvenanceRef { get; private set; }
 
     /// <summary>
+    /// The manifest's download for this build, its runtime identifier by default (e.g. "win-x64"). Front-ends that
+    /// share the releases with another one use a key of their own.
+    /// </summary>
+    public static string AssetKey { get; set; } = RuntimeInformation.RuntimeIdentifier;
+
+    /// <summary>
     /// The newest dev build known from this session's check, if it is newer than the running build, regardless of the selected channel.
     /// Never performs a request, so it is safe to consult from error handlers.
     /// </summary>
@@ -280,7 +286,7 @@ static partial class UpdateChecker
         IsNewVersionAvailable = IsNewer || (NewVersion != null && channel != Program.BuildChannel);
         NewVersionText = NewVersion == null ? "Not available" : IsNewVersionStableBuild ? NewVersion : $"dev build {NewVersion}";
 
-        var asset = assets?.GetValueOrDefault(RuntimeInformation.RuntimeIdentifier);
+        var asset = assets?.GetValueOrDefault(AssetKey);
 
         // The file is verified after download, but the request itself should not go out in the clear either
         DownloadUrl = asset?.Url?.StartsWith("https://", StringComparison.Ordinal) == true ? asset.Url : null;

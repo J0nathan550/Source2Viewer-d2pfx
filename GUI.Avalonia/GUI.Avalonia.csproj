@@ -30,6 +30,8 @@
     <PackageReference Include="NLayer" Version="3.0.0" />
     <PackageReference Include="NLayer.NAudioSupport" Version="3.0.0" />
     <PackageReference Include="OpenTK" Version="4.9.4" />
+    <!-- Verifies the build provenance of downloaded updates, like the WinForms GUI -->
+    <PackageReference Include="Sigstore" Version="1.0.1" />
     <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
     <PackageReference Include="Svg.Skia" Version="5.2.3" />

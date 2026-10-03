@@ -37,6 +37,13 @@ namespace GUI
         [STAThread]
         internal static int Main(string[] args)
         {
+            // The updater asks a downloaded build for its version, executables have no version resource outside of Windows
+            if (args is [UpdateInstaller.VersionArgument])
+            {
+                Console.WriteLine(Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version);
+                return 0;
+            }
+
             AppDomain.CurrentDomain.UnhandledException += UnhandledException;
 
 #if DEBUG
@@ -57,6 +64,10 @@ namespace GUI
             DisplayVersion = FormatDisplayVersion(ProductVersion);
 
             StartupFiles = args;
+
+            // The releases also carry the WinForms GUI, which is the plain "win-x64" download
+            UpdateChecker.AssetKey = $"avalonia-{RuntimeInformation.RuntimeIdentifier}";
+            UpdateInstaller.CleanupPreviousInstall();
 
             Settings.Load();
 
