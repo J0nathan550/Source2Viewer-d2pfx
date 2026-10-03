@@ -112,7 +112,7 @@ namespace GUI.Controls
             var maxTextureSize = Numeric(config.MaxTextureSize, 16, 10240, 64, v => config.MaxTextureSize = (int)v);
 
             var sensitivityValue = new TextBlock();
-            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 5, height: 45, sensitivityValue, v =>
+            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 5, height: 32, sensitivityValue, v =>
             {
                 config.MouseSensitivity = (float)(v / 10);
                 return config.MouseSensitivity.ToString("0.0", CultureInfo.InvariantCulture);
@@ -154,7 +154,7 @@ namespace GUI.Controls
 
             // Audio
             var volumeValue = new TextBlock();
-            var volume = Slider(MathF.Round(Math.Clamp(config.Volume, 0, 1) * 100), 100, tickFrequency: 0, height: 28, volumeValue, v =>
+            var volume = Slider(MathF.Round(Math.Clamp(config.Volume, 0, 1) * 100), 100, tickFrequency: 0, height: 32, volumeValue, v =>
             {
                 config.Volume = (float)(v / 100);
                 return string.Create(CultureInfo.InvariantCulture, $"{(int)v}%");
@@ -237,17 +237,32 @@ namespace GUI.Controls
         }
 
         /// <summary>
-        /// A group box of the given height in WinForms, with its controls placed at their WinForms designer positions.
+        /// A group box of the given height in WinForms, with its controls where the WinForms designer puts them. Controls
+        /// of the same row, which WinForms places a few pixels apart, are centered on one line so they sit straight.
         /// </summary>
         private static Grid CanvasGroup(string title, double height, params (Control Control, double X, double Y)[] items)
         {
-            var canvas = new Canvas { Height = height - GroupTitleOffset - 2 };
+            const double RowHeight = 34;
+            const double SameRowDistance = 10;
 
-            foreach (var (control, x, y) in items)
+            var canvas = new Canvas { Height = height - GroupTitleOffset - 2 };
+            var rowTops = new List<double>();
+
+            foreach (var (control, x, y) in items.OrderBy(static item => item.Y))
             {
-                Canvas.SetLeft(control, x);
-                Canvas.SetTop(control, y - GroupTitleOffset);
-                canvas.Children.Add(control);
+                var rowTop = rowTops.Count > 0 && y - rowTops[^1] <= SameRowDistance ? rowTops[^1] : y;
+
+                if (rowTops.Count == 0 || rowTops[^1] != rowTop)
+                {
+                    rowTops.Add(rowTop);
+                }
+
+                control.VerticalAlignment = VerticalAlignment.Center;
+
+                var cell = new Panel { Height = Math.Max(RowHeight, double.IsNaN(control.Height) ? 0 : control.Height), Children = { control } };
+                Canvas.SetLeft(cell, x);
+                Canvas.SetTop(cell, rowTop - GroupTitleOffset - 6);
+                canvas.Children.Add(cell);
             }
 
             return GroupBox.Create(title, canvas, new Avalonia.Thickness(0));
