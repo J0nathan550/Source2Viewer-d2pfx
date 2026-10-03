@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using GUI.Controls;
@@ -57,7 +58,7 @@ namespace GUI.Forms
             links.Children.Add(LinkButton("_Discord", () => OpenUrl("https://discord.com/invite/PBvG8D9MxT")));
             links.Children.Add(LinkButton("_Licenses", ShowLicenses));
 
-            var creditsGroup = GroupBox.Create("Source2Viewer d2pfx", new StackPanel { Children = { credits, links } });
+            var creditsGroup = Controls.GroupBox.Create("Source2Viewer d2pfx", new StackPanel { Children = { credits, links } });
 
             var logo = AppIcons.Create("Logo", 148);
             logo.Margin = new(16, 0, 0, 0);
@@ -133,7 +134,7 @@ namespace GUI.Forms
             updateRow.Children.Add(channel);
             updateRow.Children.Add(checkForUpdates);
 
-            var versionGroup = GroupBox.Create("Version", new StackPanel { Children = { versionGrid, buttons, updateRow } });
+            var versionGroup = Controls.GroupBox.Create("Version", new StackPanel { Children = { versionGrid, buttons, updateRow } });
 
             Content = new StackPanel
             {

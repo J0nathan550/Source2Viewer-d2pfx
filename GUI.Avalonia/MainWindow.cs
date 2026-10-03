@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AvaloniaEdit;
@@ -452,14 +453,14 @@ namespace GUI
         {
             windowTitle = string.IsNullOrEmpty(toolTipText) ? AppTitle : $"{AppTitle} - {toolTipText}";
             Title = windowTitle;
-            bottomPanel.Text = windowTitle;
+            bottomPanel?.Text = windowTitle;
         }
 
         /// <summary>Shows the title and keybindings of the selected tab, after a package preview stops being shown.</summary>
         public void ShowSelectedTabStatus()
         {
             UpdateWindowTitle(SelectedTab?.ToolTipText);
-            bottomPanel.UpdateKeybindings(KeybindingRegistry.GetKeybindingsForViewer(KeybindingRegistry.GetViewerTypeFromTab(SelectedTab)));
+            bottomPanel?.UpdateKeybindings(KeybindingRegistry.GetKeybindingsForViewer(KeybindingRegistry.GetViewerTypeFromTab(SelectedTab)));
         }
 
         /// <summary>Shows the title and keybindings of a file previewed inside a package.</summary>
