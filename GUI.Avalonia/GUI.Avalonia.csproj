@@ -96,6 +96,17 @@
     <Compile Include="..\GUI\Types\Exporter\CubemapCrossLayout.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\Exporter\CustomVmatExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\Exporter\CustomVmdlExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\CharacterAssetsExporter.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\CharacterDependencyCollector.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\CharacterExportPreferences.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\CharacterIcons.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\CharacterLoadout.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\CharacterSounds.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\ItemsGameCatalog.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\ItemsGameEditor.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\ModelDocEditor.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\VmatTextureRecolorer.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CharacterAssets\VpcfColorEditor.cs" Link="Shared\Types\Exporter\CharacterAssets\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\IBetterBaseItem.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\NavigationHistory.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\PackageContentSearch.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
@@ -117,6 +128,7 @@
   <ItemGroup>
     <Compile Include="..\GUI\Types\GLViewers\GLAnimationViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\GLViewers\GLBombDamageViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\GLViewers\GLCharacterPreviewViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\GLViewers\GLFWSurface.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\GLViewers\GLLockScope.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\GLViewers\GLMeshViewer.cs" Link="Shared\Types\GLViewers\%(Filename)%(Extension)" />

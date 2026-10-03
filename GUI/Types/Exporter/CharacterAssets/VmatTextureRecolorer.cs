@@ -152,6 +152,11 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public static Color LoadLastColor()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return Color.Red;
+            }
+
             try
             {
                 using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Source2Viewer");
@@ -171,6 +176,11 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public static void SaveLastColor(Color color)
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             try
             {
                 using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Source2Viewer");

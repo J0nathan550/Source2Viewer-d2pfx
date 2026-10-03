@@ -9,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Forms;
-using GUI.Types.PackageViewer;
 using GUI.Utils;
 using ValvePak;
 using ValveResourceFormat;
@@ -26,30 +25,13 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// so they recompile as is, everything else through the built-in decompiler. Icons go into its game folder as the
     /// compiled images the game has, renamed over the hero's own.
     /// </summary>
-    static class CharacterAssetsExporter
+    static partial class CharacterAssetsExporter
     {
         /// <summary>
         /// Whether the package has the items_game.txt and hero scripts an export is read from.
         /// </summary>
         public static bool CanExport(VrfGuiContext? context)
             => context?.CurrentPackage is { } package && ItemsGameCatalog.IsAvailable(package);
-
-        public static bool CanExport(Control? owner) => CanExport(GetContext(owner));
-
-        public static async Task ExportFromContextMenu(object sender)
-        {
-            if (sender is not ToolStripMenuItem { Owner: ContextMenuStrip { SourceControl: var owner } })
-            {
-                throw new InvalidDataException("Invalid context menu structure");
-            }
-
-            var context = GetContext(owner);
-
-            if (context != null)
-            {
-                await ExportAsync(context).ConfigureAwait(true);
-            }
-        }
 
         /// <summary>
         /// Asks for a hero and its items from the context's package, then exports them.
@@ -140,13 +122,6 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             return string.Join(Path.DirectorySeparatorChar, parts);
         }
-
-        private static VrfGuiContext? GetContext(Control? owner) => owner switch
-        {
-            BetterTreeView tree => tree.VrfGuiContext,
-            BetterListView listView => listView.VrfGuiContext,
-            _ => null,
-        };
 
         private static async Task<ItemsGameCatalog?> LoadCatalogAsync(Package package)
         {

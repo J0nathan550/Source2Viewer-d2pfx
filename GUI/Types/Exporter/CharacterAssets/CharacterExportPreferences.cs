@@ -22,6 +22,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>The loadout last picked for each hero, by hero name.</summary>
         public Dictionary<string, SavedLoadout> Loadouts { get; set; } = [];
 
+        /// <summary>The recolor picked for each of a hero's slots as ARGB, by hero name and then slot name.</summary>
+        public Dictionary<string, Dictionary<string, int>> HeroColors { get; set; } = [];
+
+        /// <summary>The last recolor picked as ARGB, offered first for slots without one.</summary>
+        public int? LastColor { get; set; }
+
         private static string FilePath => Path.Combine(Settings.SettingsFolder, FileName);
 
         /// <summary>
@@ -38,6 +44,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     if (JsonSerializer.Deserialize(stream, CharacterExportPreferencesContext.Default.CharacterExportPreferences) is { } preferences)
                     {
                         preferences.Loadouts ??= [];
+                        preferences.HeroColors ??= [];
                         return preferences;
                     }
                 }

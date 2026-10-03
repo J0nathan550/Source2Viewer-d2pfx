@@ -18,6 +18,7 @@ using AvaloniaEdit;
 using GUI.Controls;
 using GUI.Forms;
 using GUI.Types.Exporter;
+using GUI.Types.Exporter.CharacterAssets;
 using GUI.Types.GLViewers;
 using GUI.Types.Viewers;
 using GUI.Utils;
@@ -235,19 +236,12 @@ namespace GUI
 
             var tools = CreateTopLevelItem("_Tools", "Tools");
 
-            // These tools are WinForms dialogs that have not been ported yet
-            foreach (var (header, icon) in new[]
-            {
-                ("Export character assets (items_game.txt)...", "Decompile"),
-                ("VTEX Create", "AssetTypes.tex"),
-                ("Particles recolor", "AssetTypes.pcf"),
-            })
-            {
-                var item = new MenuItem { Header = header, Icon = AppIcons.Create(icon), IsEnabled = false };
-                ToolTip.SetTip(item, "Not available in the cross-platform build yet.");
-                ToolTip.SetShowOnDisabled(item, true);
-                tools.Items.Add(item);
-            }
+            var exportCharacterAssets = Item("Export character assets (items_game.txt)...", "Decompile", () => RunTool(ExportCharacterAssetsAsync));
+            ToolTip.SetShowOnDisabled(exportCharacterAssets, true);
+            tools.Items.Add(exportCharacterAssets);
+
+            tools.SubmenuOpened += (_, _) => UpdatePackageToolItem(exportCharacterAssets, CharacterAssetsExporter.CanExport,
+                $"Open Dota 2's pak01_dir.vpk, or another package with {ItemsGameCatalog.ItemsGamePath}, to export characters.");
 
             return new Menu
             {
@@ -262,6 +256,79 @@ namespace GUI
                 },
             };
         }
+
+        #region Tools
+
+        /// <summary>Runs a tool, reporting what it throws like an unhandled error.</summary>
+        private static async void RunTool(Func<Task> tool)
+        {
+            try
+            {
+                await tool().ConfigureAwait(true);
+            }
+            catch (Exception e)
+            {
+                Program.ShowError(e);
+            }
+        }
+
+        private async Task ExportCharacterAssetsAsync()
+        {
+            var context = FindPackageForTool(CharacterAssetsExporter.CanExport);
+
+            if (context != null)
+            {
+                await CharacterAssetsExporter.ExportAsync(context).ConfigureAwait(true);
+            }
+        }
+
+        /// <summary>
+        /// Enables a tool's menu item only when an open package has what the tool reads, and says in its tooltip
+        /// which package it will use or what to open to use it.
+        /// </summary>
+        private void UpdatePackageToolItem(MenuItem item, Func<VrfGuiContext, bool> canRun, string unavailableHint)
+        {
+            var context = FindPackageForTool(canRun);
+
+            item.IsEnabled = context != null;
+            ToolTip.SetTip(item, context != null ? $"Uses {Path.GetFileName(context.FileName)}" : unavailableHint);
+        }
+
+        /// <summary>
+        /// The package a tool runs on: the selected tab's one when it can, otherwise the first open one that can.
+        /// </summary>
+        private VrfGuiContext? FindPackageForTool(Func<VrfGuiContext, bool> canRun)
+        {
+            var tabs = mainTabs.Items.OfType<DocumentTab>().OrderByDescending(tab => tab == SelectedTab);
+
+            foreach (var tab in tabs)
+            {
+                if (tab.ExportData?.DisposableContents is Types.PackageViewer.PackageViewer { VrfGuiContext: var context } && canRun(context))
+                {
+                    return context;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Asks the viewer shown in the selected tab for a new frame, after a dialog with a viewer of its own took the
+        /// render loop over.
+        /// </summary>
+        public void InvalidateVisibleViewer()
+        {
+            foreach (var viewport in this.GetVisualDescendants().OfType<GLViewport>())
+            {
+                if (viewport.IsShown && viewport.IsEffectivelyVisible)
+                {
+                    viewport.Invalidate();
+                    return;
+                }
+            }
+        }
+
+        #endregion
 
         private void AddKeyBindings()
         {

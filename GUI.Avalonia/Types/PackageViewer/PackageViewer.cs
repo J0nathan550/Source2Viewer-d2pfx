@@ -17,6 +17,7 @@ using Avalonia.VisualTree;
 using GUI.Controls;
 using GUI.Forms;
 using GUI.Types.Exporter;
+using GUI.Types.Exporter.CharacterAssets;
 using GUI.Types.PackageViewer.ThumbnailRenderers;
 using GUI.Types.Viewers;
 using GUI.Utils;
@@ -955,6 +956,11 @@ namespace GUI.Types.PackageViewer
             if (ContextMenuSelection.ContainsFileType(items, CustomVmatExporter.MaterialTypeName))
             {
                 Item("Decompile & export (custom VMAT extractor)", "Decompile", () => RunAsync(() => CustomVmatExporter.ExtractAsync(vrfGuiContext, items)));
+            }
+
+            if (isRoot && CharacterAssetsExporter.CanExport(vrfGuiContext))
+            {
+                Item("Export character assets (items_game.txt)...", "Decompile", () => RunAsync(() => CharacterAssetsExporter.ExportAsync(vrfGuiContext)));
             }
 
             menu.Items.Add(new Separator());

@@ -193,4 +193,36 @@
     <Style Selector="WindowDrawnDecorations:has-fullscreen /template/ Button#PART_FullScreenButton">
         <Setter Property="IsVisible" Value="False" />
     </Style>
+
+    <!-- Searchable combo box: a search box over the list of items, in a popup -->
+    <Style Selector="Border.searchPopup">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="Border.searchHeader">
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="ListBox.searchList">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <Style Selector="ListBox.searchList ListBoxItem">
+        <Setter Property="Height" Value="24" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="6,0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <!-- Divider between a preview and its controls, with a grip in its middle to show it can be dragged -->
+    <Style Selector="Border.gripLine">
+        <Setter Property="Background" Value="{DynamicResource S2vBorderBrush}" />
+    </Style>
+
+    <Style Selector="Ellipse.grip">
+        <Setter Property="Fill" Value="{DynamicResource S2vContrastBrush}" />
+    </Style>
 </Styles>
