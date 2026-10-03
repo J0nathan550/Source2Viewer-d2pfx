@@ -36,6 +36,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CustomVmdlExtractor\VmdlExtractor\VmdlExtractor.csproj" />
     <ProjectReference Include="..\Renderer\Renderer.csproj" />
     <ProjectReference Include="..\ValveResourceFormat\ValveResourceFormat.csproj" />
   </ItemGroup>
@@ -91,6 +92,10 @@
     <Compile Include="..\GUI\Types\Exporter\ExportData.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\Exporter\ExportFile.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\Exporter\PackageExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\ContextMenuSelection.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CubemapCrossLayout.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CustomVmatExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\CustomVmdlExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\IBetterBaseItem.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\NavigationHistory.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\PackageContentSearch.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />

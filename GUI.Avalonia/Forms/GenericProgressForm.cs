@@ -121,6 +121,15 @@ namespace GUI.Forms
             return System.Windows.Forms.DialogResult.OK;
         }
 
+        /// <summary>Shows the dialog modally over <paramref name="owner"/>, or the active window, completing once it closed.</summary>
+        public async Task<System.Windows.Forms.DialogResult> ShowDialogAsync(Window? owner = null)
+        {
+            owner ??= AppMessageDialogs.GetOwner() ?? throw new InvalidOperationException("Progress dialog needs an owner window");
+
+            await window.ShowDialog(owner).ConfigureAwait(true);
+            return System.Windows.Forms.DialogResult.OK;
+        }
+
         private void ApplyPendingUpdate()
         {
             if (closed)

@@ -2,7 +2,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using GUI.Forms;
 using GUI.Types.PackageViewer;
 using GUI.Utils;
@@ -19,7 +18,7 @@ namespace GUI.Types.Exporter
     /// addon relative path instead of the game path it was compiled from, and cubemaps are written as a single
     /// cross image instead of one image per face.
     /// </summary>
-    static class CustomVmatExporter
+    static partial class CustomVmatExporter
     {
         public const string MaterialTypeName = "vmat_c";
 
@@ -27,20 +26,11 @@ namespace GUI.Types.Exporter
         private static readonly string[] CubemapFaceSuffixes = ["rt", "lf", "bk", "ft", "up", "dn"];
         private static readonly string[] CubemapFaceExtensions = [".png", ".exr"];
 
-        public static async Task ExtractSelection(object sender)
+        /// <summary>
+        /// Exports the materials in the package viewer's selection, recursing into selected folders.
+        /// </summary>
+        public static async Task ExtractAsync(VrfGuiContext? context, List<IBetterBaseItem> selectedItems)
         {
-            if (sender is not ToolStripMenuItem { Owner: ContextMenuStrip { SourceControl: var owner } })
-            {
-                throw new InvalidDataException("Invalid context menu structure");
-            }
-
-            var context = owner switch
-            {
-                BetterTreeView tree => tree.VrfGuiContext,
-                BetterListView listView => listView.VrfGuiContext,
-                _ => throw new InvalidDataException("Unknown state"),
-            };
-
             if (context == null)
             {
                 return;
@@ -52,7 +42,6 @@ namespace GUI.Types.Exporter
                 return;
             }
 
-            var selectedItems = ContextMenuSelection.GetSelectedItems(owner);
             var entries = ContextMenuSelection.CollectFiles(selectedItems, MaterialTypeName);
 
             if (entries.Count == 0)

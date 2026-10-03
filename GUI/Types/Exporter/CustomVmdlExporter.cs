@@ -17,24 +17,14 @@ namespace GUI.Types.Exporter
     /// Drives the custom VMDL extractor (<see cref="VmdlExtractor.CustomModelExporter"/>) from the
     /// package viewer's context menu, as an alternative to the built-in "Decompile &amp;&amp; export".
     /// </summary>
-    static class CustomVmdlExporter
+    static partial class CustomVmdlExporter
     {
-        public static async Task ExtractSelection(object sender)
+        /// <summary>
+        /// Exports the models in the package viewer's selection, recursing into selected folders.
+        /// </summary>
+        public static async Task ExtractAsync(VrfGuiContext? context, List<IBetterBaseItem> selectedItems)
         {
-            if (sender is not ToolStripMenuItem { Owner: ContextMenuStrip { SourceControl: var owner } })
-            {
-                throw new InvalidDataException("Invalid context menu structure");
-            }
-
-            var context = owner switch
-            {
-                BetterTreeView tree => tree.VrfGuiContext,
-                BetterListView listView => listView.VrfGuiContext,
-                _ => throw new InvalidDataException("Unknown state"),
-            };
-
             var paths = new List<string>();
-            var selectedItems = ContextMenuSelection.GetSelectedItems(owner);
             var singleSelectedNode = selectedItems.Count == 1 ? selectedItems[0] : null;
 
             foreach (var selectedNode in selectedItems)

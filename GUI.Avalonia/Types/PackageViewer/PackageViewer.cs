@@ -945,6 +945,18 @@ namespace GUI.Types.PackageViewer
 
             Item("Export as is", "Export", () => _ = ExportFile.ExtractSelectedItems(items, vrfGuiContext, decompile: false));
             Item("Decompile & export", "Decompile", () => _ = ExportFile.ExtractSelectedItems(items, vrfGuiContext, decompile: true));
+
+            // Type specific exporters are only offered when the selection holds files they can export
+            if (ContextMenuSelection.ContainsFileType(items, "vmdl_c"))
+            {
+                Item("Decompile & export (custom VMDL extractor)", "Decompile", () => RunAsync(() => CustomVmdlExporter.ExtractAsync(vrfGuiContext, items)));
+            }
+
+            if (ContextMenuSelection.ContainsFileType(items, CustomVmatExporter.MaterialTypeName))
+            {
+                Item("Decompile & export (custom VMAT extractor)", "Decompile", () => RunAsync(() => CustomVmatExporter.ExtractAsync(vrfGuiContext, items)));
+            }
+
             menu.Items.Add(new Separator());
 
             if (!isRoot)
@@ -983,6 +995,19 @@ namespace GUI.Types.PackageViewer
             }
 
             return menu;
+        }
+
+        /// <summary>Runs a menu action, reporting what it throws like an unhandled error.</summary>
+        private static async void RunAsync(Func<Task> action)
+        {
+            try
+            {
+                await action().ConfigureAwait(true);
+            }
+            catch (Exception e)
+            {
+                Program.ShowError(e);
+            }
         }
 
         private void CopyFileName(List<IBetterBaseItem> items, bool wantsFullPath)

@@ -1,5 +1,3 @@
-using System.Linq;
-using System.Windows.Forms;
 using GUI.Types.PackageViewer;
 using ValvePak;
 
@@ -9,19 +7,8 @@ namespace GUI.Types.Exporter
     /// Reads what the package viewer's context menu was opened on, so type specific export options can be
     /// offered only when the selection holds files they apply to.
     /// </summary>
-    static class ContextMenuSelection
+    static partial class ContextMenuSelection
     {
-        public static List<IBetterBaseItem> GetSelectedItems(Control? owner) => owner switch
-        {
-            BetterTreeView tree => tree.GetSelectedItems(),
-
-            // The ".." item navigates to the parent folder, it is never meant to be acted on as part of a selection
-            BetterListView listView => [.. listView.GetSelectedVirtualItems()
-                .Where(static item => item.Tag is not BetterListViewItem.ParentNavigationTag)
-                .OfType<IBetterBaseItem>()],
-            _ => [],
-        };
-
         /// <summary>
         /// Whether any selected file, or any file inside a selected folder, has the given compiled type (e.g. "vmat_c").
         /// </summary>
