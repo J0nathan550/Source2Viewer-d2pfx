@@ -13,7 +13,7 @@ namespace GUI.Forms
     /// Modal progress dialog that runs <see cref="OnProcess"/> on a worker thread, with the same API as the WinForms one
     /// so the exporters are shared.
     /// </summary>
-    sealed class GenericProgressForm : IProgress<string>, IDisposable
+    sealed class GenericProgressForm : IProgress<string>, Types.PackageViewer.IProgressBarReporter, IDisposable
     {
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };

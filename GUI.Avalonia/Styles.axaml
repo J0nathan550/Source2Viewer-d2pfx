@@ -60,6 +60,92 @@
         <Setter Property="Background" Value="{DynamicResource S2vBorderBrush}" />
     </Style>
 
+    <!-- Top bar: logo and menu over the app background, like the WinForms custom title bar -->
+    <Style Selector="DockPanel.topBar">
+        <Setter Property="Background" Value="{DynamicResource S2vAppBrush}" />
+    </Style>
+
+    <Style Selector="DockPanel.topBar > Menu.main">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="Menu.main > MenuItem">
+        <Setter Property="Padding" Value="8,6" />
+        <Setter Property="CornerRadius" Value="4" />
+    </Style>
+
+    <!-- Main tabs: fixed width buttons with rounded tops, the selected one lifted to the page color -->
+    <Style Selector="TabControl.main">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+    </Style>
+
+    <Style Selector="TabControl.main > TabItem">
+        <Setter Property="Width" Value="200" />
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Padding" Value="10,0,4,0" />
+        <Setter Property="Margin" Value="0,0,2,0" />
+        <Setter Property="CornerRadius" Value="8,8,0,0" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TabControl.main > TabItem /template/ Border#PART_SelectedPipe">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <!-- Package previews host a single tab without a header -->
+    <Style Selector="TabControl.preview /template/ ItemsPresenter#PART_ItemsPresenter">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <Style Selector="TextBox.pathBox">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="6,4" />
+    </Style>
+
+    <Style Selector="ScrollViewer.page">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+    </Style>
+
+    <Style Selector="Border.groupBox">
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="12,8,12,12" />
+    </Style>
+
+    <Style Selector="Border.groupBox TextBlock.groupHeader">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,0,0,8" />
+        <Setter Property="Foreground" Value="{DynamicResource S2vContrastSoftBrush}" />
+    </Style>
+
+    <Style Selector="Border.keycap">
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="Background" Value="{DynamicResource S2vAppSoftBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Padding" Value="4,1" />
+    </Style>
+
+    <Style Selector="Button.highlighted">
+        <Setter Property="Foreground" Value="{DynamicResource S2vAccentBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TreeView.explorer TreeViewItem">
+        <Setter Property="MinHeight" Value="26" />
+    </Style>
+
+    <Style Selector="ListBox.packageGrid ListBoxItem">
+        <Setter Property="Padding" Value="2" />
+    </Style>
+
     <Style Selector="TabControl.content > TabItem">
         <Setter Property="FontSize" Value="13" />
         <Setter Property="MinHeight" Value="28" />

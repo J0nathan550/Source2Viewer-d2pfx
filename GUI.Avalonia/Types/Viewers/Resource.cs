@@ -362,17 +362,10 @@ namespace GUI.Types.Viewers
                     }
                 }
 
-                Control blockContent;
-
-                try
-                {
-                    blockContent = CreateTextViewControl(resource, block);
-                }
-                catch (Exception e)
-                {
-                    Log.Error(nameof(Resource), e.ToString());
-                    blockContent = CreateByteViewControl(resource, block);
-                }
+                // Serializing blocks to text is expensive and large, only do it for the tab that is opened
+                var blockContent = new DeferredContent(
+                    () => CreateTextViewControl(resource, block),
+                    _ => CreateByteViewControl(resource, block));
 
                 var blockTab = new TabItem { Header = block.Type.ToString(), Content = blockContent };
                 resTabs.Items.Add(blockTab);
@@ -439,12 +432,12 @@ namespace GUI.Types.Viewers
                 {
                     if (resource.ResourceType == ResourceType.Map)
                     {
-                        resTabs.Items.Add(new TabItem { Header = "World Data", Content = CreateTextViewControl(ResourceType.WorldNode, loadedWorld.World) });
+                        resTabs.Items.Add(new TabItem { Header = "World Data", Content = new DeferredContent(() => CreateTextViewControl(ResourceType.WorldNode, loadedWorld.World)) });
                     }
 
                     if (loadedWorld.MainWorldNode != null)
                     {
-                        resTabs.Items.Add(new TabItem { Header = "Node Data", Content = CreateTextViewControl(ResourceType.WorldNode, loadedWorld.MainWorldNode) });
+                        resTabs.Items.Add(new TabItem { Header = "Node Data", Content = new DeferredContent(() => CreateTextViewControl(ResourceType.WorldNode, loadedWorld.MainWorldNode)) });
                     }
 
                     resTabs.Items.Add(new TabItem { Header = "Entity List", Content = new EntityViewer(vrfGuiContext, loadedWorld.Entities, glWorldViewer.SelectAndFocusEntity) });

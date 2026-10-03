@@ -7,7 +7,6 @@ namespace GUI.Types.Viewers
     class ByteViewer(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
     {
         private byte[] input = [];
-        private string? text;
 
         public static bool IsAccepted() => true;
 
@@ -22,23 +21,56 @@ namespace GUI.Types.Viewers
                 input = new byte[stream.Length];
                 stream.ReadExactly(input);
             }
-
-            text = GetTextFromBytes(input.AsSpan());
         }
 
         public ViewerContent GetContent()
         {
-            List<ViewerTab> tabs = [new("Hex", new ViewerContent.HexDump(input))];
+            var bytes = input;
+            List<ViewerTab> tabs = [new("Hex", new ViewerContent.HexDump(bytes))];
 
-            if (!string.IsNullOrEmpty(text))
+            // Decoded only when the text tab is shown, the hex view already holds the whole file
+            if (IsText(bytes))
             {
-                tabs.Add(new("Text", new ViewerContent.Text(text), Select: true));
-                text = null;
+                tabs.Add(new("Text", new ViewerContent.LazyText(() => GetTextFromBytes(bytes) ?? string.Empty), Select: true));
             }
 
             input = [];
 
             return new ViewerContent.Tabs(tabs);
+        }
+
+        /// <summary>Whether <see cref="GetTextFromBytes"/> would return non-empty text, without decoding it.</summary>
+        public static bool IsText(ReadOnlySpan<byte> span)
+        {
+            if (span.Length == 0)
+            {
+                return false;
+            }
+
+            // Byte order marks, see GetTextFromBytes
+            if (span.Length >= 2 && ((span[0] == 0xFF && span[1] == 0xFE) || (span[0] == 0xFE && span[1] == 0xFF)))
+            {
+                return true;
+            }
+
+            if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF)
+            {
+                return true;
+            }
+
+            if (span.Length >= 4 && span[0] == 0x00 && span[1] == 0x00 && span[2] == 0xFE && span[3] == 0xFF)
+            {
+                return true;
+            }
+
+            var firstNullByte = span.IndexOf((byte)0);
+
+            if (firstNullByte < 0)
+            {
+                return true;
+            }
+
+            return firstNullByte > 0 && !span[(firstNullByte + 1)..].ContainsAnyExcept((byte)0);
         }
 
         public static string? GetTextFromBytes(ReadOnlySpan<byte> span)

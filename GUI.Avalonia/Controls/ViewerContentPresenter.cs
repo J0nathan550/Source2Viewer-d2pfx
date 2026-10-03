@@ -4,6 +4,7 @@ using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Data;
 using GUI.Types.Viewers;
+using GUI.Utils;
 
 namespace GUI.Controls;
 
@@ -20,13 +21,12 @@ static class ViewerContentPresenter
         var page = new TabItem
         {
             Header = tab.Name,
-            Content = CreateControl(tab.Content, out var contentFailed),
+            Content = CreateControl(tab.Content),
         };
 
         tabControl.Items.Add(page);
 
-        // Do not focus a tab whose content failed to produce, it only contains the error text
-        if (tab.Select && !contentFailed)
+        if (tab.Select)
         {
             tabControl.SelectedItem = page;
         }
@@ -34,33 +34,19 @@ static class ViewerContentPresenter
         return page;
     }
 
-    public static Control CreateControl(ViewerContent content) => CreateControl(content, out _);
-
-    private static Control CreateControl(ViewerContent content, out bool contentFailed)
+    public static Control CreateControl(ViewerContent content)
     {
-        contentFailed = false;
-
         switch (content)
         {
+            // Editors (and lazily produced text) are only created when their tab is first shown,
+            // a resource with many blocks would otherwise hold a full text document per block
             case ViewerContent.Text text:
-                return CodeTextBox.Create(text.Content, text.Language, text.SourceMap);
+                return new DeferredContent(() => CodeTextBox.Create(text.Content, text.Language, text.SourceMap));
 
             case ViewerContent.LazyText lazy:
-            {
-                string producedText;
-
-                try
-                {
-                    producedText = lazy.GetContent();
-                }
-                catch (Exception e)
-                {
-                    producedText = e.ToString();
-                    contentFailed = true;
-                }
-
-                return CodeTextBox.Create(producedText, lazy.Language);
-            }
+                return new DeferredContent(
+                    () => CodeTextBox.Create(lazy.GetContent(), lazy.Language),
+                    static e => CodeTextBox.Create(e.ToString(), HighlightLanguage.None));
 
             case ViewerContent.HexDump hex:
                 return new HexViewer(hex.Bytes);

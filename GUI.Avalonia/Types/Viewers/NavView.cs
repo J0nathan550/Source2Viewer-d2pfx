@@ -53,7 +53,7 @@ namespace GUI.Types.Viewers
             var tabControl = ViewerContentPresenter.CreateTabControl();
 
             tabControl.Items.Add(new TabItem { Header = "NAV MESH", Content = glViewer!.InitializeUiControls() });
-            tabControl.Items.Add(new TabItem { Header = "NAV INFO", Content = CodeTextBox.Create(navMeshFile.ToString(), HighlightLanguage.None) });
+            tabControl.Items.Add(new TabItem { Header = "NAV INFO", Content = new DeferredContent(() => CodeTextBox.Create(navMeshFile.ToString(), HighlightLanguage.None)) });
 
             AddKVTab(tabControl, "NAV CUSTOM DATA", navMeshFile.CustomData);
             AddKVTab(tabControl, "NAV UNKNOWN KV3 1", navMeshFile.KV3Unknown1);
@@ -78,7 +78,7 @@ namespace GUI.Types.Viewers
                 return;
             }
 
-            tabControl.Items.Add(new TabItem { Header = tabName, Content = CodeTextBox.Create(kvDocument.ToKV3String(), HighlightLanguage.None) });
+            tabControl.Items.Add(new TabItem { Header = tabName, Content = new DeferredContent(() => CodeTextBox.Create(kvDocument.ToKV3String(), HighlightLanguage.None)) });
         }
     }
 }

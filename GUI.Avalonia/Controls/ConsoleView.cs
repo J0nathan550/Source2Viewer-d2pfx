@@ -26,12 +26,10 @@ sealed class ConsoleView : DockPanel
         };
         editor.TextArea.TextView.LineTransformers.Add(new CategoryColorizer());
 
-        var clearButton = new Button { Content = AppIcons.CreateHeader("ClearLog", "Clear console"), Margin = new(4) };
-        clearButton.Click += (_, _) => Log.ClearConsole();
-
-        SetDock(clearButton, Dock.Top);
-        clearButton.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
-        Children.Add(clearButton);
+        // The console is always dark, like in the WinForms GUI; it is cleared from the tab's context menu
+        editor.Background = new ImmutableSolidColorBrush(Color.FromRgb(37, 37, 37));
+        editor.Foreground = new ImmutableSolidColorBrush(Color.FromRgb(240, 240, 240));
+        editor.Padding = new Thickness(0, 10);
         Children.Add(editor);
 
         Append(console.Lines);

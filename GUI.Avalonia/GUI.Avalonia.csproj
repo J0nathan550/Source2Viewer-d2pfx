@@ -48,6 +48,7 @@
   <ItemGroup>
     <EmbeddedResource Include="..\GUI\Utils\industrial_sunset_puresky.vtex_c" LogicalName="GUI.Utils.industrial_sunset_puresky.vtex_c" />
     <EmbeddedResource Include="..\THIRD_PARTY_NOTICES.txt" LogicalName="GUI.Utils.THIRD_PARTY_NOTICES.txt" />
+    <EmbeddedResource Include="..\Misc\Icons\vpk.ico" LogicalName="GUI.Utils.vpk.ico" />
     <!-- Named GUI.Icons.* like in the WinForms GUI, the node graph renderer loads its icons by those names -->
     <EmbeddedResource Include="..\GUI\Icons\**" Link="Icons\%(RecursiveDir)%(Filename)%(Extension)" />
     <AvaloniaResource Include="..\Misc\Icons\source2viewer.ico" Link="Assets\source2viewer.ico" />
@@ -63,6 +64,8 @@
     <Compile Include="..\GUI\Utils\GuiLoggerAdapter.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Utils\HighlightLanguage.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Utils\HumanReadableByteSizeFormatter.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\KeybindingRegistry.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Utils\UpdateChecker.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Utils\Log.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Utils\Regexes.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Utils\Settings.cs" Link="Shared\Utils\%(Filename)%(Extension)" />
@@ -86,8 +89,12 @@
   <ItemGroup>
     <Compile Include="..\GUI\Forms\SearchType.cs" Link="Shared\Forms\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\Exporter\ExportData.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\Exporter\ExportFile.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\Exporter\PackageExporter.cs" Link="Shared\Types\Exporter\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\IBetterBaseItem.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\PackageViewer\NavigationHistory.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\PackageViewer\PackageContentSearch.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
+    <Compile Include="..\GUI\Types\PackageViewer\PackageRecovery.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
     <Compile Include="..\GUI\Types\PackageViewer\VirtualPackageNode.cs" Link="Shared\Types\PackageViewer\%(Filename)%(Extension)" />
   </ItemGroup>
 

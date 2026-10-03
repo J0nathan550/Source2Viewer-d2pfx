@@ -5,13 +5,14 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
-using Avalonia.Media;
+using Avalonia.Layout;
 using Avalonia.Platform;
-using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using AvaloniaEdit;
 using GUI.Controls;
+using GUI.Forms;
 using GUI.Types.Exporter;
 using GUI.Types.GLViewers;
 using GUI.Types.Viewers;
@@ -21,62 +22,60 @@ using ValveResourceFormat.TextureDecoders;
 
 namespace GUI
 {
+    /// <summary>
+    /// The main window, laid out like the WinForms MainForm: the logo and menu bar on top, the console and
+    /// file tabs, and the status bar with the window title, keybindings and version.
+    /// </summary>
     sealed class MainWindow : Window
     {
         private const string OpenFileFilter = "Valve Resource Format (*.*_c, *.vpk)|*.*_c;*.vpk;*.vcs|All files (*.*)|*.*";
+        private const string AppTitle = "Source 2 Viewer";
 
         private readonly TabControl mainTabs;
-        private readonly MenuItem recentFilesMenu;
-        private readonly TextBlock statusText;
-        private readonly ConsoleView consoleView;
-        private readonly TabItem consoleTab;
-        private readonly TabItem explorerTab;
+        private readonly DocumentTab consoleTab;
+        private readonly MainBottomPanel bottomPanel;
+        private ExplorerControl? explorerControl;
+        private string windowTitle = AppTitle;
 
         public MainWindow()
         {
-            Title = "Source 2 Viewer";
+            Title = AppTitle;
             Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Source2Viewer.Avalonia/Assets/source2viewer.ico")));
-            MinWidth = 640;
-            MinHeight = 400;
+            MinWidth = 347;
+            MinHeight = 380;
 
             RestoreWindowPlacement();
 
             var console = new ConsoleTab();
             Log.SetConsoleTab(console);
-            consoleView = new ConsoleView(console);
 
             mainTabs = ViewerContentPresenter.CreateTabControl();
+            mainTabs.Classes.Remove("content");
+            mainTabs.Classes.Add("main");
             mainTabs.SelectionChanged += OnMainSelectedTabChanged;
+            mainTabs.AddHandler(ContextRequestedEvent, OnTabContextRequested, RoutingStrategies.Bubble);
 
-            explorerTab = new TabItem { Header = AppIcons.CreateHeader("Explorer", "Explorer"), Content = new ExplorerControl() };
-            consoleTab = new TabItem { Header = AppIcons.CreateHeader("Log", "Console"), Content = consoleView };
-            mainTabs.Items.Add(explorerTab);
+            consoleTab = new DocumentTab("Console", "Log", closable: false)
+            {
+                ToolTipText = "Console",
+                Content = new ConsoleView(console),
+            };
             mainTabs.Items.Add(consoleTab);
 
-            recentFilesMenu = new MenuItem { Header = "Open _Recent", Icon = AppIcons.Create("History") };
-            recentFilesMenu.SubmenuOpened += (_, _) => PopulateRecentFiles();
-            recentFilesMenu.Items.Add(new MenuItem { Header = "(none)", IsEnabled = false });
-
-            statusText = new TextBlock
-            {
-                Margin = new(8, 2),
-                Opacity = 0.75,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Text = $"Source 2 Viewer {Program.DisplayVersion}",
-            };
-
-            var statusBar = new Border { Child = statusText };
-            statusBar.Classes.Add("statusBar");
+            bottomPanel = new MainBottomPanel();
+            bottomPanel.SetVersionText(Program.DisplayVersion);
+            bottomPanel.AboutRequested += async (_, _) => await ShowAboutDialogAsync().ConfigureAwait(true);
 
             var root = new DockPanel();
-            var menu = CreateMenu();
-            menu.Classes.Add("main");
-            DockPanel.SetDock(menu, Dock.Top);
-            DockPanel.SetDock(statusBar, Dock.Bottom);
-            root.Children.Add(menu);
-            root.Children.Add(statusBar);
+            var topBar = CreateTopBar();
+            DockPanel.SetDock(topBar, Dock.Top);
+            DockPanel.SetDock(bottomPanel, Dock.Bottom);
+            root.Children.Add(topBar);
+            root.Children.Add(bottomPanel);
             root.Children.Add(mainTabs);
             Content = root;
+
+            AddKeyBindings();
 
             DragDrop.SetAllowDrop(this, true);
             AddHandler(DragDrop.DragOverEvent, OnDragOver);
@@ -87,123 +86,109 @@ namespace GUI
             Activated += (_, _) => RenderLoopThread.SetWindowActive(this, true);
             Deactivated += (_, _) => RenderLoopThread.SetWindowActive(this, false);
 
-            Log.Info(nameof(MainWindow), $"Source 2 Viewer {Program.DisplayVersion} on {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+            // Let the explorer start scanning games before the window is even shown
+            if (Program.StartupFiles.Length == 0 && (Settings.IsFirstStartup || Settings.Config.OpenExplorerOnStart != 0))
+            {
+                EnsureExplorerControl();
+            }
+
+            UpdateWindowTitle(null);
+
+            Log.Info(nameof(MainWindow), $"{AppTitle} {Program.DisplayVersion} on {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+        }
+
+        private DockPanel CreateTopBar()
+        {
+            var logo = AppIcons.Create("Logo", 32);
+            logo.Margin = new(4, 8);
+            logo.VerticalAlignment = VerticalAlignment.Center;
+            logo.Cursor = new Cursor(StandardCursorType.Hand);
+            logo.PointerReleased += async (_, _) => await ShowAboutDialogAsync().ConfigureAwait(true);
+
+            var menu = CreateMenu();
+            menu.Classes.Add("main");
+            menu.VerticalAlignment = VerticalAlignment.Center;
+
+            var topBar = new DockPanel { Height = 52 };
+            topBar.Classes.Add("topBar");
+            DockPanel.SetDock(logo, Dock.Left);
+            topBar.Children.Add(logo);
+            topBar.Children.Add(menu);
+            return topBar;
         }
 
         private Menu CreateMenu()
         {
-            var openItem = new MenuItem { Header = "_Open...", Icon = AppIcons.Create("Open"), InputGesture = new KeyGesture(Key.O, KeyModifiers.Control) };
-            openItem.Click += async (_, _) => await OpenFilesFromDialogAsync().ConfigureAwait(true);
-
-            var closeTabItem = new MenuItem { Header = "_Close tab", Icon = AppIcons.Create("CloseTab"), InputGesture = new KeyGesture(Key.W, KeyModifiers.Control) };
-            closeTabItem.Click += (_, _) => CloseTab(mainTabs.SelectedItem as DocumentTab);
-
-            var closeAllItem = new MenuItem { Header = "Close _all tabs", Icon = AppIcons.Create("CloseAllTabs") };
-            closeAllItem.Click += (_, _) => CloseAllTabs();
-
-            var exitItem = new MenuItem { Header = "E_xit" };
-            exitItem.Click += (_, _) => Close();
-
-            var consoleItem = new MenuItem { Header = "_Console", Icon = AppIcons.Create("Log") };
-            consoleItem.Click += (_, _) => FocusLogPage();
-
-            var explorerItem = new MenuItem { Header = "_Explorer", Icon = AppIcons.Create("Explorer") };
-            explorerItem.Click += (_, _) => mainTabs.SelectedItem = explorerTab;
-
-            var themeItem = new MenuItem { Header = "_Theme", Icon = AppIcons.Create("Settings") };
-
-            foreach (var theme in Enum.GetValues<Themer.AppTheme>())
+            static MenuItem Item(string header, string icon, Action onClick, KeyGesture? gesture = null)
             {
-                var item = new MenuItem
-                {
-                    Header = Themer.GetDisplayName(theme),
-                    ToggleType = MenuItemToggleType.Radio,
-                    GroupName = "Theme",
-                    IsChecked = Themer.SelectedTheme == theme,
-                };
-                item.Click += (_, _) =>
-                {
-                    Settings.Config.Theme = (int)theme;
-                    Settings.Save();
-                    Themer.ApplyTheme(theme);
-                };
-                themeItem.Items.Add(item);
+                var item = new MenuItem { Header = header, Icon = AppIcons.Create(icon), InputGesture = gesture };
+                item.Click += (_, _) => onClick();
+                return item;
             }
 
-            var settingsItem = new MenuItem { Header = "_Settings...", Icon = AppIcons.Create("Settings") };
-            settingsItem.Click += async (_, _) => await new SettingsWindow().ShowDialog(this).ConfigureAwait(true);
+            var file = new MenuItem { Header = "F_ile", Icon = AppIcons.Create("Folder") };
+            file.Items.Add(Item("_Open", "Open", () => _ = OpenFilesFromDialogAsync(), new KeyGesture(Key.O, KeyModifiers.Control)));
 
-            var aboutItem = new MenuItem { Header = "_About", Icon = AppIcons.Create("About") };
-            aboutItem.Click += async (_, _) => await AppMessageDialogs.ShowMessageAsync(
-                $"Source 2 Viewer {Program.DisplayVersion}\n\nCross-platform viewer for Source 2 resources.\nhttps://s2v.app/",
-                "About Source 2 Viewer").ConfigureAwait(true);
+            if (FileAssociation.IsSupported)
+            {
+                file.Items.Add(new Separator());
+                file.Items.Add(Item("Open VPKs with this app", "VPKLink", () => _ = FileAssociation.RegisterAsync()));
+            }
 
-            KeyBindings.Add(new KeyBinding { Gesture = openItem.InputGesture!, Command = new ActionCommand(async () => await OpenFilesFromDialogAsync().ConfigureAwait(true)) });
-            KeyBindings.Add(new KeyBinding { Gesture = closeTabItem.InputGesture!, Command = new ActionCommand(() => CloseTab(mainTabs.SelectedItem as DocumentTab)) });
+            file.Items.Add(new Separator());
+            file.Items.Add(Item("Open welcome screen", "WelcomeScreen", OpenWelcome));
+#if DEBUG
+            file.Items.Add(Item("Validate shaders", "ValidateShaders", ValidateShaders));
+#endif
+
+            var tools = new MenuItem { Header = "_Tools", Icon = AppIcons.Create("Tools") };
+
+            // These tools are WinForms dialogs that have not been ported yet
+            foreach (var (header, icon) in new[]
+            {
+                ("Export character assets (items_game.txt)...", "Decompile"),
+                ("VTEX Create", "AssetTypes.tex"),
+                ("Particles recolor", "AssetTypes.pcf"),
+            })
+            {
+                var item = new MenuItem { Header = header, Icon = AppIcons.Create(icon), IsEnabled = false };
+                ToolTip.SetTip(item, "Not available in the cross-platform build yet.");
+                tools.Items.Add(item);
+            }
 
             return new Menu
             {
                 Items =
                 {
-                    new MenuItem
-                    {
-                        Header = "_File",
-                        Icon = AppIcons.Create("Folder"),
-                        Items = { openItem, recentFilesMenu, new Separator(), closeTabItem, closeAllItem, new Separator(), exitItem },
-                    },
-                    new MenuItem
-                    {
-                        Header = "_View",
-                        Icon = AppIcons.Create("Explorer"),
-                        Items = { explorerItem, consoleItem, themeItem },
-                    },
-                    new MenuItem
-                    {
-                        Header = "_Tools",
-                        Icon = AppIcons.Create("Tools"),
-                        Items = { settingsItem },
-                    },
-                    new MenuItem
-                    {
-                        Header = "_Help",
-                        Icon = AppIcons.Create("Info"),
-                        Items = { aboutItem },
-                    },
+                    file,
+                    Item("Explorer", "Explorer", OpenExplorer),
+                    Item("_Find", "Find", () => _ = FindAsync(), new KeyGesture(Key.F, KeyModifiers.Control)),
+                    tools,
+                    Item("_Settings", "Settings", OpenSettings),
+                    Item("_About", "About", () => _ = ShowAboutDialogAsync()),
+                    Item("dota2prnfx", "dota2pornfx", () => AboutWindow.OpenUrl("https://h6rd.github.io/Dota2PornFxWeb/")),
                 },
             };
         }
 
-        private void PopulateRecentFiles()
+        private void AddKeyBindings()
         {
-            recentFilesMenu.Items.Clear();
-
-            var recent = Settings.Config.RecentFiles;
-
-            if (recent.Count == 0)
+            void Bind(Key key, KeyModifiers modifiers, Action action) => KeyBindings.Add(new KeyBinding
             {
-                recentFilesMenu.Items.Add(new MenuItem { Header = "(none)", IsEnabled = false });
-                return;
-            }
+                Gesture = new KeyGesture(key, modifiers),
+                Command = new ActionCommand(action),
+            });
 
-            // Most recent last in settings, shown first in the menu
-            for (var i = recent.Count - 1; i >= 0; i--)
-            {
-                var path = recent[i];
-                var item = new MenuItem
-                {
-                    Header = path.Replace("_", "__", StringComparison.Ordinal),
-                    Icon = AppIcons.Create(AppIcons.GetFileIconName(path)),
-                };
-                item.Click += (_, _) => OpenFile(path);
-                recentFilesMenu.Items.Add(item);
-            }
-
-            recentFilesMenu.Items.Add(new Separator());
-
-            var clear = new MenuItem { Header = "Clear recent files", Icon = AppIcons.Create("HistoryClear") };
-            clear.Click += (_, _) => Settings.ClearRecentFiles();
-            recentFilesMenu.Items.Add(clear);
+            Bind(Key.O, KeyModifiers.Control, () => _ = OpenFilesFromDialogAsync());
+            Bind(Key.F, KeyModifiers.Control, () => _ = FindAsync());
+            Bind(Key.W, KeyModifiers.Control, () => CloseTab(SelectedTab));
+            Bind(Key.Q, KeyModifiers.Control, CloseAllTabs);
+            Bind(Key.E, KeyModifiers.Control, () => CloseTabsToRight(SelectedTab));
+            Bind(Key.R, KeyModifiers.Control, CloseAndReOpenActiveTab);
+            Bind(Key.F5, KeyModifiers.None, CloseAndReOpenActiveTab);
         }
+
+        private DocumentTab? SelectedTab => mainTabs.SelectedItem as DocumentTab;
 
         private void OnOpened(object? sender, EventArgs e)
         {
@@ -217,7 +202,42 @@ namespace GUI
                 Log.Error(nameof(MainWindow), $"Failed to create an OpenGL {ValveResourceFormat.Renderer.GLEnvironment.RequiredVersion} context, textures will be decoded in software and 3D viewers will not work: {ex.Message}");
             }
 
-            OpenCommandLineArgFiles(Program.StartupFiles);
+            if (Settings.IsFirstStartup)
+            {
+                OpenWelcome();
+            }
+            else if (Program.StartupFiles.Length > 0)
+            {
+                OpenCommandLineArgFiles(Program.StartupFiles);
+            }
+            else if (Settings.Config.OpenExplorerOnStart != 0)
+            {
+                OpenExplorer();
+            }
+
+            _ = CheckForUpdatesIfNecessaryAsync();
+        }
+
+        private async Task CheckForUpdatesIfNecessaryAsync()
+        {
+            try
+            {
+                await UpdateChecker.CheckForUpdatesIfNecessary().ConfigureAwait(true);
+            }
+            catch (Exception e)
+            {
+                Log.Warn(nameof(MainWindow), $"Failed to check for updates: {e.Message}");
+            }
+
+            bottomPanel.RefreshUpdateState();
+        }
+
+        public void ShowUpdateAfterError() => bottomPanel.ShowUpdateAfterError();
+
+        private async Task ShowAboutDialogAsync()
+        {
+            await new AboutWindow().ShowDialog(this).ConfigureAwait(true);
+            bottomPanel.RefreshUpdateState();
         }
 
         public void OpenCommandLineArgFiles(string[] args)
@@ -416,6 +436,8 @@ namespace GUI
             Settings.Save();
         }
 
+        #region Tabs
+
         private void OnMainSelectedTabChanged(object? sender, SelectionChangedEventArgs e)
         {
             if (!ReferenceEquals(e.Source, mainTabs))
@@ -423,21 +445,311 @@ namespace GUI
                 return;
             }
 
-            var tooltip = (mainTabs.SelectedItem as DocumentTab)?.ToolTipText;
-            Title = string.IsNullOrEmpty(tooltip) ? "Source 2 Viewer" : $"Source 2 Viewer - {tooltip}";
+            ShowSelectedTabStatus();
         }
 
-        public void SetStatus(string text) => statusText.Text = text;
+        private void UpdateWindowTitle(string? toolTipText)
+        {
+            windowTitle = string.IsNullOrEmpty(toolTipText) ? AppTitle : $"{AppTitle} - {toolTipText}";
+            Title = windowTitle;
+            bottomPanel.Text = windowTitle;
+        }
+
+        /// <summary>Shows the title and keybindings of the selected tab, after a package preview stops being shown.</summary>
+        public void ShowSelectedTabStatus()
+        {
+            UpdateWindowTitle(SelectedTab?.ToolTipText);
+            bottomPanel.UpdateKeybindings(KeybindingRegistry.GetKeybindingsForViewer(KeybindingRegistry.GetViewerTypeFromTab(SelectedTab)));
+        }
+
+        /// <summary>Shows the title and keybindings of a file previewed inside a package.</summary>
+        public void ShowPreviewStatus(DocumentTab previewTab)
+        {
+            UpdateWindowTitle(previewTab.ToolTipText);
+            bottomPanel.UpdateKeybindings(KeybindingRegistry.GetKeybindingsForViewer(KeybindingRegistry.GetViewerTypeFromTab(previewTab)));
+        }
+
+        /// <summary>Shows a status message in place of the window title until the selected tab changes.</summary>
+        public void SetStatus(string text) => bottomPanel.Text = $"{AppTitle} - {text}";
 
         public void FocusLogPage() => mainTabs.SelectedItem = consoleTab;
 
-#pragma warning disable CA1822 // Shared code calls these on Program.MainForm like on the WinForms form
-        /// <summary>Runs <paramref name="action"/> on the UI thread and waits for it, like WinForms Control.Invoke.</summary>
-        public void Invoke(Action action) => Dispatcher.UIThread.Invoke(action);
+        /// <summary>Adds a tab after the selected one and selects it.</summary>
+        public void AddTab(DocumentTab tab)
+        {
+            tab.CloseRequested += (_, _) => CloseTab(tab);
 
-        /// <summary>Queues <paramref name="action"/> on the UI thread, like WinForms Control.BeginInvoke.</summary>
-        public void BeginInvoke(Action action) => Dispatcher.UIThread.Post(action);
-#pragma warning restore CA1822
+            var index = Math.Clamp(mainTabs.SelectedIndex + 1, 1, mainTabs.ItemCount);
+            mainTabs.Items.Insert(index, tab);
+            mainTabs.SelectedItem = tab;
+        }
+
+        /// <summary>Selects the tab with the given title if it is open.</summary>
+        private bool OpenTab(string text)
+        {
+            var tab = mainTabs.Items.OfType<DocumentTab>().FirstOrDefault(t => t.Text == text);
+
+            if (tab == null)
+            {
+                return false;
+            }
+
+            mainTabs.SelectedItem = tab;
+            return true;
+        }
+
+        private void InsertSpecialTab(DocumentTab tab, int index)
+        {
+            tab.CloseRequested += (_, _) => CloseTab(tab);
+            mainTabs.Items.Insert(Math.Min(index, mainTabs.ItemCount), tab);
+            mainTabs.SelectedItem = tab;
+        }
+
+        /// <summary>
+        /// The one explorer, shared by the Explorer and Welcome tabs. It is taken out of wherever it is shown,
+        /// since a control can only have one parent.
+        /// </summary>
+        private ExplorerControl EnsureExplorerControl()
+        {
+            explorerControl ??= new ExplorerControl();
+
+            switch (explorerControl.Parent)
+            {
+                case Panel panel:
+                    panel.Children.Remove(explorerControl);
+                    break;
+                case ContentControl contentControl:
+                    contentControl.Content = null;
+                    break;
+            }
+
+            return explorerControl;
+        }
+
+        private void OpenExplorer()
+        {
+            if (OpenTab("Explorer"))
+            {
+                return;
+            }
+
+            InsertSpecialTab(new DocumentTab("Explorer", "Explorer") { ToolTipText = "Explorer", Content = EnsureExplorerControl() }, 1);
+        }
+
+        private void OpenWelcome()
+        {
+            if (OpenTab("Welcome"))
+            {
+                return;
+            }
+
+            InsertSpecialTab(new DocumentTab("Welcome", "WelcomeScreen") { ToolTipText = "Welcome", Content = new WelcomeControl(EnsureExplorerControl()) }, mainTabs.ItemCount);
+        }
+
+        private void OpenSettings()
+        {
+            if (OpenTab("Settings"))
+            {
+                return;
+            }
+
+            InsertSpecialTab(new DocumentTab("Settings", "Settings") { ToolTipText = "Settings", Content = new SettingsControl() }, 1);
+        }
+
+        private void CloseTab(DocumentTab? tab)
+        {
+            if (tab == null || !tab.Closable)
+            {
+                return;
+            }
+
+            var index = mainTabs.Items.IndexOf(tab);
+            var wasSelected = mainTabs.SelectedItem == tab;
+
+            // The explorer is kept alive and reused when it is opened again
+            if (explorerControl != null && (tab.Content == explorerControl || tab.Content is WelcomeControl))
+            {
+                EnsureExplorerControl();
+                tab.Content = null;
+            }
+
+            mainTabs.Items.Remove(tab);
+
+            if (wasSelected && index > 0)
+            {
+                mainTabs.SelectedIndex = Math.Min(index, mainTabs.ItemCount) - 1;
+            }
+
+            tab.Dispose();
+        }
+
+        private List<DocumentTab> Tabs => [.. mainTabs.Items.OfType<DocumentTab>()];
+
+        private void CloseAllTabs()
+        {
+            mainTabs.SelectedItem = consoleTab;
+
+            foreach (var tab in Tabs)
+            {
+                CloseTab(tab);
+            }
+        }
+
+        private void CloseTabsToLeft(DocumentTab? basePage)
+        {
+            if (basePage == null)
+            {
+                return;
+            }
+
+            foreach (var tab in Tabs.TakeWhile(tab => tab != basePage))
+            {
+                CloseTab(tab);
+            }
+        }
+
+        private void CloseTabsToRight(DocumentTab? basePage)
+        {
+            if (basePage == null)
+            {
+                return;
+            }
+
+            foreach (var tab in Tabs.SkipWhile(tab => tab != basePage).Skip(1))
+            {
+                CloseTab(tab);
+            }
+        }
+
+        private void CloseAndReOpenActiveTab()
+        {
+            if (SelectedTab is not { ExportData: { } exportData } tab)
+            {
+                return;
+            }
+
+            var (newFileContext, packageEntry) = exportData.VrfGuiContext.FindFileWithContext(
+                exportData.PackageEntry?.GetFullPath() ?? exportData.VrfGuiContext.FileName);
+
+            if (newFileContext != null)
+            {
+                OpenFile(newFileContext, packageEntry);
+                CloseTab(tab);
+            }
+        }
+
+        private void OnTabContextRequested(object? sender, ContextRequestedEventArgs e)
+        {
+            // Page contents are not inside the tab header visually, so this only finds clicks on main tab headers
+            if (e.Source is not Visual source
+                || source.FindAncestorOfType<DocumentTab>(includeSelf: true) is not { } tab
+                || tab.Parent != mainTabs)
+            {
+                return;
+            }
+
+            e.Handled = true;
+
+            var tabIndex = mainTabs.Items.IndexOf(tab);
+            var menu = new ContextMenu();
+
+            void Item(string header, string icon, Action onClick, KeyGesture? gesture = null)
+            {
+                var item = new MenuItem { Header = header, Icon = AppIcons.Create(icon), InputGesture = gesture };
+                item.Click += (_, _) => onClick();
+                menu.Items.Add(item);
+            }
+
+            if (tabIndex != 0)
+            {
+                Item("Close _tab", "CloseTab", () => CloseTab(tab), new KeyGesture(Key.W, KeyModifiers.Control));
+            }
+
+            Item("Close _all tabs", "CloseAllTabs", CloseAllTabs, new KeyGesture(Key.Q, KeyModifiers.Control));
+
+            if (tabIndex != mainTabs.ItemCount - 1)
+            {
+                Item("Close all tabs to _right", "CloseAllTabsRight", () => CloseTabsToRight(tab), new KeyGesture(Key.E, KeyModifiers.Control));
+            }
+
+            if (tabIndex > 1)
+            {
+                Item("Close all tabs to _left", "CloseAllTabsLeft", () => CloseTabsToLeft(tab));
+            }
+
+            // Only tabs that got a sound player (world and model viewers) have anything to mute
+            if (tab.ExportData?.DisposableContents is Resource { GLViewer: GLSceneViewer { HasSoundPlayer: true } sceneViewer })
+            {
+                Item(sceneViewer.Muted ? "_Unmute tab" : "_Mute tab", "AudioVolume", () => sceneViewer.Muted = !sceneViewer.Muted);
+            }
+
+            if (tab.ExportData is { } exportData)
+            {
+                menu.Items.Add(new Separator());
+                Item("Export as is", "Export", () => _ = ExportTabAsync(exportData, decompile: false));
+                Item("Decompile & export", "Decompile", () => _ = ExportTabAsync(exportData, decompile: true));
+            }
+            else if (tab == consoleTab)
+            {
+                menu.Items.Add(new Separator());
+                Item("Clear console", "ClearLog", Log.ClearConsole);
+            }
+
+            menu.Open(tab);
+        }
+
+        private static async Task ExportTabAsync(ExportData exportData, bool decompile)
+        {
+            if (exportData.PackageEntry != null)
+            {
+                await ExportFile.ExtractFileFromPackageEntry(exportData.PackageEntry, exportData.VrfGuiContext, decompile).ConfigureAwait(true);
+                return;
+            }
+
+            // ExtractFileFromStream disposes the stream when done
+            var fileStream = File.OpenRead(exportData.VrfGuiContext.FileName);
+            await ExportFile.ExtractFileFromStream(Path.GetFileName(exportData.VrfGuiContext.FileName), fileStream, exportData.VrfGuiContext, decompile).ConfigureAwait(true);
+        }
+
+        #endregion
+
+        #region Find
+
+        private async Task FindAsync()
+        {
+            if (SelectedTab is not { } tab)
+            {
+                return;
+            }
+
+            if (FindVisibleTextEditor(tab) is { } editor)
+            {
+                editor.SearchPanel.Open();
+                return;
+            }
+
+            if (tab.ExportData?.DisposableContents is Types.PackageViewer.PackageViewer packageViewer)
+            {
+                await packageViewer.ShowSearchAsync().ConfigureAwait(true);
+                return;
+            }
+
+            if (tab.Content == explorerControl)
+            {
+                explorerControl?.FocusFilter();
+            }
+        }
+
+        private static TextEditor? FindVisibleTextEditor(Control container)
+        {
+            return container.GetVisualDescendants()
+                .OfType<TextEditor>()
+                .FirstOrDefault(static editor => editor.IsEffectivelyVisible);
+        }
+
+        #endregion
+
+        #region Opening files
 
         public async Task OpenFilesFromDialogAsync()
         {
@@ -499,15 +811,22 @@ namespace GUI
                     VrfGuiContext = vrfGuiContext,
                 },
             };
-
 #pragma warning restore CA2000
 
-            var parentContext = vrfGuiContext.ParentGuiContext;
-
-            while (parentContext != null)
+            for (var parentContext = vrfGuiContext.ParentGuiContext; parentContext != null; parentContext = parentContext.ParentGuiContext)
             {
-                tab.ToolTipText = $"{tab.ToolTipText} ← {parentContext.FileName}";
-                parentContext = parentContext.ParentGuiContext;
+                tab.ToolTipText = $"{tab.ToolTipText} \u2190 {parentContext.FileName}";
+            }
+
+            // Packages of installed games get the game's icon
+            if (vrfGuiContext.FileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
+            {
+                var game = ExplorerControl.SteamGames.FirstOrDefault(game => vrfGuiContext.FileName.StartsWith(game.GamePath, StringComparison.OrdinalIgnoreCase));
+
+                if (game != null && AppIcons.GameIcons.TryGetValue(game.AppID, out var gameIcon))
+                {
+                    tab.SetIconImage(gameIcon);
+                }
             }
 
             var loadingFile = new LoadingFile(vrfGuiContext.FileName);
@@ -520,17 +839,13 @@ namespace GUI
             }
             else
             {
-                tab.CloseRequested += (_, _) => CloseTab(tab);
-
-                var index = Math.Min(mainTabs.SelectedIndex + 1, mainTabs.ItemCount);
-                mainTabs.Items.Insert(Math.Max(index, 0), tab);
-                mainTabs.SelectedItem = tab;
+                AddTab(tab);
             }
 
             _ = LoadIntoTabAsync(tab, vrfGuiContext, file, viewMode);
         }
 
-        private static async Task LoadIntoTabAsync(DocumentTab tab, VrfGuiContext vrfGuiContext, PackageEntry? file, ResourceViewMode viewMode)
+        private async Task LoadIntoTabAsync(DocumentTab tab, VrfGuiContext vrfGuiContext, PackageEntry? file, ResourceViewMode viewMode)
         {
             IViewer viewer;
 
@@ -550,6 +865,7 @@ namespace GUI
                     tab.Content = CodeTextBox.CreateFromException(ex, tab.ToolTipText);
                 }
 
+                ShowUpdateAfterError();
                 return;
             }
 
@@ -579,31 +895,10 @@ namespace GUI
             }
 
             viewer.NotifyVisible();
-        }
 
-        private void CloseTab(DocumentTab? tab)
-        {
-            if (tab == null)
+            if (mainTabs.SelectedItem == tab)
             {
-                return;
-            }
-
-            var index = mainTabs.Items.IndexOf(tab);
-            mainTabs.Items.Remove(tab);
-
-            if (index > 0 && mainTabs.SelectedItem == null)
-            {
-                mainTabs.SelectedIndex = Math.Min(index, mainTabs.ItemCount) - 1;
-            }
-
-            tab.Dispose();
-        }
-
-        private void CloseAllTabs()
-        {
-            foreach (var tab in mainTabs.Items.OfType<DocumentTab>().ToList())
-            {
-                CloseTab(tab);
+                ShowSelectedTabStatus();
             }
         }
 
@@ -614,9 +909,7 @@ namespace GUI
 
         private void OnDrop(object? sender, DragEventArgs e)
         {
-            var files = e.DataTransfer.TryGetFiles();
-
-            if (files == null)
+            if (e.DataTransfer.TryGetFiles() is not { } files)
             {
                 return;
             }
@@ -629,5 +922,48 @@ namespace GUI
                 }
             }
         }
+
+        #endregion
+
+#if DEBUG
+        private static void ValidateShaders()
+        {
+            using var progressDialog = new GenericProgressForm
+            {
+                Text = "Compiling shaders\u2026",
+            };
+            progressDialog.OnProcess = _ =>
+            {
+                var window = NativeWindowFactory.Create(new()
+                {
+                    APIVersion = ValveResourceFormat.Renderer.GLEnvironment.RequiredVersion,
+                    Flags = GLBaseControl.Flags | OpenTK.Windowing.Common.ContextFlags.Offscreen,
+                    StartVisible = false,
+                    Title = "Source 2 Viewer Shader Validator",
+                });
+
+                try
+                {
+                    window.MakeCurrent();
+                    ValveResourceFormat.Renderer.Shaders.ShaderLoader.ValidateShaders(new Progress<string>(progressDialog.SetProgress), VrfGuiContext.Logger);
+                }
+                finally
+                {
+                    NativeWindowFactory.Destroy(window);
+                }
+
+                return Task.CompletedTask;
+            };
+            progressDialog.ShowDialog();
+        }
+#endif
+
+#pragma warning disable CA1822 // Shared code calls these on Program.MainForm like on the WinForms form
+        /// <summary>Runs <paramref name="action"/> on the UI thread and waits for it, like WinForms Control.Invoke.</summary>
+        public void Invoke(Action action) => Dispatcher.UIThread.Invoke(action);
+
+        /// <summary>Queues <paramref name="action"/> on the UI thread, like WinForms Control.BeginInvoke.</summary>
+        public void BeginInvoke(Action action) => Dispatcher.UIThread.Post(action);
+#pragma warning restore CA1822
     }
 }

@@ -1,19 +1,28 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using GUI.Types.Exporter;
 using GUI.Utils;
 
 namespace GUI.Controls;
 
 /// <summary>
-/// A closable document tab of the main window. Owns the viewer and the file context shown inside it.
+/// A tab of the main window: an icon, the title and a close button, like the WinForms MainTabs.
+/// Owns the viewer and the file context shown inside it.
 /// </summary>
-sealed class DocumentTab : TabItem, IDisposable
+sealed class DocumentTab : System.Windows.Forms.TabPage, IDisposable
 {
     private readonly TextBlock title;
+    private readonly ThemedIcon icon;
 
-    public ExportData? ExportData { get; set; }
+    /// <summary>The opened file, stored in Tag like the WinForms tabs so shared code finds it the same way.</summary>
+    public ExportData? ExportData
+    {
+        get => Tag as ExportData;
+        set => Tag = value;
+    }
 
     public string? ToolTipText
     {
@@ -21,29 +30,31 @@ sealed class DocumentTab : TabItem, IDisposable
         set => ToolTip.SetTip(this, value);
     }
 
+    public bool Closable { get; }
+
     public bool IsDisposed { get; private set; }
 
     public event EventHandler? CloseRequested;
 
-    // Themes key templates by type, a subclass has to ask for the TabItem one
-    protected override Type StyleKeyOverride => typeof(TabItem);
-
     public DocumentTab(string text, string? iconName = null, bool closable = true)
     {
-        title = new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center };
+        Closable = closable;
+        Classes.Add("document");
 
-        var header = new StackPanel
+        title = new TextBlock
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
+            Text = text,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         };
 
-        if (iconName != null)
-        {
-            header.Children.Add(AppIcons.Create(iconName));
-        }
+        icon = AppIcons.Create(iconName ?? "File");
+        icon.IsVisible = iconName != null;
+        icon.VerticalAlignment = VerticalAlignment.Center;
 
-        header.Children.Add(title);
+        var header = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(icon, Dock.Left);
+        header.Children.Add(icon);
 
         if (closable)
         {
@@ -56,6 +67,8 @@ sealed class DocumentTab : TabItem, IDisposable
             closeButton.Classes.Add("tabClose");
             ToolTip.SetTip(closeButton, "Close tab");
             closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+
+            DockPanel.SetDock(closeButton, Dock.Right);
             header.Children.Add(closeButton);
 
             header.PointerReleased += (_, e) =>
@@ -68,6 +81,9 @@ sealed class DocumentTab : TabItem, IDisposable
             };
         }
 
+        title.Margin = new(8, 0, 4, 0);
+        header.Children.Add(title);
+
         Header = header;
     }
 
@@ -75,6 +91,23 @@ sealed class DocumentTab : TabItem, IDisposable
     {
         get => title.Text ?? string.Empty;
         set => title.Text = value;
+    }
+
+    public string? IconName
+    {
+        get => icon.IconName;
+        set
+        {
+            icon.IconName = value;
+            icon.IsVisible = value != null;
+        }
+    }
+
+    /// <summary>Shows a picture that is not one of the app icons, such as a Steam game icon.</summary>
+    public void SetIconImage(Bitmap image)
+    {
+        icon.FixedSource = image;
+        icon.IsVisible = true;
     }
 
     public void Dispose()
@@ -88,6 +121,8 @@ sealed class DocumentTab : TabItem, IDisposable
 
         var exportData = ExportData;
         ExportData = null;
+
+        var content = Content;
         Content = null;
 
         if (exportData != null)
@@ -96,6 +131,10 @@ sealed class DocumentTab : TabItem, IDisposable
             // disposes the resources that loading is still reading until it does
             exportData.DisposableContents?.Dispose();
             exportData.VrfGuiContext.Dispose();
+        }
+        else if (content is IDisposable disposable)
+        {
+            disposable.Dispose();
         }
     }
 }

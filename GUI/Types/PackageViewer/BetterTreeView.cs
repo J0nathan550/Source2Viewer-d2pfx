@@ -1,10 +1,7 @@
-using System.Buffers;
 using System.Drawing;
-using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Controls;
@@ -324,7 +321,9 @@ namespace GUI.Types.PackageViewer
                 throw new InvalidOperationException("Inner paks are not supported.");
             }
 
-            if (VrfGuiContext.CurrentPackage?.Entries == null)
+            var package = VrfGuiContext.CurrentPackage;
+
+            if (package?.Entries == null)
             {
                 return;
             }
@@ -333,146 +332,18 @@ namespace GUI.Types.PackageViewer
             {
                 Text = "Searching file contents…"
             };
-            progressDialog.OnProcess = _ =>
+            progressDialog.OnProcess = cancellationToken =>
             {
                 Log.Info(nameof(BetterTreeView), "Pattern search");
 
-                var maxArchiveIndex = -1;
-                var sortedEntriesPerArchive = new Dictionary<int, List<PackageEntry>>();
-
-                foreach (var extensions in VrfGuiContext.CurrentPackage.Entries.Values)
-                {
-                    foreach (var entry in extensions)
-                    {
-                        if (entry.ArchiveIndex != 0x7FFF && entry.ArchiveIndex > maxArchiveIndex)
-                        {
-                            maxArchiveIndex = entry.ArchiveIndex;
-                        }
-
-                        if (entry.Length == 0)
-                        {
-                            continue;
-                        }
-
-                        if (!sortedEntriesPerArchive.TryGetValue(entry.ArchiveIndex, out var archiveEntries))
-                        {
-                            archiveEntries = [];
-                            sortedEntriesPerArchive.Add(entry.ArchiveIndex, archiveEntries);
-                        }
-
-                        archiveEntries.Add(entry);
-                    }
-                }
-
-                foreach (var archiveEntries in sortedEntriesPerArchive.Values)
-                {
-                    archiveEntries.Sort((a, b) => a.Offset.CompareTo(b.Offset));
-                }
-
-                if (sortedEntriesPerArchive.TryGetValue(0x7FFF, out var sortedEntriesInDirVpk))
-                {
-                    var fileName = $"{VrfGuiContext.CurrentPackage.FileName}{(VrfGuiContext.CurrentPackage.IsDirVPK ? "_dir" : "")}.vpk";
-
-                    progressDialog.SetProgress($"Searching '{fileName}'");
-
-                    var archiveMatches = SearchForContentsInFile(fileName, pattern, sortedEntriesInDirVpk);
-                    results.AddRange(archiveMatches);
-                }
-
-                if (maxArchiveIndex > -1)
-                {
-                    var matches = new HashSet<PackageEntry>();
-                    var archivesScanned = 0;
-
-                    Parallel.For(
-                        0,
-                        maxArchiveIndex + 1,
-                        new ParallelOptions
-                        {
-                            MaxDegreeOfParallelism = 3
-                        },
-                        archiveIndex =>
-                        {
-                            var fileName = $"{VrfGuiContext.CurrentPackage.FileName}_{archiveIndex:D3}.vpk";
-
-                            var archiveMatches = SearchForContentsInFile(fileName, pattern, sortedEntriesPerArchive[archiveIndex]);
-
-                            if (archiveMatches.Count > 0)
-                            {
-                                lock (matches)
-                                {
-                                    foreach (var match in archiveMatches)
-                                    {
-                                        if (matches.Add(match))
-                                        {
-                                            results.Add(match);
-                                        }
-                                    }
-                                }
-                            }
-
-                            Interlocked.Increment(ref archivesScanned);
-                            progressDialog.SetProgress($"Searched {archivesScanned} vpks out of {maxArchiveIndex}, found {results.Count} matches so far");
-                        }
-                    );
-                }
+                var matches = PackageContentSearch.Search(package, pattern, progressDialog, cancellationToken);
+                results.AddRange(matches);
 
                 Log.Info(nameof(BetterTreeView), $"Found {results.Count} matches");
-
-                progressDialog.SetProgress($"Found {results.Count} matches");
 
                 return Task.CompletedTask;
             };
             progressDialog.ShowDialog();
-        }
-
-        private static HashSet<PackageEntry> SearchForContentsInFile(string fileName, byte[] pattern, List<PackageEntry> archiveEntries)
-        {
-            var matches = new HashSet<PackageEntry>();
-
-            //using var fs = new FileStream(fileName, FileMode.Open, FileAccess.Read);
-            var data = File.ReadAllBytes(fileName).AsSpan(); // TODO: stream it
-
-            var match = -1;
-            var offset = 0;
-            var lastEntryId = 0;
-
-            do
-            {
-                match = data.IndexOf(pattern);
-
-                if (match < 0)
-                {
-                    break;
-                }
-
-                match += pattern.Length;
-                offset += match;
-                data = data[match..];
-
-                PackageEntry? packageEntry = null;
-
-                for (var entryId = lastEntryId; entryId < archiveEntries.Count; entryId++)
-                {
-                    if (offset >= archiveEntries[entryId].Offset)
-                    {
-                        lastEntryId = entryId;
-                        continue;
-                    }
-
-                    break;
-                }
-
-                packageEntry = archiveEntries[lastEntryId];
-
-                if (offset <= packageEntry.Offset + packageEntry.Length)
-                {
-                    matches.Add(packageEntry);
-                }
-            }
-            while (true);
-
-            return matches;
         }
 
         public void GenerateIconList(IEnumerable<string> extensions)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using Avalonia;
@@ -16,30 +17,44 @@ namespace GUI.Utils;
 static class AppIcons
 {
     // Rasterized larger than shown so icons stay sharp on high DPI displays
-    private const int RenderSize = 64;
+    private const int DefaultRenderSize = 64;
 
     private const string ResourcePrefix = "GUI.Icons.";
     private const string AssetTypesPrefix = "AssetTypes.";
     private const string AliasesResource = "GUI.Icons.AssetTypes.aliases.txt";
 
-    private static readonly Dictionary<(string Name, bool Light), Bitmap?> Cache = [];
+    private static readonly Dictionary<(string Name, bool Light, int Size), Bitmap?> Cache = [];
     private static readonly Dictionary<string, string> ExtensionAliases = LoadAliases();
     private static readonly HashSet<string> Resources = [.. Program.Assembly.GetManifestResourceNames().Where(static r => r.StartsWith(ResourcePrefix, StringComparison.Ordinal))];
 
+    /// <summary>
+    /// Steam library icons by app id, loaded by the Explorer.
+    /// </summary>
+    public static ConcurrentDictionary<int, Bitmap> GameIcons { get; } = new();
+
     /// <summary>Gets an icon by its name in GUI/Icons/, e.g. "Folder" or "AssetTypes.vpk".</summary>
-    public static Bitmap? Get(string name)
+    public static Bitmap? Get(string name, int renderSize = DefaultRenderSize)
     {
         var light = !Themer.IsDarkModeEnabled;
 
-        if (Cache.TryGetValue((name, light), out var bitmap))
+        if (Cache.TryGetValue((name, light, renderSize), out var bitmap))
         {
             return bitmap;
         }
 
-        bitmap = Load(name, light);
-        Cache[(name, light)] = bitmap;
+        bitmap = Load(name, light, renderSize);
+        Cache[(name, light, renderSize)] = bitmap;
         return bitmap;
     }
+
+    /// <summary>Raster size for an icon shown at <paramref name="displaySize"/>, in a few buckets to share the cache.</summary>
+    public static int GetRenderSize(double displaySize) => displaySize switch
+    {
+        <= 32 => DefaultRenderSize,
+        <= 64 => 128,
+        <= 128 => 256,
+        _ => 512,
+    };
 
     /// <summary>Gets the icon name for a file extension, without the leading dot, falling back to "File".</summary>
     public static string GetExtensionIconName(string? extension)
@@ -81,6 +96,26 @@ static class AppIcons
         Height = size,
     };
 
+    /// <summary>Creates an icon control showing a fixed picture, such as a game icon.</summary>
+    public static ThemedIcon Create(Bitmap image, double size = 16) => new()
+    {
+        FixedSource = image,
+        Width = size,
+        Height = size,
+    };
+
+    /// <summary>Creates a header with an icon in front of the text, for tabs, tree items and buttons.</summary>
+    public static StackPanel CreateHeader(Control icon, string text) => new()
+    {
+        Orientation = Orientation.Horizontal,
+        Spacing = 6,
+        Children =
+        {
+            icon,
+            new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center },
+        },
+    };
+
     /// <summary>Creates a header with an icon in front of the text, for tabs, tree items and buttons.</summary>
     public static StackPanel CreateHeader(string iconName, string text, double size = 16) => new()
     {
@@ -104,7 +139,7 @@ static class AppIcons
         return Resources.Contains($"{ResourcePrefix}{name}.svg");
     }
 
-    private static Bitmap? Load(string name, bool light)
+    private static Bitmap? Load(string name, bool light, int renderSize)
     {
         var resource = $"{ResourcePrefix}{name}_light.svg";
 
@@ -133,13 +168,13 @@ static class AppIcons
             return null;
         }
 
-        using var skBitmap = new SKBitmap(RenderSize, RenderSize, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using var skBitmap = new SKBitmap(renderSize, renderSize, SKColorType.Bgra8888, SKAlphaType.Premul);
         using (var canvas = new SKCanvas(skBitmap))
         {
             canvas.Clear(SKColors.Transparent);
 
             var bounds = picture.CullRect;
-            var scale = MathF.Min(RenderSize / bounds.Width, RenderSize / bounds.Height);
+            var scale = MathF.Min(renderSize / bounds.Width, renderSize / bounds.Height);
             canvas.Scale(scale);
             canvas.Translate(-bounds.Left, -bounds.Top);
             canvas.DrawPicture(picture);
@@ -184,6 +219,7 @@ static class AppIcons
 sealed class ThemedIcon : Image
 {
     private string? iconName;
+    private Bitmap? fixedSource;
 
     protected override Type StyleKeyOverride => typeof(Image);
 
@@ -193,6 +229,17 @@ sealed class ThemedIcon : Image
         set
         {
             iconName = value;
+            Refresh();
+        }
+    }
+
+    /// <summary>A picture shown instead of a named icon, it does not change with the theme.</summary>
+    public Bitmap? FixedSource
+    {
+        get => fixedSource;
+        set
+        {
+            fixedSource = value;
             Refresh();
         }
     }
@@ -212,5 +259,5 @@ sealed class ThemedIcon : Image
 
     private void OnThemeChanged(object? sender, EventArgs e) => Refresh();
 
-    private void Refresh() => Source = iconName == null ? null : AppIcons.Get(iconName);
+    private void Refresh() => Source = fixedSource ?? (iconName == null ? null : AppIcons.Get(iconName, AppIcons.GetRenderSize(double.IsNaN(Width) ? 16 : Width)));
 }

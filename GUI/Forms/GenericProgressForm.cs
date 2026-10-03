@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace GUI.Forms
 {
-    partial class GenericProgressForm : ThemedForm, IProgress<string>
+    partial class GenericProgressForm : ThemedForm, IProgress<string>, Types.PackageViewer.IProgressBarReporter
     {
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 500 };

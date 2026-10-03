@@ -12,7 +12,7 @@ namespace GUI.Controls;
 /// </summary>
 sealed class RendererControl : Grid
 {
-    private const double SidebarWidth = 240;
+    private const double SidebarWidth = 220;
 
     private readonly StackPanel controlsPanel;
     private readonly Panel controlsHost;
@@ -38,8 +38,6 @@ sealed class RendererControl : Grid
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
         };
 
-        controlsHost = new DockPanel { Children = { sidebar } };
-
         GLControlContainer = new Panel { ClipToBounds = true, Background = Brushes.Black };
 
         moveSpeed = new TextBlock
@@ -50,16 +48,17 @@ sealed class RendererControl : Grid
             FontSize = 11,
         };
 
-        var viewportHost = new DockPanel();
+        // The move speed sits at the bottom of the options column, like in the WinForms viewer
         DockPanel.SetDock(moveSpeed, Dock.Bottom);
-        viewportHost.Children.Add(moveSpeed);
-        viewportHost.Children.Add(GLControlContainer);
+        controlsHost = new DockPanel { Children = { moveSpeed, sidebar } };
+
+        var viewportHost = GLControlContainer;
 
         splitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns, Background = Brushes.Transparent };
 
         // The full viewer has options on the left, a package preview keeps the list on the left and options on the right
         ColumnDefinitions = isPreview
-            ? new ColumnDefinitions($"*,4,{SidebarWidth - 20}")
+            ? new ColumnDefinitions($"*,4,{SidebarWidth}")
             : new ColumnDefinitions($"{SidebarWidth},4,*");
 
         SetColumn(controlsHost, isPreview ? 2 : 0);
