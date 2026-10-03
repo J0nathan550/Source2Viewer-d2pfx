@@ -112,7 +112,7 @@ namespace GUI.Controls
             var maxTextureSize = Numeric(config.MaxTextureSize, 16, 10240, 64, v => config.MaxTextureSize = (int)v);
 
             var sensitivityValue = new TextBlock();
-            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 0, height: 32, sensitivityValue, v =>
+            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 0, sensitivityValue, v =>
             {
                 config.MouseSensitivity = (float)(v / 10);
                 return config.MouseSensitivity.ToString("0.0", CultureInfo.InvariantCulture);
@@ -154,7 +154,7 @@ namespace GUI.Controls
 
             // Audio
             var volumeValue = new TextBlock();
-            var volume = Slider(MathF.Round(Math.Clamp(config.Volume, 0, 1) * 100), 100, tickFrequency: 0, height: 32, volumeValue, v =>
+            var volume = Slider(MathF.Round(Math.Clamp(config.Volume, 0, 1) * 100), 100, tickFrequency: 0, volumeValue, v =>
             {
                 config.Volume = (float)(v / 100);
                 return string.Create(CultureInfo.InvariantCulture, $"{(int)v}%");
@@ -325,7 +325,7 @@ namespace GUI.Controls
             return numeric;
         }
 
-        private static Avalonia.Controls.Slider Slider(double value, double max, double tickFrequency, double height, TextBlock valueLabel, Func<double, string> set)
+        private static Avalonia.Controls.Slider Slider(double value, double max, double tickFrequency, TextBlock valueLabel, Func<double, string> set)
         {
             var slider = new Avalonia.Controls.Slider
             {
@@ -337,8 +337,16 @@ namespace GUI.Controls
                 SmallChange = 1,
                 TickPlacement = tickFrequency > 0 ? TickPlacement.BottomRight : TickPlacement.None,
                 Width = 160,
-                Height = height,
             };
+
+            // The theme pads the track with fixed space above and below it for tick bars, which puts the thumb
+            // below the row's center when there are none
+            if (tickFrequency <= 0)
+            {
+                slider.Resources["SliderPreContentMargin"] = new GridLength(0);
+                slider.Resources["SliderPostContentMargin"] = new GridLength(0);
+                slider.Resources["SliderHorizontalHeight"] = 20d;
+            }
 
             // Ticks are drawn sparser than the steps the value snaps to
             if (tickFrequency > 0)
