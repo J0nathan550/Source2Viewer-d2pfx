@@ -70,7 +70,8 @@ sealed class DocumentTab : System.Windows.Forms.TabPage, IDisposable
             closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         }
 
-        var header = new MainTabHeader(this, title, closeButton) { LastChildFill = true };
+        var shape = new MainTabShape(this);
+        var header = new MainTabHeader(this, title, closeButton, shape) { LastChildFill = true };
         DockPanel.SetDock(icon, Dock.Left);
         header.Children.Add(icon);
 
@@ -91,7 +92,8 @@ sealed class DocumentTab : System.Windows.Forms.TabPage, IDisposable
 
         header.Children.Add(title);
 
-        Header = header;
+        // The shape is drawn behind the header, panels can not draw on their own
+        Header = new Panel { Children = { shape, header } };
     }
 
     public string Text

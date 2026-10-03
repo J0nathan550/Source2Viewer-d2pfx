@@ -88,22 +88,21 @@ sealed class MainTabStripPanel : Panel
 }
 
 /// <summary>
-/// The header of a main window tab, drawn like the WinForms MainTabs: the selected tab takes the page color with
-/// rounded top corners that curve out into the page, and a hovered tab is a rounded box outlined in the accent color.
+/// The icon, title and close button of a main window tab, colored by the tab's state like the WinForms MainTabs.
 /// </summary>
 sealed class MainTabHeader : DockPanel
 {
-    private const double Radius = 8;
-
     private readonly TabItem tab;
     private readonly TextBlock title;
     private readonly TabCloseButton? closeButton;
+    private readonly MainTabShape shape;
 
-    public MainTabHeader(TabItem tab, TextBlock title, TabCloseButton? closeButton)
+    public MainTabHeader(TabItem tab, TextBlock title, TabCloseButton? closeButton, MainTabShape shape)
     {
         this.tab = tab;
         this.title = title;
         this.closeButton = closeButton;
+        this.shape = shape;
 
         // Transparent rather than null so the whole tab can be clicked, not just the icon and text
         Background = Brushes.Transparent;
@@ -132,7 +131,7 @@ sealed class MainTabHeader : DockPanel
         title.Foreground = foreground;
         closeButton?.SetForeground(foreground);
 
-        InvalidateVisual();
+        shape.InvalidateVisual();
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -147,11 +146,18 @@ sealed class MainTabHeader : DockPanel
         base.OnDetachedFromVisualTree(e);
         Themer.ThemeChanged -= OnThemeChanged;
     }
+}
+
+/// <summary>
+/// The background of a main window tab: the selected tab takes the page color with rounded top corners that
+/// curve out into the page, and a hovered tab is a rounded box outlined in the accent color.
+/// </summary>
+sealed class MainTabShape(TabItem tab) : Control
+{
+    private const double Radius = 8;
 
     public override void Render(DrawingContext context)
     {
-        base.Render(context);
-
         var colors = Themer.CurrentThemeColors;
         var width = Bounds.Width;
         var height = Bounds.Height;
