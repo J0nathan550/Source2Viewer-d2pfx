@@ -242,13 +242,11 @@ sealed class TabCloseButton : Control
 
         if (IsPointerOver)
         {
-            var circle = Themer.IsDarkModeEnabled
-                ? new ImmutableSolidColorBrush(Colors.White, 0.25)
-                : new ImmutableSolidColorBrush(Colors.Black, 0.12);
-            context.DrawEllipse(circle, null, center, Bounds.Width / 2, Bounds.Height / 2);
+            context.DrawEllipse(Themer.GetBrush(Themer.CurrentThemeColors.Attention), null, center, Bounds.Width / 2, Bounds.Height / 2);
         }
 
-        var pen = new ImmutablePen(foreground, 1);
+        // White on the red circle while hovered, so the cross stays readable in every theme
+        var pen = new ImmutablePen(IsPointerOver ? Brushes.White : foreground, 1);
         var half = CrossSize / 2;
         context.DrawLine(pen, new Point(center.X - half, center.Y - half), new Point(center.X + half, center.Y + half));
         context.DrawLine(pen, new Point(center.X - half, center.Y + half), new Point(center.X + half, center.Y - half));
