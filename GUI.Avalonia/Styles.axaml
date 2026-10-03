@@ -320,7 +320,13 @@
         <Setter Property="BorderThickness" Value="1" />
     </Style>
 
-    <Style Selector="NumericUpDown.settings, ComboBox.settings">
+    <Style Selector="NumericUpDown.settings">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="4,0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="ComboBox.settings">
         <Setter Property="MinHeight" Value="0" />
         <Setter Property="Padding" Value="4,0" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
