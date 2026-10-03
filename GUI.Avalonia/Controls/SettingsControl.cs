@@ -28,7 +28,7 @@ namespace GUI.Controls
             // Game content search paths
             gamePaths = new ListBox { Height = 140, ItemsSource = config.GameSearchPaths.ToList() };
 
-            var gamePathsAdd = new Button { Content = AppIcons.CreateHeader("FileAdd", "Add .vpk or gameinfo.gi") };
+            var gamePathsAdd = new Button { Content = AppIcons.CreateHeader("FileAdd", "Add .vpk or gameinfo.gi", 16) };
             gamePathsAdd.Click += async (_, _) =>
             {
                 var files = await AppFileDialogs.OpenFilesAsync(null, "Valve Pak (*.vpk) or gameinfo.gi|*.vpk;gameinfo.gi|All files (*.*)|*.*", multiselect: false, updateRemembered: false).ConfigureAwait(true);
@@ -53,7 +53,7 @@ namespace GUI.Controls
                 AddGamePath(fileName);
             };
 
-            var gamePathsAddFolder = new Button { Content = AppIcons.CreateHeader("FolderAdd", "Add folder") };
+            var gamePathsAddFolder = new Button { Content = AppIcons.CreateHeader("FolderAdd", "Add folder", 16) };
             gamePathsAddFolder.Click += async (_, _) =>
             {
                 var folder = await AppFileDialogs.PickFolderAsync(null, AppFileDialogs.RememberIn.OpenDirectory, updateRemembered: false).ConfigureAwait(true);
@@ -65,7 +65,7 @@ namespace GUI.Controls
                 }
             };
 
-            var gamePathsRemove = new Button { Content = AppIcons.CreateHeader("FolderRemove", "Remove") };
+            var gamePathsRemove = new Button { Content = AppIcons.CreateHeader("FolderRemove", "Remove", 16) };
             gamePathsRemove.Click += (_, _) =>
             {
                 if (gamePaths.SelectedItem is string path)
@@ -168,7 +168,7 @@ namespace GUI.Controls
 
             if (FileAssociation.IsSupported)
             {
-                var registerAssociation = new Button { Content = AppIcons.CreateHeader("VPKLink", "Register .vpk file association") };
+                var registerAssociation = new Button { Content = AppIcons.CreateHeader("VPKLink", "Register .vpk file association", 16) };
                 registerAssociation.Click += async (_, _) => await FileAssociation.RegisterAsync().ConfigureAwait(true);
                 explorerGroup.Children.Add(registerAssociation);
             }

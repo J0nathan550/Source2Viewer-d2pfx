@@ -4,16 +4,6 @@
         <Setter Property="Background" Value="{DynamicResource S2vAppBrush}" />
     </Style>
 
-    <Style Selector="Menu.main">
-        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
-        <Setter Property="BorderThickness" Value="0,0,0,1" />
-    </Style>
-
-    <Style Selector="Menu.main > MenuItem">
-        <Setter Property="Padding" Value="8,4" />
-    </Style>
-
     <Style Selector="Border.statusBar">
         <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
@@ -40,61 +30,79 @@
         <Setter Property="Background" Value="{DynamicResource S2vHoverAccentBrush}" />
     </Style>
 
-    <Style Selector="Button.tabClose">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="Padding" Value="2" />
-        <Setter Property="MinHeight" Value="0" />
-        <Setter Property="Opacity" Value="0.6" />
-    </Style>
-
-    <Style Selector="Button.tabClose:pointerover">
-        <Setter Property="Opacity" Value="1" />
-    </Style>
-
-    <Style Selector="Button.tabClose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{DynamicResource S2vAttentionBrush}" />
-    </Style>
-
     <Style Selector="GridSplitter">
         <Setter Property="Background" Value="{DynamicResource S2vBorderBrush}" />
     </Style>
 
-    <!-- Top bar: logo and menu over the app background, like the WinForms custom title bar -->
+    <!-- Top bar: logo and menu over the app background, in the title bar like the WinForms custom frame -->
     <Style Selector="DockPanel.topBar">
         <Setter Property="Background" Value="{DynamicResource S2vAppBrush}" />
     </Style>
 
-    <Style Selector="DockPanel.topBar > Menu.main">
+    <Style Selector="Menu.main">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Height" Value="32" />
+    </Style>
+
+    <!-- Menu items are square and outlined in the accent color while hovered, like the WinForms menus -->
+    <Style Selector="MenuItem">
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+
+    <Style Selector="MenuItem:selected">
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vAccentBrush}" />
     </Style>
 
     <Style Selector="Menu.main > MenuItem">
-        <Setter Property="Padding" Value="8,6" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="4,0" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="CornerRadius" Value="0" />
     </Style>
 
-    <!-- Main tabs: fixed width buttons with rounded tops, the selected one lifted to the page color -->
+    <!-- Menu icons are 24 pixels like the WinForms ImageScalingSize, the theme shrinks them to 16 -->
+    <Style Selector="MenuItem /template/ ContentControl#PART_IconPresenter">
+        <Setter Property="Width" Value="24" />
+        <Setter Property="Height" Value="24" />
+    </Style>
+
+    <Style Selector="ContextMenu Separator, MenuItem Separator">
+        <Setter Property="Background" Value="{DynamicResource S2vBorderBrush}" />
+    </Style>
+
+    <!--
+        Main tabs: the strip is the app background and the page below it is lifted to AppMiddle.
+        Tabs only show their header, which draws the selected and hovered shapes itself (MainTabHeader).
+    -->
     <Style Selector="TabControl.main">
         <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="{DynamicResource S2vAppBrush}" />
+    </Style>
+
+    <Style Selector="TabControl.main[TabStripPlacement=Top] /template/ ItemsPresenter#PART_ItemsPresenter">
+        <Setter Property="Margin" Value="0" />
+    </Style>
+
+    <Style Selector="TabControl.main /template/ ContentPresenter#PART_SelectedContentHost, TabControl.main /template/ ContentPresenter#PART_SelectedContentHost2">
         <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
     </Style>
 
     <Style Selector="TabControl.main > TabItem">
-        <Setter Property="Width" Value="200" />
-        <Setter Property="MinHeight" Value="32" />
-        <Setter Property="Height" Value="32" />
         <Setter Property="FontSize" Value="13" />
-        <Setter Property="Padding" Value="10,0,4,0" />
-        <Setter Property="Margin" Value="0,0,2,0" />
-        <Setter Property="CornerRadius" Value="8,8,0,0" />
-        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="TabControl.main > TabItem /template/ Border#PART_SelectedPipe">
-        <Setter Property="IsVisible" Value="False" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0" />
+        <Setter Property="Template">
+            <ControlTemplate TargetType="TabItem">
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Background="Transparent"
+                                  Content="{TemplateBinding Header}"
+                                  ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                  HorizontalContentAlignment="Stretch"
+                                  VerticalContentAlignment="Stretch" />
+            </ControlTemplate>
+        </Setter>
     </Style>
 
     <!-- Package previews host a single tab without a header -->
@@ -106,6 +114,15 @@
         <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
         <Setter Property="MinHeight" Value="26" />
         <Setter Property="Padding" Value="6,4" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+
+    <!-- Flat like the WinForms text boxes: no rounded corners, and no border or color change on hover and focus -->
+    <Style Selector="TextBox.pathBox:pointerover /template/ Border#PART_BorderElement, TextBox.pathBox:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
     </Style>
 
     <Style Selector="ScrollViewer.page">
@@ -115,7 +132,7 @@
     <Style Selector="Border.groupBox">
         <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="5" />
         <Setter Property="Padding" Value="12,8,12,12" />
     </Style>
 
@@ -165,5 +182,10 @@
     <Style Selector="ComboBoxItem.header">
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="IsEnabled" Value="False" />
+    </Style>
+
+    <!-- The main window shows its title in the status bar, the logo and menu take the title bar's place -->
+    <Style Selector="WindowDrawnDecorations /template/ Panel#PART_TitleTextPanel">
+        <Setter Property="Opacity" Value="0" />
     </Style>
 </Styles>

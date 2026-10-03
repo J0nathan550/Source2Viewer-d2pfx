@@ -54,6 +54,67 @@ public static class AppMessageDialogs
         return ShowAsync(message, title, icon, [("Yes", true), ("No", false), ("Cancel", null)]);
     }
 
+    /// <summary>
+    /// Asks for a line of text, like the WinForms PromptForm.
+    /// </summary>
+    /// <returns><see langword="null"/> when cancelled.</returns>
+    public static async Task<string?> PromptAsync(string title)
+    {
+        if (GetOwner() is not { } owner)
+        {
+            return null;
+        }
+
+        string? result = null;
+
+        var window = new Window
+        {
+            Title = title,
+            SizeToContent = SizeToContent.Height,
+            Width = 380,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+        };
+
+        var textBox = new TextBox();
+
+        var submitButton = new Button { Content = "Submit", MinWidth = 80, IsDefault = true, HorizontalContentAlignment = HorizontalAlignment.Center };
+        submitButton.Click += (_, _) =>
+        {
+            result = textBox.Text ?? string.Empty;
+            window.Close();
+        };
+
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 80, IsCancel = true, HorizontalContentAlignment = HorizontalAlignment.Center };
+        cancelButton.Click += (_, _) => window.Close();
+
+        window.Content = new StackPanel
+        {
+            Margin = new(16),
+            Spacing = 8,
+            Children =
+            {
+                new TextBlock { Text = string.Concat(title, ":") },
+                textBox,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Margin = new(0, 8, 0, 0),
+                    Children = { submitButton, cancelButton },
+                },
+            },
+        };
+
+        window.Opened += (_, _) => textBox.Focus();
+
+        await window.ShowDialog(owner).ConfigureAwait(true);
+
+        return result;
+    }
+
     internal static Window? GetOwner()
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)

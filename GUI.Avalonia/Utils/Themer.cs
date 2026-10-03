@@ -1,6 +1,7 @@
 using System.Linq;
 using Avalonia;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
 
@@ -29,6 +30,7 @@ namespace GUI.Utils
             public required System.Drawing.Color Border { get; init; }
             public required System.Drawing.Color Contrast { get; init; }
             public required System.Drawing.Color ContrastSoft { get; init; }
+            public required System.Drawing.Color ControlBoxHighlight { get; init; }
             public required System.Drawing.Color HoverAccent { get; init; }
             public required System.Drawing.Color Accent { get; init; }
             public required System.Drawing.Color Attention { get; init; }
@@ -42,6 +44,7 @@ namespace GUI.Utils
             Border = System.Drawing.Color.FromArgb(51, 57, 74),
             Contrast = System.Drawing.Color.White,
             ContrastSoft = System.Drawing.Color.FromArgb(158, 159, 164),
+            ControlBoxHighlight = System.Drawing.Color.FromArgb(67, 67, 67),
             HoverAccent = System.Drawing.Color.FromArgb(0, 66, 151),
             Accent = System.Drawing.Color.FromArgb(99, 161, 255),
             Attention = System.Drawing.Color.FromArgb(214, 55, 55),
@@ -55,6 +58,7 @@ namespace GUI.Utils
             Border = System.Drawing.Color.FromArgb(188, 188, 188),
             Contrast = System.Drawing.Color.Black,
             ContrastSoft = System.Drawing.Color.FromArgb(80, 80, 80),
+            ControlBoxHighlight = System.Drawing.Color.FromArgb(170, 170, 170),
             HoverAccent = System.Drawing.Color.FromArgb(140, 191, 255),
             Accent = System.Drawing.Color.FromArgb(99, 161, 255),
             Attention = System.Drawing.Color.FromArgb(200, 40, 40),
@@ -68,6 +72,7 @@ namespace GUI.Utils
             Border = System.Drawing.Color.FromArgb(60, 60, 60),
             Contrast = System.Drawing.Color.White,
             ContrastSoft = System.Drawing.Color.FromArgb(160, 160, 160),
+            ControlBoxHighlight = System.Drawing.Color.FromArgb(67, 67, 67),
             HoverAccent = System.Drawing.Color.FromArgb(70, 70, 70),
             Accent = System.Drawing.Color.FromArgb(110, 110, 110),
             Attention = System.Drawing.Color.FromArgb(214, 55, 55),
@@ -83,6 +88,9 @@ namespace GUI.Utils
         };
 
         public static bool IsDarkModeEnabled => CurrentTheme != AppTheme.Light;
+
+        /// <summary>Height of the main window's logo and menu bar, which is also its title bar.</summary>
+        public const int MainTitleBarHeight = 48;
 
         public static event EventHandler? ThemeChanged;
 
@@ -162,6 +170,9 @@ namespace GUI.Utils
 
         private static Color ToColor(System.Drawing.Color color, byte? alpha = null) => Color.FromArgb(alpha ?? color.A, color.R, color.G, color.B);
 
+        /// <summary>A brush of a palette color, for controls that draw themselves.</summary>
+        public static IImmutableSolidColorBrush GetBrush(System.Drawing.Color color, byte? alpha = null) => new ImmutableSolidColorBrush(ToColor(color, alpha));
+
         /// <summary>
         /// Recolors the Fluent theme with the WinForms palette, and publishes the palette as brushes
         /// (S2vApp, S2vAppMiddle, ...) for our own styles.
@@ -237,6 +248,13 @@ namespace GUI.Utils
             SetBrush("MenuFlyoutItemBackgroundPointerOver", ToColor(colors.HoverAccent));
             SetBrush("MenuFlyoutSubItemBackgroundPointerOver", ToColor(colors.HoverAccent));
             SetBrush("MenuFlyoutSubItemBackgroundSubMenuOpened", ToColor(colors.HoverAccent));
+
+            // Window buttons drawn into the extended title bar, sized and colored like the WinForms ControlsBoxPanel
+            SetBrush("CaptionButtonBackground", ToColor(colors.ControlBoxHighlight));
+            SetBrush("CaptionButtonBorderBrush", ToColor(colors.Border));
+            SetBrush("CaptionButtonForeground", ToColor(colors.Contrast));
+            resources["CaptionButtonWidth"] = 50d;
+            resources["CaptionButtonHeight"] = (double)MainTitleBarHeight;
 
             SetBrush("TreeViewItemBackgroundPointerOver", ToColor(colors.HoverAccent, 0x66));
             SetBrush("TreeViewItemBackgroundSelected", ToColor(colors.HoverAccent));

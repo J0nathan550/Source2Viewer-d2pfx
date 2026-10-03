@@ -4,6 +4,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Chrome;
+using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -38,6 +42,12 @@ namespace GUI
         private ExplorerControl? explorerControl;
         private string windowTitle = AppTitle;
 
+        // The web view is destroyed whenever it leaves the visual tree, which a tab page does each time another
+        // tab is selected. So it lives over the pages instead, and is only shown while its tab is selected.
+        private readonly Decorator pageOverlay;
+        private ContentPresenter? pageHost;
+        private DocumentTab? d2pfxTab;
+
         public MainWindow()
         {
             Title = AppTitle;
@@ -47,14 +57,32 @@ namespace GUI
 
             RestoreWindowPlacement();
 
+            // Like the WinForms custom frame, the logo and menu bar are the title bar, with the window
+            // buttons drawn at its right end. Other platforms keep their own window decorations.
+            if (OperatingSystem.IsWindows())
+            {
+                ExtendClientAreaToDecorationsHint = true;
+                ExtendClientAreaTitleBarHeightHint = Themer.MainTitleBarHeight;
+            }
+
             var console = new ConsoleTab();
             Log.SetConsoleTab(console);
 
             mainTabs = ViewerContentPresenter.CreateTabControl();
             mainTabs.Classes.Remove("content");
             mainTabs.Classes.Add("main");
+            mainTabs.ItemsPanel = new FuncTemplate<Panel?>(static () => new MainTabStripPanel());
             mainTabs.SelectionChanged += OnMainSelectedTabChanged;
             mainTabs.AddHandler(ContextRequestedEvent, OnTabContextRequested, RoutingStrategies.Bubble);
+            mainTabs.TemplateApplied += (_, e) => pageHost = e.NameScope.Find<ContentPresenter>("PART_SelectedContentHost");
+            mainTabs.LayoutUpdated += (_, _) => UpdatePageOverlayBounds();
+
+            pageOverlay = new Decorator
+            {
+                IsVisible = false,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+            };
 
             consoleTab = new DocumentTab("Console", "Log", closable: false)
             {
@@ -73,7 +101,7 @@ namespace GUI
             DockPanel.SetDock(bottomPanel, Dock.Bottom);
             root.Children.Add(topBar);
             root.Children.Add(bottomPanel);
-            root.Children.Add(mainTabs);
+            root.Children.Add(new Panel { Children = { mainTabs, pageOverlay } });
             Content = root;
 
             AddKeyBindings();
@@ -104,18 +132,84 @@ namespace GUI
             logo.Margin = new(4, 8);
             logo.VerticalAlignment = VerticalAlignment.Center;
             logo.Cursor = new Cursor(StandardCursorType.Hand);
-            logo.PointerReleased += async (_, _) => await ShowAboutDialogAsync().ConfigureAwait(true);
+            logo.PointerReleased += (_, e) =>
+            {
+                if (e.InitialPressMouseButton == MouseButton.Left)
+                {
+                    OpenSystemMenu(logo);
+                }
+            };
 
             var menu = CreateMenu();
             menu.Classes.Add("main");
             menu.VerticalAlignment = VerticalAlignment.Center;
+            menu.HorizontalAlignment = HorizontalAlignment.Left;
 
-            var topBar = new DockPanel { Height = 52 };
+            var topBar = new DockPanel { Height = Themer.MainTitleBarHeight, Margin = new(0, 0, 0, 4) };
             topBar.Classes.Add("topBar");
             DockPanel.SetDock(logo, Dock.Left);
             topBar.Children.Add(logo);
             topBar.Children.Add(menu);
+
+            // The empty part of the bar drags the window, the logo and the menu stay clickable
+            WindowDecorationProperties.SetElementRole(topBar, WindowDecorationsElementRole.TitleBar);
+            WindowDecorationProperties.SetElementRole(logo, WindowDecorationsElementRole.User);
+            WindowDecorationProperties.SetElementRole(menu, WindowDecorationsElementRole.User);
+
             return topBar;
+        }
+
+        /// <summary>
+        /// The window menu, opened from the logo like the WinForms title bar opens the system menu,
+        /// with the same website, settings and about entries added to it.
+        /// </summary>
+        private void OpenSystemMenu(Control target)
+        {
+            var maximized = WindowState == WindowState.Maximized;
+            var menu = new ContextMenu
+            {
+                Placement = PlacementMode.BottomEdgeAlignedLeft,
+                PlacementTarget = target,
+            };
+
+            void Item(string header, Action onClick, bool enabled = true, KeyGesture? gesture = null)
+            {
+                var item = new MenuItem { Header = header, IsEnabled = enabled, InputGesture = gesture };
+                item.Click += (_, _) => onClick();
+                menu.Items.Add(item);
+            }
+
+            Item("_Restore", () => WindowState = WindowState.Normal, enabled: maximized);
+            Item("Mi_nimize", () => WindowState = WindowState.Minimized);
+            Item("Ma_ximize", () => WindowState = WindowState.Maximized, enabled: !maximized);
+            menu.Items.Add(new Separator());
+            Item("_Close", Close, gesture: new KeyGesture(Key.F4, KeyModifiers.Alt));
+            menu.Items.Add(new Separator());
+            Item("Website", () => AboutWindow.OpenUrl(D2PfxBrowserControl.TargetUrl));
+            Item("Settings", OpenSettings);
+            Item("About", () => _ = ShowAboutDialogAsync());
+
+            menu.Open(target);
+        }
+
+        /// <summary>
+        /// A menu bar item with its icon in front of the text, the theme only shows icons in drop downs.
+        /// </summary>
+        private static MenuItem CreateTopLevelItem(string header, string icon)
+        {
+            return new MenuItem
+            {
+                Header = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 4,
+                    Children =
+                    {
+                        AppIcons.Create(icon),
+                        new AccessText { Text = header, VerticalAlignment = VerticalAlignment.Center },
+                    },
+                },
+            };
         }
 
         private Menu CreateMenu()
@@ -127,22 +221,30 @@ namespace GUI
                 return item;
             }
 
-            var file = new MenuItem { Header = "F_ile", Icon = AppIcons.Create("Folder") };
+            static MenuItem TopLevelItem(string header, string icon, Action onClick)
+            {
+                var item = CreateTopLevelItem(header, icon);
+                item.Click += (_, _) => onClick();
+                return item;
+            }
+
+            var file = CreateTopLevelItem("F_ile", "Folder");
             file.Items.Add(Item("_Open", "Open", () => _ = OpenFilesFromDialogAsync(), new KeyGesture(Key.O, KeyModifiers.Control)));
+            file.Items.Add(new Separator());
 
             if (FileAssociation.IsSupported)
             {
-                file.Items.Add(new Separator());
                 file.Items.Add(Item("Open VPKs with this app", "VPKLink", () => _ = FileAssociation.RegisterAsync()));
             }
 
+            file.Items.Add(Item("Create VPK from folder", "VPKCreate", CreateVpkFromFolder));
             file.Items.Add(new Separator());
             file.Items.Add(Item("Open welcome screen", "WelcomeScreen", OpenWelcome));
 #if DEBUG
             file.Items.Add(Item("Validate shaders", "ValidateShaders", ValidateShaders));
 #endif
 
-            var tools = new MenuItem { Header = "_Tools", Icon = AppIcons.Create("Tools") };
+            var tools = CreateTopLevelItem("_Tools", "Tools");
 
             // These tools are WinForms dialogs that have not been ported yet
             foreach (var (header, icon) in new[]
@@ -154,6 +256,7 @@ namespace GUI
             {
                 var item = new MenuItem { Header = header, Icon = AppIcons.Create(icon), IsEnabled = false };
                 ToolTip.SetTip(item, "Not available in the cross-platform build yet.");
+                ToolTip.SetShowOnDisabled(item, true);
                 tools.Items.Add(item);
             }
 
@@ -162,12 +265,12 @@ namespace GUI
                 Items =
                 {
                     file,
-                    Item("Explorer", "Explorer", OpenExplorer),
-                    Item("_Find", "Find", () => _ = FindAsync(), new KeyGesture(Key.F, KeyModifiers.Control)),
+                    TopLevelItem("Explorer", "Explorer", OpenExplorer),
+                    TopLevelItem("_Find", "Find", () => _ = FindAsync()),
                     tools,
-                    Item("_Settings", "Settings", OpenSettings),
-                    Item("_About", "About", () => _ = ShowAboutDialogAsync()),
-                    Item("dota2prnfx", "dota2pornfx", () => AboutWindow.OpenUrl("https://h6rd.github.io/Dota2PornFxWeb/")),
+                    TopLevelItem("_Settings", "Settings", OpenSettings),
+                    TopLevelItem("_About", "About", () => _ = ShowAboutDialogAsync()),
+                    TopLevelItem("dota2prnfx", "dota2pornfx", ShowD2PfxTab),
                 },
             };
         }
@@ -446,7 +549,31 @@ namespace GUI
                 return;
             }
 
+            pageOverlay.IsVisible = d2pfxTab != null && SelectedTab == d2pfxTab;
             ShowSelectedTabStatus();
+        }
+
+        /// <summary>Keeps <see cref="pageOverlay"/> exactly over the page of the selected tab.</summary>
+        private void UpdatePageOverlayBounds()
+        {
+            if (pageHost?.TranslatePoint(default, mainTabs) is not { } origin)
+            {
+                return;
+            }
+
+            var margin = new Thickness(origin.X, origin.Y, 0, 0);
+            var size = pageHost.Bounds.Size;
+
+            if (pageOverlay.Margin != margin)
+            {
+                pageOverlay.Margin = margin;
+            }
+
+            if (pageOverlay.Width != size.Width || pageOverlay.Height != size.Height)
+            {
+                pageOverlay.Width = size.Width;
+                pageOverlay.Height = size.Height;
+            }
         }
 
         private void UpdateWindowTitle(string? toolTipText)
@@ -557,6 +684,48 @@ namespace GUI
             InsertSpecialTab(new DocumentTab("Settings", "Settings") { ToolTipText = "Settings", Content = new SettingsControl() }, 1);
         }
 
+        /// <summary>Opens the dota2prnfx site in a tab, or selects that tab if it is already open.</summary>
+        public void ShowD2PfxTab()
+        {
+            if (d2pfxTab != null)
+            {
+                mainTabs.SelectedItem = d2pfxTab;
+                return;
+            }
+
+            // The page itself is shown by the overlay, the tab only holds its place
+            var tab = new DocumentTab("dota2prnfx", "dota2pornfx") { Content = new Border() };
+
+            // The icon is a picture that fills its whole square, shrink it to sit like the other icons
+            tab.SetIconScale(0.72);
+
+            pageOverlay.Child = new D2PfxBrowserControl();
+            d2pfxTab = tab;
+
+            InsertSpecialTab(tab, mainTabs.ItemCount);
+        }
+
+        /// <summary>Opens an empty package that folders and files can be added to, then saved as a VPK.</summary>
+        private void CreateVpkFromFolder()
+        {
+            var context = new VrfGuiContext("new.vpk", null);
+
+            try
+            {
+#pragma warning disable CA2000 // Ownership is transferred to the tab, which disposes its contents
+                var viewer = new Types.PackageViewer.PackageViewer(context);
+                var contents = new OwningDecorator(viewer, context) { Child = viewer.CreateEmpty() };
+                context = null;
+
+                InsertSpecialTab(new DocumentTab("New VPK", "AssetTypes.vpk") { ToolTipText = "New VPK", Content = contents }, mainTabs.ItemCount);
+#pragma warning restore CA2000
+            }
+            finally
+            {
+                context?.Dispose();
+            }
+        }
+
         private void CloseTab(DocumentTab? tab)
         {
             if (tab == null || !tab.Closable)
@@ -566,6 +735,16 @@ namespace GUI
 
             var index = mainTabs.Items.IndexOf(tab);
             var wasSelected = mainTabs.SelectedItem == tab;
+
+            if (tab == d2pfxTab)
+            {
+                d2pfxTab = null;
+                pageOverlay.IsVisible = false;
+
+                var browser = pageOverlay.Child as D2PfxBrowserControl;
+                pageOverlay.Child = null;
+                browser?.Dispose();
+            }
 
             // The explorer is kept alive and reused when it is opened again
             if (explorerControl != null && (tab.Content == explorerControl || tab.Content is WelcomeControl))

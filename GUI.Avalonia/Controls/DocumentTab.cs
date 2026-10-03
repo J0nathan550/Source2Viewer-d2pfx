@@ -41,33 +41,41 @@ sealed class DocumentTab : System.Windows.Forms.TabPage, IDisposable
         Closable = closable;
         Classes.Add("document");
 
+        // Shown after hovering a while, like the WinForms tab tooltips
+        ToolTip.SetShowDelay(this, 1000);
+
         title = new TextBlock
         {
             Text = text,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new(2, 0, 4, 0),
         };
 
+        // Centered vertically, and as far from the left edge as from the top
         icon = AppIcons.Create(iconName ?? "File");
         icon.IsVisible = iconName != null;
         icon.VerticalAlignment = VerticalAlignment.Center;
+        icon.Margin = new((MainTabStripPanel.TabHeight - AppIcons.DefaultSize) / 2, 0, 0, 0);
 
-        var header = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(icon, Dock.Left);
-        header.Children.Add(icon);
+        TabCloseButton? closeButton = null;
 
         if (closable)
         {
-            var closeButton = new Button
+            closeButton = new TabCloseButton
             {
-                Content = AppIcons.Create("CloseTab", 12),
                 VerticalAlignment = VerticalAlignment.Center,
-                Focusable = false,
+                Margin = new(0, 0, 7, 0),
             };
-            closeButton.Classes.Add("tabClose");
-            ToolTip.SetTip(closeButton, "Close tab");
             closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+        }
 
+        var header = new MainTabHeader(this, title, closeButton) { LastChildFill = true };
+        DockPanel.SetDock(icon, Dock.Left);
+        header.Children.Add(icon);
+
+        if (closeButton != null)
+        {
             DockPanel.SetDock(closeButton, Dock.Right);
             header.Children.Add(closeButton);
 
@@ -81,7 +89,6 @@ sealed class DocumentTab : System.Windows.Forms.TabPage, IDisposable
             };
         }
 
-        title.Margin = new(8, 0, 4, 0);
         header.Children.Add(title);
 
         Header = header;
@@ -108,6 +115,18 @@ sealed class DocumentTab : System.Windows.Forms.TabPage, IDisposable
     {
         icon.FixedSource = image;
         icon.IsVisible = true;
+    }
+
+    /// <summary>Draws the icon smaller inside its usual space, for pictures that have no padding of their own.</summary>
+    public void SetIconScale(double scale)
+    {
+        var size = AppIcons.DefaultSize * scale;
+        var padding = (AppIcons.DefaultSize - size) / 2;
+        var left = (MainTabStripPanel.TabHeight - AppIcons.DefaultSize) / 2;
+
+        icon.Width = size;
+        icon.Height = size;
+        icon.Margin = new(left + padding, 0, padding, 0);
     }
 
     public void Dispose()

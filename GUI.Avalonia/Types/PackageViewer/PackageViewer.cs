@@ -77,6 +77,9 @@ namespace GUI.Types.PackageViewer
         private Dictionary<string, SortedSet<string>>? searchDataKeys;
         private bool searchDataBuilt;
 
+        // A new package being put together with Create VPK from folder
+        private bool isEditingPackage;
+
         public bool DeletedFilesRecovered { get; private set; }
 
         public VrfGuiContext VrfGuiContext => vrfGuiContext;
@@ -128,6 +131,24 @@ namespace GUI.Types.PackageViewer
 
             // Recovering deleted files only works on split packages
             DeletedFilesRecovered = !package.IsDirVPK;
+        }
+
+        /// <summary>
+        /// Starts an empty package that folders and files can be added to and then saved, for Create VPK from folder.
+        /// </summary>
+        public Control CreateEmpty()
+        {
+            isEditingPackage = true;
+
+            var package = new Package();
+            package.AddFile("README.txt", []); // TODO: Otherwise package.Entries is null
+
+            vrfGuiContext.CurrentPackage = package;
+
+            VirtualRoot = new VirtualPackageNode("root", 0, null);
+            DeletedFilesRecovered = true;
+
+            return Create();
         }
 
         public static VirtualPackageNode AddFolderNode(VirtualPackageNode currentNode, string directory, uint size)
@@ -901,7 +922,9 @@ namespace GUI.Types.PackageViewer
 
             var isRoot = items is [BetterTreeNode { PkgNode.Parent: null }];
             var isFolder = items.All(static item => item.IsFolder);
-            var menu = CreateContextMenu(items, isRoot, isFolder);
+            var menu = isEditingPackage
+                ? CreateEditingContextMenu(items[0], isRoot)
+                : CreateContextMenu(items, isRoot, isFolder);
             menu.Open(source);
         }
 
@@ -1167,6 +1190,251 @@ namespace GUI.Types.PackageViewer
             suppressTreeSelection = false;
 
             DisplayNodes(rootVirtual);
+        }
+
+        #endregion
+
+        #region Editing
+
+        private ContextMenu CreateEditingContextMenu(IBetterBaseItem item, bool isRoot)
+        {
+            var menu = new ContextMenu();
+
+            void Item(string header, string icon, Action onClick)
+            {
+                var menuItem = new MenuItem { Header = header, Icon = AppIcons.Create(icon) };
+                menuItem.Click += (_, _) => onClick();
+                menu.Items.Add(menuItem);
+            }
+
+            if (item.PkgNode is { } folder)
+            {
+                Item("Create folder", "FolderCreate", () => _ = CreateFolderAsync(folder));
+                Item("_Add existing folder", "FolderAdd", () => _ = AddExistingFolderAsync(folder));
+                Item("Add existing _files", "FileAdd", () => _ = AddExistingFilesAsync(folder));
+
+                if (!isRoot)
+                {
+                    Item("_Remove this folder", "FolderRemove", () => RemoveFolder(folder));
+                }
+            }
+            else if (item.PackageEntry is { } entry)
+            {
+                Item("_Remove this file", "CloseTab", () => RemoveFile(entry));
+            }
+
+            if (isRoot)
+            {
+                Item("_Save VPK to disk", "VPKSave", () => _ = SaveToDiskAsync());
+            }
+
+            return menu;
+        }
+
+        /// <summary>Path of <paramref name="name"/> inside <paramref name="folder"/>, with the package's separators.</summary>
+        private static string GetPackagePath(VirtualPackageNode folder, string name)
+        {
+            name = name.Replace('\\', Package.DirectorySeparatorChar).Trim(Package.DirectorySeparatorChar);
+
+            var prefix = folder.GetFullPath();
+            return prefix.Length > 0 ? $"{prefix}{Package.DirectorySeparatorChar}{name}" : name;
+        }
+
+        private async Task CreateFolderAsync(VirtualPackageNode parent)
+        {
+            var name = await AppMessageDialogs.PromptAsync("New folder name").ConfigureAwait(true);
+
+            if (string.IsNullOrWhiteSpace(name) || VirtualRoot == null)
+            {
+                return;
+            }
+
+            if (name.IndexOfAny(Path.GetInvalidPathChars()) != -1)
+            {
+                await AppMessageDialogs.ShowMessageAsync("Entered folder name contains invalid characters.", "Invalid characters", MessageIcon.Warning).ConfigureAwait(true);
+                return;
+            }
+
+            var folder = AddFolderNode(VirtualRoot, GetPackagePath(parent, name.Trim()), 0);
+            RefreshAfterEdit(folder);
+        }
+
+        private async Task AddExistingFolderAsync(VirtualPackageNode folder)
+        {
+            var inputDirectory = await AppFileDialogs.PickFolderAsync("Choose which folder to pack into a VPK", AppFileDialogs.RememberIn.OpenDirectory).ConfigureAwait(true);
+
+            if (inputDirectory == null)
+            {
+                return;
+            }
+
+            AddFiles(folder, Directory.EnumerateFiles(inputDirectory, "*", SearchOption.AllDirectories), inputDirectory);
+        }
+
+        private async Task AddExistingFilesAsync(VirtualPackageNode folder)
+        {
+            var files = await AppFileDialogs.OpenFilesAsync("Choose which files to add to the VPK", null).ConfigureAwait(true);
+
+            if (files == null)
+            {
+                return;
+            }
+
+            AddFiles(folder, files, null);
+        }
+
+        /// <summary>
+        /// Adds files to <paramref name="folder"/>, keeping their paths below <paramref name="inputDirectory"/> when one is given.
+        /// </summary>
+        private void AddFiles(VirtualPackageNode folder, IEnumerable<string> files, string? inputDirectory)
+        {
+            if (vrfGuiContext.CurrentPackage is not { } package || VirtualRoot == null)
+            {
+                return;
+            }
+
+            foreach (var file in files)
+            {
+                if (!File.Exists(file))
+                {
+                    continue;
+                }
+
+                var name = inputDirectory == null ? Path.GetFileName(file) : Path.GetRelativePath(inputDirectory, file);
+
+                try
+                {
+                    var entry = package.AddFile(GetPackagePath(folder, name), File.ReadAllBytes(file));
+                    AddFileNode(VirtualRoot, entry);
+                }
+                catch (Exception e)
+                {
+                    Log.Error(nameof(PackageViewer), $"Failed to add '{file}': {e.Message}");
+                }
+            }
+
+            RefreshAfterEdit(folder);
+        }
+
+        private void RemoveFolder(VirtualPackageNode folder)
+        {
+            RemovePackageFiles(folder);
+            folder.Parent?.Folders.Remove(folder.Name);
+
+            navigationHistory.RemoveSubtree(folder);
+            UpdateNavigationButtons();
+
+            RefreshAfterEdit(folder.Parent);
+        }
+
+        private void RemovePackageFiles(VirtualPackageNode folder)
+        {
+            foreach (var child in folder.Folders.Values)
+            {
+                RemovePackageFiles(child);
+            }
+
+            foreach (var file in folder.Files)
+            {
+                vrfGuiContext.CurrentPackage?.RemoveFile(file);
+            }
+        }
+
+        private void RemoveFile(PackageEntry entry)
+        {
+            var folder = FindFolder(entry.DirectoryName);
+
+            folder?.Files.Remove(entry);
+            vrfGuiContext.CurrentPackage?.RemoveFile(entry);
+
+            RefreshAfterEdit(folder);
+        }
+
+        private VirtualPackageNode? FindFolder(string directoryName)
+        {
+            var node = VirtualRoot;
+
+            if (node == null || string.IsNullOrWhiteSpace(directoryName))
+            {
+                return node;
+            }
+
+            foreach (var name in directoryName.Split(Package.DirectorySeparatorChar))
+            {
+                if (!node.Folders.TryGetValue(name, out var next))
+                {
+                    return null;
+                }
+
+                node = next;
+            }
+
+            return node;
+        }
+
+        /// <summary>Rebuilds the tree from the edited package and shows <paramref name="folder"/>.</summary>
+        private void RefreshAfterEdit(VirtualPackageNode? folder)
+        {
+            if (rootNode == null || VirtualRoot == null)
+            {
+                return;
+            }
+
+            rootNode.Invalidate();
+            rootNode.IsExpanded = true;
+
+            folder ??= VirtualRoot;
+            SelectInTree(folder, null);
+            DisplayNodes(folder);
+        }
+
+        private async Task SaveToDiskAsync()
+        {
+            if (vrfGuiContext.CurrentPackage is not { } package)
+            {
+                return;
+            }
+
+            var (fileName, _) = await AppFileDialogs.SaveFileAsync("Save VPK package", null, "vpk", "Valve Pak|*.vpk").ConfigureAwait(true);
+
+            if (fileName == null)
+            {
+                return;
+            }
+
+            Log.Info(nameof(PackageViewer), $"Packing to '{fileName}'...");
+
+            try
+            {
+                package.Write(fileName);
+            }
+            catch (Exception e)
+            {
+                Log.Error(nameof(PackageViewer), $"Failed to save '{fileName}': {e}");
+                await AppMessageDialogs.ShowMessageAsync(e.Message, "Failed to save VPK", MessageIcon.Error).ConfigureAwait(true);
+                return;
+            }
+
+            var fileCount = 0;
+            var fileSize = 0L;
+
+            if (package.Entries != null)
+            {
+                foreach (var fileType in package.Entries)
+                {
+                    foreach (var file in fileType.Value)
+                    {
+                        fileCount++;
+                        fileSize += file.TotalLength;
+                    }
+                }
+            }
+
+            var result = $"Created {Path.GetFileName(fileName)} with {fileCount} files of size {HumanReadableByteSizeFormatter.Format(fileSize)}.";
+
+            Log.Info(nameof(PackageViewer), result);
+
+            await AppMessageDialogs.ShowMessageAsync(result, "VPK created").ConfigureAwait(true);
         }
 
         #endregion

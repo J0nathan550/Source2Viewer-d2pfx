@@ -19,6 +19,11 @@ static class AppIcons
     // Rasterized larger than shown so icons stay sharp on high DPI displays
     private const int DefaultRenderSize = 64;
 
+    /// <summary>
+    /// Size icons are shown at in menus, tabs, trees and lists, like the WinForms image list.
+    /// </summary>
+    public const double DefaultSize = 24;
+
     private const string ResourcePrefix = "GUI.Icons.";
     private const string AssetTypesPrefix = "AssetTypes.";
     private const string AliasesResource = "GUI.Icons.AssetTypes.aliases.txt";
@@ -89,7 +94,7 @@ static class AppIcons
     public static string GetFileIconName(string fileName) => GetExtensionIconName(Path.GetExtension(fileName));
 
     /// <summary>Creates an icon control that follows theme changes.</summary>
-    public static ThemedIcon Create(string name, double size = 16) => new()
+    public static ThemedIcon Create(string name, double size = DefaultSize) => new()
     {
         IconName = name,
         Width = size,
@@ -97,7 +102,7 @@ static class AppIcons
     };
 
     /// <summary>Creates an icon control showing a fixed picture, such as a game icon.</summary>
-    public static ThemedIcon Create(Bitmap image, double size = 16) => new()
+    public static ThemedIcon Create(Bitmap image, double size = DefaultSize) => new()
     {
         FixedSource = image,
         Width = size,
@@ -117,7 +122,7 @@ static class AppIcons
     };
 
     /// <summary>Creates a header with an icon in front of the text, for tabs, tree items and buttons.</summary>
-    public static StackPanel CreateHeader(string iconName, string text, double size = 16) => new()
+    public static StackPanel CreateHeader(string iconName, string text, double size = DefaultSize) => new()
     {
         Orientation = Orientation.Horizontal,
         Spacing = 6,
@@ -259,5 +264,5 @@ sealed class ThemedIcon : Image
 
     private void OnThemeChanged(object? sender, EventArgs e) => Refresh();
 
-    private void Refresh() => Source = fixedSource ?? (iconName == null ? null : AppIcons.Get(iconName, AppIcons.GetRenderSize(double.IsNaN(Width) ? 16 : Width)));
+    private void Refresh() => Source = fixedSource ?? (iconName == null ? null : AppIcons.Get(iconName, AppIcons.GetRenderSize(double.IsNaN(Width) ? AppIcons.DefaultSize : Width)));
 }
