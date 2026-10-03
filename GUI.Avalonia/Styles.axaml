@@ -129,17 +129,25 @@
         <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
     </Style>
 
-    <Style Selector="Border.groupBox">
-        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="5" />
-        <Setter Property="Padding" Value="12,8,12,12" />
+    <!-- Group box titles sit in the frame's top line, in the text color like the WinForms ThemedGroupBox -->
+    <Style Selector="Grid.groupBox > TextBlock.groupHeader">
+        <Setter Property="Foreground" Value="{DynamicResource S2vContrastBrush}" />
+        <Setter Property="Padding" Value="2,0" />
     </Style>
 
-    <Style Selector="Border.groupBox TextBlock.groupHeader">
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Margin" Value="0,0,0,8" />
-        <Setter Property="Foreground" Value="{DynamicResource S2vContrastSoftBrush}" />
+    <!-- Square inputs outlined like the WinForms ones, over the background of what they are in -->
+    <Style Selector="ComboBox">
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vButtonBorderBrush}" />
+    </Style>
+
+    <Style Selector="TextBox, NumericUpDown, AutoCompleteBox">
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+
+    <Style Selector="TextBox">
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vButtonBorderBrush}" />
     </Style>
 
     <Style Selector="Border.keycap">

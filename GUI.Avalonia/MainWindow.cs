@@ -80,7 +80,7 @@ namespace GUI
             mainTabs.Items.Add(consoleTab);
 
             bottomPanel = new MainBottomPanel();
-            bottomPanel.SetVersionText(Program.DisplayVersion);
+            bottomPanel.SetVersionText(GetVersionDisplay());
             bottomPanel.AboutRequested += async (_, _) => await ShowAboutDialogAsync().ConfigureAwait(true);
 
             var root = new DockPanel();
@@ -112,6 +112,43 @@ namespace GUI
             UpdateWindowTitle(null);
 
             Log.Info(nameof(MainWindow), $"{AppTitle} {Program.DisplayVersion} on {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+        }
+
+        /// <summary>
+        /// The version shown in the status bar, like the WinForms GUI: "v1.0.1.7" for CI builds, and the start of the
+        /// commit hash for local builds, whose version ends in ".0".
+        /// </summary>
+        private static string GetVersionDisplay()
+        {
+            var version = Program.ProductVersion;
+            var versionPlus = version.IndexOf('+', StringComparison.InvariantCulture);
+            string versionDisplay;
+
+            if (versionPlus > 1)
+            {
+                // If version ends with ".0", display part of the commit hash, otherwise the zero is replaced with CI build number
+                if (version[versionPlus - 2] == '.' && version[versionPlus - 1] == '0')
+                {
+                    versionPlus = Math.Min(versionPlus + 8, version.Length);
+                }
+
+                versionDisplay = string.Concat("v", version.AsSpan(0, versionPlus));
+            }
+            else
+            {
+                versionDisplay = string.Concat("v", version);
+
+                if (Program.BuildChannel != Settings.UpdateChannel.Stable)
+                {
+                    versionDisplay += "-dev";
+                }
+            }
+
+#if DEBUG
+            versionDisplay += " (DEBUG)";
+#endif
+
+            return versionDisplay;
         }
 
         private DockPanel CreateTopBar()

@@ -28,9 +28,11 @@ namespace GUI.Forms
         public AboutWindow()
         {
             Title = "About";
-            Width = 700;
+            Width = 684;
             SizeToContent = SizeToContent.Height;
             CanResize = false;
+            CanMinimize = false;
+            CanMaximize = false;
             ShowInTaskbar = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Icon = Program.MainForm.Icon;
@@ -41,7 +43,7 @@ namespace GUI.Forms
                 decoder.StartThread();
             }
 
-            // Credits
+            // Credits, laid out like the WinForms AboutForm: the text, then a row of link buttons
             var credits = new TextBlock
             {
                 Text = "Source2Viewer - d2pfx is a modded build of Source 2 Viewer, made for the d2pfx community.\n" +
@@ -58,10 +60,10 @@ namespace GUI.Forms
             links.Children.Add(LinkButton("_Discord", () => OpenUrl("https://discord.com/invite/PBvG8D9MxT")));
             links.Children.Add(LinkButton("_Licenses", ShowLicenses));
 
-            var creditsGroup = Controls.GroupBox.Create("Source2Viewer d2pfx", new StackPanel { Children = { credits, links } });
+            var creditsGroup = Controls.GroupBox.Create("Source2Viewer d2pfx", new StackPanel { Children = { credits, links } }, new Avalonia.Thickness(16, 10, 13, 13));
 
             var logo = AppIcons.Create("Logo", 148);
-            logo.Margin = new(16, 0, 0, 0);
+            logo.Margin = new(6, -4, 0, 0);
             logo.VerticalAlignment = VerticalAlignment.Top;
 
             var top = new DockPanel();
@@ -70,34 +72,33 @@ namespace GUI.Forms
             top.Children.Add(creditsGroup);
 
             // Version
-            var copyVersion = new Button { Content = "Copy _version" };
+            var copyVersion = new Button { Content = "Copy _version", Width = 100, Height = 30, Padding = new(4, 0) };
             copyVersion.Click += (_, _) =>
             {
                 CopyVersion();
                 copyVersion.Content = "Copied!";
             };
 
-            newVersionLabel = new TextBlock { Text = "version" };
+            newVersionLabel = new TextBlock { Text = "version", FontWeight = FontWeight.Bold };
 
             var versionGrid = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("134,*,Auto"),
-                RowDefinitions = new RowDefinitions("Auto,Auto"),
-                RowSpacing = 10,
+                RowDefinitions = new RowDefinitions("30,30"),
             };
             AddCell(versionGrid, new TextBlock { Text = "Current version: " }, 0, 0);
-            AddCell(versionGrid, new TextBlock { Text = Program.DisplayVersion }, 0, 1);
+            AddCell(versionGrid, new TextBlock { Text = Program.DisplayVersion, FontWeight = FontWeight.Bold }, 0, 1);
             AddCell(versionGrid, copyVersion, 0, 2);
             AddCell(versionGrid, new TextBlock { Text = "New version: " }, 1, 0);
             AddCell(versionGrid, newVersionLabel, 1, 1);
 
-            downloadButton = new Button { Content = "Download new version", HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = false };
+            downloadButton = new Button { Content = "Download new version", Height = 30, Margin = new(3), HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = false };
             downloadButton.Click += (_, _) => OnDownloadButtonClick();
 
-            viewReleaseNotesButton = new Button { Content = "View release notes", HorizontalAlignment = HorizontalAlignment.Stretch };
+            viewReleaseNotesButton = new Button { Content = "View release notes", Height = 30, Margin = new(3), HorizontalAlignment = HorizontalAlignment.Stretch };
             viewReleaseNotesButton.Click += (_, _) => OpenUrl(UpdateChecker.ReleaseNotesUrl ?? $"https://github.com/{UpdateChecker.Repository}/releases");
 
-            var buttons = new UniformGrid { Columns = 2, Margin = new(0, 12) };
+            var buttons = new UniformGrid { Columns = 2, Margin = new(-3, 8, -3, 6) };
             buttons.Children.Add(downloadButton);
             buttons.Children.Add(viewReleaseNotesButton);
 
@@ -112,7 +113,8 @@ namespace GUI.Forms
             {
                 ItemsSource = Enum.GetNames<Settings.UpdateChannel>(),
                 SelectedIndex = (int)Settings.Config.Update.Channel,
-                MinWidth = 188,
+                Width = 188,
+                Height = 26,
             };
             updateChannelComboBox.SelectionChanged += (_, _) =>
             {
@@ -127,14 +129,14 @@ namespace GUI.Forms
             var channel = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 8,
+                Spacing = 6,
                 Children = { new TextBlock { Text = "Update channel:", VerticalAlignment = VerticalAlignment.Center }, updateChannelComboBox },
             };
             DockPanel.SetDock(channel, Dock.Right);
             updateRow.Children.Add(channel);
             updateRow.Children.Add(checkForUpdates);
 
-            var versionGroup = Controls.GroupBox.Create("Version", new StackPanel { Children = { versionGrid, buttons, updateRow } });
+            var versionGroup = Controls.GroupBox.Create("Version", new StackPanel { Children = { versionGrid, buttons, updateRow } }, new Avalonia.Thickness(16, 4, 16, 12));
 
             Content = new StackPanel
             {
@@ -158,7 +160,7 @@ namespace GUI.Forms
 
         private static Button LinkButton(string text, Action onClick)
         {
-            var button = new Button { Content = text, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = new(3) };
+            var button = new Button { Content = text, Height = 30, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new(3) };
             button.Click += (_, _) => onClick();
             return button;
         }

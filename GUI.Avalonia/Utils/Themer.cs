@@ -168,6 +168,44 @@ namespace GUI.Utils
 
         private static bool ThemeApplied;
 
+        /// <summary>A lighter color of the same hue, like WinForms ControlPaint.Light.</summary>
+        private static System.Drawing.Color Lighter(System.Drawing.Color color, float amount)
+        {
+            var lightness = color.GetBrightness();
+            return FromHsl(color.GetHue(), color.GetSaturation(), lightness + ((1 - lightness) * 0.5f * amount));
+        }
+
+        /// <summary>A darker color of the same hue, like WinForms ControlPaint.Dark.</summary>
+        private static System.Drawing.Color Darker(System.Drawing.Color color, float amount)
+        {
+            return FromHsl(color.GetHue(), color.GetSaturation(), color.GetBrightness() * (2f / 3f) * (1 - amount));
+        }
+
+        private static System.Drawing.Color FromHsl(float hue, float saturation, float lightness)
+        {
+            lightness = Math.Clamp(lightness, 0, 1);
+
+            var chroma = (1 - MathF.Abs((2 * lightness) - 1)) * saturation;
+            var sector = hue / 60f;
+            var x = chroma * (1 - MathF.Abs((sector % 2) - 1));
+
+            var (r, g, b) = (int)sector switch
+            {
+                0 => (chroma, x, 0f),
+                1 => (x, chroma, 0f),
+                2 => (0f, chroma, x),
+                3 => (0f, x, chroma),
+                4 => (x, 0f, chroma),
+                _ => (chroma, 0f, x),
+            };
+
+            var m = lightness - (chroma / 2);
+
+            static int ToByte(float value) => (int)MathF.Round(Math.Clamp(value, 0, 1) * 255);
+
+            return System.Drawing.Color.FromArgb(ToByte(r + m), ToByte(g + m), ToByte(b + m));
+        }
+
         private static Color ToColor(System.Drawing.Color color, byte? alpha = null) => Color.FromArgb(alpha ?? color.A, color.R, color.G, color.B);
 
         /// <summary>A brush of a palette color, for controls that draw themselves.</summary>
@@ -232,6 +270,15 @@ namespace GUI.Utils
             SetBrush("S2vHoverAccentBrush", ToColor(colors.HoverAccent));
             SetBrush("S2vAccentBrush", ToColor(colors.Accent));
             SetBrush("S2vAttentionBrush", ToColor(colors.Attention));
+
+            // Buttons are drawn like the WinForms ThemedButton: filled with the border color and outlined a little
+            // lighter, or a little darker in the light theme, and dimmed while disabled
+            var disabledButton = light ? Lighter(colors.Border, 0.6f) : Darker(colors.Border, 0.2f);
+            SetBrush("S2vButtonBrush", ToColor(colors.Border));
+            SetBrush("S2vButtonBorderBrush", ToColor(light ? Darker(colors.Border, 0.01f) : Lighter(colors.Border, 0.4f)));
+            SetBrush("S2vButtonDisabledBrush", ToColor(disabledButton));
+            SetBrush("S2vButtonDisabledBorderBrush", ToColor(light ? Darker(disabledButton, 0.01f) : Lighter(disabledButton, 0.4f)));
+            SetBrush("S2vButtonDisabledForegroundBrush", ToColor(light ? Lighter(colors.Contrast, 0.6f) : Darker(colors.Contrast, 0.2f)));
 
             // Tab headers look like the WinForms tab strip: flat, selected tab lifted to the page color
             SetBrush("TabItemHeaderBackgroundUnselected", ToColor(colors.App));

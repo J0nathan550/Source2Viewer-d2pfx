@@ -9,4 +9,47 @@
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
         <StyleInclude Source="avares://Source2Viewer.Avalonia/Styles.axaml" />
     </Application.Styles>
+
+    <!--
+        After the styles, so the Fluent button theme it is based on is already loaded.
+        Buttons look like the WinForms ThemedButton: a rounded box in the border color with a slightly lighter
+        outline, the hover accent while hovered and the accent while pressed. As the default theme of Button it
+        leaves alone buttons that bring their own theme, such as the window's caption buttons.
+    -->
+    <Application.Resources>
+        <ControlTheme x:Key="{x:Type Button}" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource S2vButtonBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource S2vButtonBorderBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource S2vContrastBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="5" />
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+
+            <Style Selector="^:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+                <Setter Property="Background" Value="{DynamicResource S2vHoverAccentBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource S2vButtonBorderBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource S2vContrastBrush}" />
+            </Style>
+
+            <Style Selector="^:pressed">
+                <Setter Property="RenderTransform" Value="{x:Null}" />
+            </Style>
+
+            <Style Selector="^:pressed /template/ ContentPresenter#PART_ContentPresenter">
+                <Setter Property="Background" Value="{DynamicResource S2vAccentBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource S2vButtonBorderBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource S2vContrastBrush}" />
+            </Style>
+
+            <Style Selector="^:disabled /template/ ContentPresenter#PART_ContentPresenter">
+                <Setter Property="Background" Value="{DynamicResource S2vButtonDisabledBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource S2vButtonDisabledBorderBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource S2vButtonDisabledForegroundBrush}" />
+            </Style>
+        </ControlTheme>
+    </Application.Resources>
 </Application>
