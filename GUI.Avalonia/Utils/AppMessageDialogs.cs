@@ -118,12 +118,10 @@ public static class AppMessageDialogs
             buttons.Children.Add(button);
         }
 
-        var iconText = icon switch
+        var iconName = icon switch
         {
-            MessageIcon.Warning => "⚠",
-            MessageIcon.Error => "⛔",
-            MessageIcon.Question => "?",
-            _ => "i",
+            MessageIcon.Question => "Info",
+            _ => "About",
         };
 
         var body = new DockPanel { Margin = new(16), LastChildFill = true };
@@ -132,14 +130,9 @@ public static class AppMessageDialogs
         buttons.Margin = new(0, 16, 0, 0);
         body.Children.Add(buttons);
 
-        var iconBlock = new TextBlock
-        {
-            Text = iconText,
-            FontSize = 28,
-            Margin = new(0, 0, 16, 0),
-            VerticalAlignment = VerticalAlignment.Top,
-            Foreground = icon == MessageIcon.Error ? Brushes.IndianRed : null,
-        };
+        var iconBlock = AppIcons.Create(iconName, 32);
+        iconBlock.Margin = new(0, 0, 16, 0);
+        iconBlock.VerticalAlignment = VerticalAlignment.Top;
         DockPanel.SetDock(iconBlock, Dock.Left);
         body.Children.Add(iconBlock);
 

@@ -39,6 +39,8 @@ namespace GUI.Controls
 
         private readonly WaveformView waveform;
         private readonly Button playPauseButton;
+        private readonly ThemedIcon playPauseIcon = AppIcons.Create("AudioPlay", 20);
+        private readonly ThemedIcon loopIcon = AppIcons.Create("AudioRepeat", 20);
         private readonly ToggleButton loopButton;
         private readonly Avalonia.Controls.Slider volumeSlider;
         private readonly TextBlock labelCurrentTime;
@@ -78,11 +80,11 @@ namespace GUI.Controls
             waveform = new WaveformView(audioData, WaveStream.WaveFormat) { Height = 160, Margin = new(8) };
             waveform.Seek += progression => UpdatePlaybackProgression(progression);
 
-            playPauseButton = new Button { Content = "▶", MinWidth = 44, HorizontalContentAlignment = HorizontalAlignment.Center };
+            playPauseButton = new Button { Content = playPauseIcon, MinWidth = 44, HorizontalContentAlignment = HorizontalAlignment.Center };
             ToolTip.SetTip(playPauseButton, "Play / pause (Space)");
             playPauseButton.Click += (_, _) => TogglePlayback();
 
-            var rewindButton = new Button { Content = "⏮", MinWidth = 44, HorizontalContentAlignment = HorizontalAlignment.Center };
+            var rewindButton = new Button { Content = AppIcons.Create("AudioRewindLeft", 20), MinWidth = 44, HorizontalContentAlignment = HorizontalAlignment.Center };
             ToolTip.SetTip(rewindButton, "Restart (Home)");
             rewindButton.Click += (_, _) =>
             {
@@ -90,9 +92,14 @@ namespace GUI.Controls
                 Play();
             };
 
-            loopButton = new ToggleButton { Content = "↻", MinWidth = 44, HorizontalContentAlignment = HorizontalAlignment.Center, IsChecked = Looping };
+            loopButton = new ToggleButton { Content = loopIcon, MinWidth = 44, HorizontalContentAlignment = HorizontalAlignment.Center, IsChecked = Looping };
             ToolTip.SetTip(loopButton, "Loop (L)");
-            loopButton.IsCheckedChanged += (_, _) => SetLooping(loopButton.IsChecked == true);
+            loopButton.IsCheckedChanged += (_, _) =>
+            {
+                loopIcon.IconName = loopButton.IsChecked == true ? "AudioRepeatPressed" : "AudioRepeat";
+                SetLooping(loopButton.IsChecked == true);
+            };
+            loopIcon.IconName = Looping ? "AudioRepeatPressed" : "AudioRepeat";
 
             labelCurrentTime = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new(8, 0), FontFamily = CodeTextBox.MonospaceFont };
 
@@ -261,7 +268,7 @@ namespace GUI.Controls
             output.Paused = false;
             playSignal.Set();
             playbackTimer.Start();
-            playPauseButton.Content = "⏸";
+            playPauseIcon.IconName = "AudioPause";
             UpdateTime();
         }
 
@@ -286,7 +293,7 @@ namespace GUI.Controls
             }
 
             playbackTimer.Stop();
-            playPauseButton.Content = "▶";
+            playPauseIcon.IconName = "AudioPlay";
             UpdateTime();
         }
 
@@ -295,7 +302,7 @@ namespace GUI.Controls
             playing = false;
             playSignal.Reset();
             playbackTimer.Stop();
-            playPauseButton.Content = "▶";
+            playPauseIcon.IconName = "AudioPlay";
             playbackStartPosition = WaveStream.TotalTime;
             UpdateTime();
         }

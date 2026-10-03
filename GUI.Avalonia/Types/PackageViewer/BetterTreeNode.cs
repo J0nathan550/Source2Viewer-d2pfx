@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using GUI.Utils;
 using ValvePak;
 
 namespace GUI.Types.PackageViewer
@@ -15,7 +16,7 @@ namespace GUI.Types.PackageViewer
         {
             PkgNode = node;
             node.CreatedNode = this;
-            Header = node.Parent == null ? "(root)" : node.Name;
+            Header = AppIcons.CreateHeader(node.Parent == null ? "AssetTypes.vpk" : "Folder", node.Parent == null ? "(root)" : node.Name);
 
             if (node.Folders.Count > 0)
             {

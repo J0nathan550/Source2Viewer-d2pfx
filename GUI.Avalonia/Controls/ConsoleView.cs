@@ -26,7 +26,7 @@ sealed class ConsoleView : DockPanel
         };
         editor.TextArea.TextView.LineTransformers.Add(new CategoryColorizer());
 
-        var clearButton = new Button { Content = "Clear console", Margin = new(4) };
+        var clearButton = new Button { Content = AppIcons.CreateHeader("ClearLog", "Clear console"), Margin = new(4) };
         clearButton.Click += (_, _) => Log.ClearConsole();
 
         SetDock(clearButton, Dock.Top);

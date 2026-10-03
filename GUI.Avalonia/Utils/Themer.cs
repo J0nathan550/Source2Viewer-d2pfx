@@ -1,5 +1,8 @@
+using System.Linq;
 using Avalonia;
+using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Themes.Fluent;
 
 namespace GUI.Utils
 {
@@ -95,11 +98,40 @@ namespace GUI.Utils
             ApplyTheme(theme);
         }
 
+        /// <summary>Display name of a theme in menus and settings.</summary>
+        public static string GetDisplayName(AppTheme theme) => theme switch
+        {
+            AppTheme.System => "System",
+            AppTheme.Light => "Light",
+            AppTheme.Dark => "Dark (Source 2 Viewer)",
+            AppTheme.Gray => "Gray",
+            _ => theme.ToString(),
+        };
+
+        public static AppTheme SelectedTheme { get; private set; } = AppTheme.System;
+
+        private static bool FollowingSystem;
+
         public static void ApplyTheme(AppTheme theme)
         {
             if (Application.Current is not { } app)
             {
                 return;
+            }
+
+            SelectedTheme = theme;
+
+            if (!FollowingSystem)
+            {
+                // Re-resolves the System theme when the OS switches between light and dark
+                app.ActualThemeVariantChanged += (_, _) =>
+                {
+                    if (SelectedTheme == AppTheme.System)
+                    {
+                        ApplyTheme(AppTheme.System);
+                    }
+                };
+                FollowingSystem = true;
             }
 
             app.RequestedThemeVariant = theme switch
@@ -109,11 +141,106 @@ namespace GUI.Utils
                 _ => ThemeVariant.Default,
             };
 
-            CurrentTheme = theme == AppTheme.System
+            var resolved = theme == AppTheme.System
                 ? (app.ActualThemeVariant == ThemeVariant.Dark ? AppTheme.Dark : AppTheme.Light)
                 : theme;
 
+            if (resolved == CurrentTheme && ThemeApplied)
+            {
+                return;
+            }
+
+            CurrentTheme = resolved;
+            ThemeApplied = true;
+
+            ApplyPalette(app, CurrentThemeColors, resolved == AppTheme.Light);
+
             ThemeChanged?.Invoke(null, EventArgs.Empty);
+        }
+
+        private static bool ThemeApplied;
+
+        private static Color ToColor(System.Drawing.Color color, byte? alpha = null) => Color.FromArgb(alpha ?? color.A, color.R, color.G, color.B);
+
+        /// <summary>
+        /// Recolors the Fluent theme with the WinForms palette, and publishes the palette as brushes
+        /// (S2vApp, S2vAppMiddle, ...) for our own styles.
+        /// </summary>
+        private static void ApplyPalette(Application app, ThemeColors colors, bool light)
+        {
+            var fluent = app.Styles.OfType<FluentTheme>().FirstOrDefault();
+
+            if (fluent != null)
+            {
+                var variant = light ? ThemeVariant.Light : ThemeVariant.Dark;
+
+                var palette = new ColorPaletteResources();
+                palette.Accent = ToColor(colors.Accent);
+                palette.RegionColor = ToColor(colors.App);
+                palette.ErrorText = ToColor(colors.Attention);
+
+                palette.AltHigh = ToColor(colors.App);
+                palette.AltMediumHigh = ToColor(colors.App, 0xCC);
+                palette.AltMedium = ToColor(colors.App, 0x99);
+                palette.AltMediumLow = ToColor(colors.App, 0x66);
+                palette.AltLow = ToColor(colors.App, 0x33);
+
+                palette.BaseHigh = ToColor(colors.Contrast);
+                palette.BaseMediumHigh = ToColor(colors.Contrast, 0xCC);
+                palette.BaseMedium = ToColor(colors.Contrast, 0x99);
+                palette.BaseMediumLow = ToColor(colors.Contrast, 0x66);
+                palette.BaseLow = ToColor(colors.Contrast, 0x33);
+
+                palette.ChromeLow = ToColor(colors.App);
+                palette.ChromeMediumLow = ToColor(colors.AppSoft);
+                palette.ChromeMedium = ToColor(colors.AppMiddle);
+                palette.ChromeHigh = ToColor(colors.Border);
+                palette.ChromeGray = ToColor(colors.ContrastSoft);
+                palette.ChromeAltLow = ToColor(colors.Contrast);
+                palette.ChromeWhite = ToColor(colors.Contrast);
+                palette.ChromeDisabledHigh = ToColor(colors.Border);
+                palette.ChromeDisabledLow = ToColor(colors.ContrastSoft);
+
+                palette.ListLow = ToColor(colors.HoverAccent, 0x66);
+                palette.ListMedium = ToColor(colors.HoverAccent, 0xAA);
+
+                // Replaced rather than edited so the theme picks up the new colors
+                fluent.Palettes[variant] = palette;
+            }
+
+            var resources = app.Resources;
+
+            void SetBrush(string key, Color color) => resources[key] = new SolidColorBrush(color);
+
+            SetBrush("S2vAppBrush", ToColor(colors.App));
+            SetBrush("S2vAppMiddleBrush", ToColor(colors.AppMiddle));
+            SetBrush("S2vAppSoftBrush", ToColor(colors.AppSoft));
+            SetBrush("S2vBorderBrush", ToColor(colors.Border));
+            SetBrush("S2vContrastBrush", ToColor(colors.Contrast));
+            SetBrush("S2vContrastSoftBrush", ToColor(colors.ContrastSoft));
+            SetBrush("S2vHoverAccentBrush", ToColor(colors.HoverAccent));
+            SetBrush("S2vAccentBrush", ToColor(colors.Accent));
+            SetBrush("S2vAttentionBrush", ToColor(colors.Attention));
+
+            // Tab headers look like the WinForms tab strip: flat, selected tab lifted to the page color
+            SetBrush("TabItemHeaderBackgroundUnselected", ToColor(colors.App));
+            SetBrush("TabItemHeaderBackgroundUnselectedPointerOver", ToColor(colors.AppSoft));
+            SetBrush("TabItemHeaderBackgroundSelected", ToColor(colors.AppMiddle));
+            SetBrush("TabItemHeaderBackgroundSelectedPointerOver", ToColor(colors.AppMiddle));
+            SetBrush("TabItemHeaderSelectedPipeFill", ToColor(colors.Accent));
+            SetBrush("TabItemHeaderForegroundUnselected", ToColor(colors.ContrastSoft));
+            SetBrush("TabItemHeaderForegroundUnselectedPointerOver", ToColor(colors.Contrast));
+            SetBrush("TabItemHeaderForegroundSelected", ToColor(colors.Contrast));
+
+            SetBrush("MenuFlyoutPresenterBackground", ToColor(colors.AppMiddle));
+            SetBrush("MenuFlyoutPresenterBorderBrush", ToColor(colors.Border));
+            SetBrush("MenuFlyoutItemBackgroundPointerOver", ToColor(colors.HoverAccent));
+            SetBrush("MenuFlyoutSubItemBackgroundPointerOver", ToColor(colors.HoverAccent));
+            SetBrush("MenuFlyoutSubItemBackgroundSubMenuOpened", ToColor(colors.HoverAccent));
+
+            SetBrush("TreeViewItemBackgroundPointerOver", ToColor(colors.HoverAccent, 0x66));
+            SetBrush("TreeViewItemBackgroundSelected", ToColor(colors.HoverAccent));
+            SetBrush("TreeViewItemBackgroundSelectedPointerOver", ToColor(colors.HoverAccent));
         }
     }
 }

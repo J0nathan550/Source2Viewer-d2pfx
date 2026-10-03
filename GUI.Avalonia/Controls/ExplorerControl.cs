@@ -18,7 +18,7 @@ namespace GUI.Controls
     /// </summary>
     sealed class ExplorerControl : DockPanel
     {
-        private sealed record Section(string Title, List<(string Text, string Path)> Files);
+        private sealed record Section(string Title, string Icon, List<(string Text, string Path)> Files);
 
         public static readonly List<GameFolderLocator.SteamLibraryGameInfo> SteamGames = [];
 
@@ -42,22 +42,31 @@ namespace GUI.Controls
             treeView.DoubleTapped += OnDoubleTapped;
             treeView.KeyDown += OnTreeKeyDown;
 
-            var openButton = new Button { Content = "Open file...", Margin = new(6, 6, 0, 6) };
+            var openButton = new Button { Content = AppIcons.CreateHeader("Open", "Open file..."), Margin = new(6, 6, 0, 6) };
             openButton.Click += async (_, _) => await Program.MainForm.OpenFilesFromDialogAsync().ConfigureAwait(true);
 
+            var logo = AppIcons.Create("Logo", 28);
+            logo.Margin = new(10, 0, 4, 0);
+            logo.VerticalAlignment = VerticalAlignment.Center;
+
             var top = new DockPanel();
+            SetDock(logo, Dock.Left);
             SetDock(openButton, Dock.Left);
+            top.Children.Add(logo);
             top.Children.Add(openButton);
             top.Children.Add(filterTextBox);
 
-            SetDock(top, Dock.Top);
+            var toolbar = new Border { Child = top };
+            toolbar.Classes.Add("toolbar");
+
+            SetDock(toolbar, Dock.Top);
             SetDock(scanStatus, Dock.Top);
-            Children.Add(top);
+            Children.Add(toolbar);
             Children.Add(scanStatus);
             Children.Add(treeView);
 
-            sections.Add(new Section("Bookmarks", [.. Settings.Config.BookmarkedFiles.Select(static f => (f, f))]));
-            sections.Add(new Section("Recent files", [.. Enumerable.Reverse(Settings.Config.RecentFiles).Select(static f => (f, f))]));
+            sections.Add(new Section("Bookmarks", "Bookmarks", [.. Settings.Config.BookmarkedFiles.Select(static f => (f, f))]));
+            sections.Add(new Section("Recent files", "History", [.. Enumerable.Reverse(Settings.Config.RecentFiles).Select(static f => (f, f))]));
 
             Rebuild();
 
@@ -100,13 +109,13 @@ namespace GUI.Controls
 
                 var sectionItem = new TreeViewItem
                 {
-                    Header = $"{section.Title} ({files.Count})",
+                    Header = AppIcons.CreateHeader(section.Icon, $"{section.Title} ({files.Count})"),
                     IsExpanded = filter.Length > 0 || section.Files.Count <= 20,
                 };
 
                 foreach (var (text, path) in files)
                 {
-                    var item = new TreeViewItem { Header = text, Tag = path };
+                    var item = new TreeViewItem { Header = AppIcons.CreateHeader(AppIcons.GetFileIconName(path), text), Tag = path };
                     ToolTip.SetTip(item, path);
                     sectionItem.Items.Add(item);
                 }
@@ -221,7 +230,7 @@ namespace GUI.Controls
 
                 AddWorkshopAddons(appID, steamPath, files);
 
-                perGame[i] = new Section($"{appName} [{appID}]", files);
+                perGame[i] = new Section($"{appName} [{appID}]", "Folder", files);
             });
 
             result.AddRange(perGame.OfType<Section>());

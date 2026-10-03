@@ -48,12 +48,12 @@ namespace GUI
             mainTabs = ViewerContentPresenter.CreateTabControl();
             mainTabs.SelectionChanged += OnMainSelectedTabChanged;
 
-            explorerTab = new TabItem { Header = "Explorer", Content = new ExplorerControl() };
-            consoleTab = new TabItem { Header = "Console", Content = consoleView };
+            explorerTab = new TabItem { Header = AppIcons.CreateHeader("Explorer", "Explorer"), Content = new ExplorerControl() };
+            consoleTab = new TabItem { Header = AppIcons.CreateHeader("Log", "Console"), Content = consoleView };
             mainTabs.Items.Add(explorerTab);
             mainTabs.Items.Add(consoleTab);
 
-            recentFilesMenu = new MenuItem { Header = "Open _Recent" };
+            recentFilesMenu = new MenuItem { Header = "Open _Recent", Icon = AppIcons.Create("History") };
             recentFilesMenu.SubmenuOpened += (_, _) => PopulateRecentFiles();
             recentFilesMenu.Items.Add(new MenuItem { Header = "(none)", IsEnabled = false });
 
@@ -65,12 +65,16 @@ namespace GUI
                 Text = $"Source 2 Viewer {Program.DisplayVersion}",
             };
 
+            var statusBar = new Border { Child = statusText };
+            statusBar.Classes.Add("statusBar");
+
             var root = new DockPanel();
             var menu = CreateMenu();
+            menu.Classes.Add("main");
             DockPanel.SetDock(menu, Dock.Top);
-            DockPanel.SetDock(statusText, Dock.Bottom);
+            DockPanel.SetDock(statusBar, Dock.Bottom);
             root.Children.Add(menu);
-            root.Children.Add(statusText);
+            root.Children.Add(statusBar);
             root.Children.Add(mainTabs);
             Content = root;
 
@@ -88,29 +92,35 @@ namespace GUI
 
         private Menu CreateMenu()
         {
-            var openItem = new MenuItem { Header = "_Open...", InputGesture = new KeyGesture(Key.O, KeyModifiers.Control) };
+            var openItem = new MenuItem { Header = "_Open...", Icon = AppIcons.Create("Open"), InputGesture = new KeyGesture(Key.O, KeyModifiers.Control) };
             openItem.Click += async (_, _) => await OpenFilesFromDialogAsync().ConfigureAwait(true);
 
-            var closeTabItem = new MenuItem { Header = "_Close tab", InputGesture = new KeyGesture(Key.W, KeyModifiers.Control) };
+            var closeTabItem = new MenuItem { Header = "_Close tab", Icon = AppIcons.Create("CloseTab"), InputGesture = new KeyGesture(Key.W, KeyModifiers.Control) };
             closeTabItem.Click += (_, _) => CloseTab(mainTabs.SelectedItem as DocumentTab);
 
-            var closeAllItem = new MenuItem { Header = "Close _all tabs" };
+            var closeAllItem = new MenuItem { Header = "Close _all tabs", Icon = AppIcons.Create("CloseAllTabs") };
             closeAllItem.Click += (_, _) => CloseAllTabs();
 
             var exitItem = new MenuItem { Header = "E_xit" };
             exitItem.Click += (_, _) => Close();
 
-            var consoleItem = new MenuItem { Header = "_Console" };
+            var consoleItem = new MenuItem { Header = "_Console", Icon = AppIcons.Create("Log") };
             consoleItem.Click += (_, _) => FocusLogPage();
 
-            var explorerItem = new MenuItem { Header = "_Explorer" };
+            var explorerItem = new MenuItem { Header = "_Explorer", Icon = AppIcons.Create("Explorer") };
             explorerItem.Click += (_, _) => mainTabs.SelectedItem = explorerTab;
 
-            var themeItem = new MenuItem { Header = "_Theme" };
+            var themeItem = new MenuItem { Header = "_Theme", Icon = AppIcons.Create("Settings") };
 
             foreach (var theme in Enum.GetValues<Themer.AppTheme>())
             {
-                var item = new MenuItem { Header = theme.ToString() };
+                var item = new MenuItem
+                {
+                    Header = Themer.GetDisplayName(theme),
+                    ToggleType = MenuItemToggleType.Radio,
+                    GroupName = "Theme",
+                    IsChecked = Themer.SelectedTheme == theme,
+                };
                 item.Click += (_, _) =>
                 {
                     Settings.Config.Theme = (int)theme;
@@ -120,10 +130,10 @@ namespace GUI
                 themeItem.Items.Add(item);
             }
 
-            var settingsItem = new MenuItem { Header = "_Settings..." };
+            var settingsItem = new MenuItem { Header = "_Settings...", Icon = AppIcons.Create("Settings") };
             settingsItem.Click += async (_, _) => await new SettingsWindow().ShowDialog(this).ConfigureAwait(true);
 
-            var aboutItem = new MenuItem { Header = "_About" };
+            var aboutItem = new MenuItem { Header = "_About", Icon = AppIcons.Create("About") };
             aboutItem.Click += async (_, _) => await AppMessageDialogs.ShowMessageAsync(
                 $"Source 2 Viewer {Program.DisplayVersion}\n\nCross-platform viewer for Source 2 resources.\nhttps://s2v.app/",
                 "About Source 2 Viewer").ConfigureAwait(true);
@@ -138,21 +148,25 @@ namespace GUI
                     new MenuItem
                     {
                         Header = "_File",
+                        Icon = AppIcons.Create("Folder"),
                         Items = { openItem, recentFilesMenu, new Separator(), closeTabItem, closeAllItem, new Separator(), exitItem },
                     },
                     new MenuItem
                     {
                         Header = "_View",
+                        Icon = AppIcons.Create("Explorer"),
                         Items = { explorerItem, consoleItem, themeItem },
                     },
                     new MenuItem
                     {
                         Header = "_Tools",
+                        Icon = AppIcons.Create("Tools"),
                         Items = { settingsItem },
                     },
                     new MenuItem
                     {
                         Header = "_Help",
+                        Icon = AppIcons.Create("Info"),
                         Items = { aboutItem },
                     },
                 },
@@ -175,14 +189,18 @@ namespace GUI
             for (var i = recent.Count - 1; i >= 0; i--)
             {
                 var path = recent[i];
-                var item = new MenuItem { Header = path.Replace("_", "__", StringComparison.Ordinal) };
+                var item = new MenuItem
+                {
+                    Header = path.Replace("_", "__", StringComparison.Ordinal),
+                    Icon = AppIcons.Create(AppIcons.GetFileIconName(path)),
+                };
                 item.Click += (_, _) => OpenFile(path);
                 recentFilesMenu.Items.Add(item);
             }
 
             recentFilesMenu.Items.Add(new Separator());
 
-            var clear = new MenuItem { Header = "Clear recent files" };
+            var clear = new MenuItem { Header = "Clear recent files", Icon = AppIcons.Create("HistoryClear") };
             clear.Click += (_, _) => Settings.ClearRecentFiles();
             recentFilesMenu.Items.Add(clear);
         }
@@ -472,7 +490,7 @@ namespace GUI
             };
 
 #pragma warning disable CA2000 // Ownership is transferred to the tab control or preview host, which dispose it
-            var tab = new DocumentTab(Path.GetFileName(vrfGuiContext.FileName), closable: !isPreview)
+            var tab = new DocumentTab(Path.GetFileName(vrfGuiContext.FileName), AppIcons.GetFileIconName(vrfGuiContext.FileName), closable: !isPreview)
             {
                 ToolTipText = vrfGuiContext.FileName,
                 ExportData = new ExportData

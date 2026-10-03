@@ -33,7 +33,7 @@ namespace GUI
             searchPaths = new ListBox { Height = 140, ItemsSource = config.GameSearchPaths.ToList() };
             panel.Children.Add(searchPaths);
 
-            var addFolder = new Button { Content = "Add folder..." };
+            var addFolder = new Button { Content = AppIcons.CreateHeader("FolderAdd", "Add folder...") };
             addFolder.Click += async (_, _) =>
             {
                 if (await AppFileDialogs.PickFolderAsync("Add game search folder").ConfigureAwait(true) is { } folder)
@@ -42,7 +42,7 @@ namespace GUI
                 }
             };
 
-            var addFile = new Button { Content = "Add gameinfo.gi or VPK..." };
+            var addFile = new Button { Content = AppIcons.CreateHeader("FileAdd", "Add gameinfo.gi or VPK...") };
             addFile.Click += async (_, _) =>
             {
                 var files = await AppFileDialogs.OpenFilesAsync("Add game search file", "Game info or VPK|gameinfo.gi;*.vpk|All files (*.*)|*.*", multiselect: false).ConfigureAwait(true);
@@ -53,7 +53,7 @@ namespace GUI
                 }
             };
 
-            var remove = new Button { Content = "Remove" };
+            var remove = new Button { Content = AppIcons.CreateHeader("FolderRemove", "Remove") };
             remove.Click += (_, _) =>
             {
                 if (searchPaths.SelectedItem is string path)

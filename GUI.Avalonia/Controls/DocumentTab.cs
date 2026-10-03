@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using GUI.Types.Exporter;
+using GUI.Utils;
 
 namespace GUI.Controls;
 
@@ -27,7 +28,7 @@ sealed class DocumentTab : TabItem, IDisposable
     // Themes key templates by type, a subclass has to ask for the TabItem one
     protected override Type StyleKeyOverride => typeof(TabItem);
 
-    public DocumentTab(string text, bool closable = true)
+    public DocumentTab(string text, string? iconName = null, bool closable = true)
     {
         title = new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center };
 
@@ -35,22 +36,24 @@ sealed class DocumentTab : TabItem, IDisposable
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
-            Children = { title },
         };
+
+        if (iconName != null)
+        {
+            header.Children.Add(AppIcons.Create(iconName));
+        }
+
+        header.Children.Add(title);
 
         if (closable)
         {
             var closeButton = new Button
             {
-                Content = "✕",
-                FontSize = 10,
-                Padding = new(4, 0),
-                MinHeight = 0,
-                Background = Avalonia.Media.Brushes.Transparent,
-                BorderThickness = new(0),
+                Content = AppIcons.Create("CloseTab", 12),
                 VerticalAlignment = VerticalAlignment.Center,
                 Focusable = false,
             };
+            closeButton.Classes.Add("tabClose");
             ToolTip.SetTip(closeButton, "Close tab");
             closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
             header.Children.Add(closeButton);

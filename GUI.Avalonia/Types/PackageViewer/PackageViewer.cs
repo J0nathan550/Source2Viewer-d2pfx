@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -144,7 +145,7 @@ namespace GUI.Types.PackageViewer
                 GridLinesVisibility = DataGridGridLinesVisibility.None,
                 Columns =
                 {
-                    TextColumn("Name", nameof(FileRow.Name), 2),
+                    NameColumn(),
                     TextColumn("Size", nameof(FileRow.Size), 0.6),
                     TextColumn("Type", nameof(FileRow.Type), 0.6),
                     TextColumn("Folder", nameof(FileRow.Folder), 2),
@@ -165,10 +166,10 @@ namespace GUI.Types.PackageViewer
                 Margin = new(4, 0),
             };
 
-            var searchButton = new Button { Content = "Search" };
+            var searchButton = new Button { Content = AppIcons.CreateHeader("Find", "Search") };
             searchButton.Click += (_, _) => RunSearch();
 
-            var clearButton = new Button { Content = "Clear", Margin = new(4, 0, 0, 0) };
+            var clearButton = new Button { Content = AppIcons.CreateHeader("CloseTab", "Clear"), Margin = new(4, 0, 0, 0) };
             clearButton.Click += (_, _) =>
             {
                 searchBox.Text = string.Empty;
@@ -177,14 +178,17 @@ namespace GUI.Types.PackageViewer
 
             listStatus = new TextBlock { Margin = new(8, 0), VerticalAlignment = VerticalAlignment.Center, Opacity = 0.75 };
 
-            var toolbar = new DockPanel { Margin = new(4) };
+            var toolbarPanel = new DockPanel { Margin = new(4) };
             DockPanel.SetDock(searchType, Dock.Right);
             DockPanel.SetDock(clearButton, Dock.Right);
             DockPanel.SetDock(searchButton, Dock.Right);
-            toolbar.Children.Add(clearButton);
-            toolbar.Children.Add(searchButton);
-            toolbar.Children.Add(searchType);
-            toolbar.Children.Add(searchBox);
+            toolbarPanel.Children.Add(clearButton);
+            toolbarPanel.Children.Add(searchButton);
+            toolbarPanel.Children.Add(searchType);
+            toolbarPanel.Children.Add(searchBox);
+
+            var toolbar = new Border { Child = toolbarPanel };
+            toolbar.Classes.Add("toolbar");
 
             previewTabs = ViewerContentPresenter.CreateTabControl();
 
@@ -218,6 +222,39 @@ namespace GUI.Types.PackageViewer
             ShowFolder(VirtualRoot);
 
             return root;
+        }
+
+        private static DataGridTemplateColumn NameColumn() => new()
+        {
+            Header = "Name",
+            SortMemberPath = nameof(FileRow.Name),
+            Width = new DataGridLength(2, DataGridLengthUnitType.Star),
+            CellTemplate = new FuncDataTemplate<FileRow>(static (_, _) => CreateNameCell(), supportsRecycling: true),
+        };
+
+        private static Control CreateNameCell()
+        {
+            var icon = AppIcons.Create("File");
+            var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis };
+            var cell = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Margin = new(6, 0),
+                Children = { icon, text },
+            };
+
+            // Cells are recycled between rows, so follow the row instead of binding once
+            cell.DataContextChanged += (_, _) =>
+            {
+                if (cell.DataContext is FileRow row)
+                {
+                    icon.IconName = AppIcons.GetExtensionIconName(row.Entry.TypeName);
+                    text.Text = row.Name;
+                }
+            };
+
+            return cell;
         }
 
         private static DataGridTextColumn TextColumn(string header, string property, double weight) => new()
@@ -439,19 +476,19 @@ namespace GUI.Types.PackageViewer
 
         private ContextMenu CreateFileContextMenu()
         {
-            var open = new MenuItem { Header = "Open" };
+            var open = new MenuItem { Header = "Open", Icon = AppIcons.Create("Open") };
             open.Click += (_, _) => OpenSelectedFiles(withoutViewer: false);
 
-            var openBlocks = new MenuItem { Header = "Open resource blocks only" };
+            var openBlocks = new MenuItem { Header = "Open resource blocks only", Icon = AppIcons.Create("OpenWithoutViewer") };
             openBlocks.Click += (_, _) => OpenSelectedFiles(withoutViewer: true);
 
-            var copyPath = new MenuItem { Header = "Copy file path" };
+            var copyPath = new MenuItem { Header = "Copy file path", Icon = AppIcons.Create("CopyURL") };
             copyPath.Click += (_, _) => AppClipboard.SetText(string.Join(Environment.NewLine, SelectedEntries().Select(static e => e.GetFullPath())));
 
-            var exportRaw = new MenuItem { Header = "Export as is..." };
+            var exportRaw = new MenuItem { Header = "Export as is...", Icon = AppIcons.Create("Export") };
             exportRaw.Click += OnExportRawClick;
 
-            var decompile = new MenuItem { Header = "Decompile and export..." };
+            var decompile = new MenuItem { Header = "Decompile and export...", Icon = AppIcons.Create("Decompile") };
             decompile.Click += OnDecompileClick;
 
             return new ContextMenu { Items = { open, openBlocks, new Separator(), copyPath, new Separator(), exportRaw, decompile } };
@@ -482,13 +519,13 @@ namespace GUI.Types.PackageViewer
         {
             IEnumerable<IBetterBaseItem> SelectedFolder() => treeView?.SelectedItem is BetterTreeNode node ? [node] : [];
 
-            var exportRaw = new MenuItem { Header = "Export folder as is..." };
+            var exportRaw = new MenuItem { Header = "Export folder as is...", Icon = AppIcons.Create("Export") };
             exportRaw.Click += (_, _) => ExportSelection(SelectedFolder(), decompile: false, keepPackageStructure: false);
 
-            var decompile = new MenuItem { Header = "Decompile and export folder..." };
+            var decompile = new MenuItem { Header = "Decompile and export folder...", Icon = AppIcons.Create("Decompile") };
             decompile.Click += (_, _) => ExportSelection(SelectedFolder(), decompile: true, keepPackageStructure: false);
 
-            var copyPath = new MenuItem { Header = "Copy folder path" };
+            var copyPath = new MenuItem { Header = "Copy folder path", Icon = AppIcons.Create("CopyURL") };
             copyPath.Click += (_, _) =>
             {
                 if (treeView?.SelectedItem is BetterTreeNode node)

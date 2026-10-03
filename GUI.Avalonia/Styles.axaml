@@ -1,5 +1,65 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{DynamicResource S2vAppBrush}" />
+    </Style>
+
+    <Style Selector="Menu.main">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Menu.main > MenuItem">
+        <Setter Property="Padding" Value="8,4" />
+    </Style>
+
+    <Style Selector="Border.statusBar">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="Border.statusBar TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource S2vContrastSoftBrush}" />
+    </Style>
+
+    <Style Selector="Border.toolbar">
+        <Setter Property="Background" Value="{DynamicResource S2vAppMiddleBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource S2vBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Button.flat">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="6,4" />
+    </Style>
+
+    <Style Selector="Button.flat:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource S2vHoverAccentBrush}" />
+    </Style>
+
+    <Style Selector="Button.tabClose">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="2" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Opacity" Value="0.6" />
+    </Style>
+
+    <Style Selector="Button.tabClose:pointerover">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+
+    <Style Selector="Button.tabClose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource S2vAttentionBrush}" />
+    </Style>
+
+    <Style Selector="GridSplitter">
+        <Setter Property="Background" Value="{DynamicResource S2vBorderBrush}" />
+    </Style>
+
     <Style Selector="TabControl.content > TabItem">
         <Setter Property="FontSize" Value="13" />
         <Setter Property="MinHeight" Value="28" />
