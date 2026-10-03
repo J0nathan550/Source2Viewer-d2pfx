@@ -112,7 +112,7 @@ namespace GUI.Controls
             var maxTextureSize = Numeric(config.MaxTextureSize, 16, 10240, 64, v => config.MaxTextureSize = (int)v);
 
             var sensitivityValue = new TextBlock();
-            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 5, height: 32, sensitivityValue, v =>
+            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 0, height: 32, sensitivityValue, v =>
             {
                 config.MouseSensitivity = (float)(v / 10);
                 return config.MouseSensitivity.ToString("0.0", CultureInfo.InvariantCulture);
@@ -237,35 +237,37 @@ namespace GUI.Controls
         }
 
         /// <summary>
-        /// A group box of the given height in WinForms, with its controls where the WinForms designer puts them. Controls
-        /// of the same row, which WinForms places a few pixels apart, are centered on one line so they sit straight.
+        /// A group box with its controls at the WinForms designer's horizontal positions, in rows of one height so that
+        /// everything in a row sits on the same line and the rows are evenly spaced. Controls WinForms places a few
+        /// pixels apart vertically share a row.
         /// </summary>
         private static Grid CanvasGroup(string title, double height, params (Control Control, double X, double Y)[] items)
         {
-            const double RowHeight = 34;
-            const double SameRowDistance = 10;
+            const double RowHeight = 36;
+            const double SameRowDistance = 12;
 
-            var canvas = new Canvas { Height = height - GroupTitleOffset - 2 };
-            var rowTops = new List<double>();
+            _ = height;
+
+            var rows = new StackPanel { Margin = new(0, 6, 0, 10) };
+            Panel? row = null;
+            var rowTop = double.MinValue;
 
             foreach (var (control, x, y) in items.OrderBy(static item => item.Y))
             {
-                var rowTop = rowTops.Count > 0 && y - rowTops[^1] <= SameRowDistance ? rowTops[^1] : y;
-
-                if (rowTops.Count == 0 || rowTops[^1] != rowTop)
+                if (row == null || y - rowTop > SameRowDistance)
                 {
-                    rowTops.Add(rowTop);
+                    row = new Panel { Height = RowHeight };
+                    rows.Children.Add(row);
+                    rowTop = y;
                 }
 
+                control.HorizontalAlignment = HorizontalAlignment.Left;
                 control.VerticalAlignment = VerticalAlignment.Center;
-
-                var cell = new Panel { Height = Math.Max(RowHeight, double.IsNaN(control.Height) ? 0 : control.Height), Children = { control } };
-                Canvas.SetLeft(cell, x);
-                Canvas.SetTop(cell, rowTop - GroupTitleOffset - 6);
-                canvas.Children.Add(cell);
+                control.Margin = new(x, 0, 0, 0);
+                row.Children.Add(control);
             }
 
-            return GroupBox.Create(title, canvas, new Avalonia.Thickness(0));
+            return GroupBox.Create(title, rows, new Avalonia.Thickness(0));
         }
 
         private static TextBlock Label(string text) => new() { Text = text };
