@@ -25,7 +25,7 @@ namespace GUI.Types.PackageViewer
         private bool sortDescending;
 
         /// <summary>The list of rows, for selection and input.</summary>
-        public ListBox List { get; }
+        public ListBox ItemList { get; }
 
         public PackageListView()
         {
@@ -42,14 +42,14 @@ namespace GUI.Types.PackageViewer
             DockPanel.SetDock(headerBorder, Dock.Top);
             Children.Add(headerBorder);
 
-            List = new ListBox
+            ItemList = new ListBox
             {
                 SelectionMode = SelectionMode.Multiple,
                 ItemTemplate = new FuncDataTemplate<PackageViewer.ListRow>(static (_, _) => CreateRow(), supportsRecycling: true),
             };
-            List.Classes.Add("packageList");
-            ScrollViewer.SetHorizontalScrollBarVisibility(List, ScrollBarVisibility.Disabled);
-            Children.Add(List);
+            ItemList.Classes.Add("packageList");
+            ScrollViewer.SetHorizontalScrollBarVisibility(ItemList, ScrollBarVisibility.Disabled);
+            Children.Add(ItemList);
 
             UpdateSortIcons();
         }
@@ -172,7 +172,7 @@ namespace GUI.Types.PackageViewer
 
         private void ApplySort()
         {
-            List.ItemsSource = rows.Order(Comparer<PackageViewer.ListRow>.Create(Compare)).ToList();
+            ItemList.ItemsSource = rows.Order(Comparer<PackageViewer.ListRow>.Create(Compare)).ToList();
         }
 
         /// <summary>

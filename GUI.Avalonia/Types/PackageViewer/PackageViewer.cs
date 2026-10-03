@@ -284,9 +284,9 @@ namespace GUI.Types.PackageViewer
 
             // List and grid
             var list = new PackageListView();
-            list.List.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
-            list.List.KeyDown += OnItemsKeyDown;
-            list.List.ContextRequested += (_, e) => OnContextRequested(list.List, e);
+            list.ItemList.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
+            list.ItemList.KeyDown += OnItemsKeyDown;
+            list.ItemList.ContextRequested += (_, e) => OnContextRequested(list.ItemList, e);
             fileList = list;
 
             var grid = new ListBox
@@ -783,7 +783,7 @@ namespace GUI.Types.PackageViewer
 
         private List<ListRow> SelectedRows()
         {
-            var selected = IsGridMode ? gridList?.SelectedItems : fileList?.List.SelectedItems;
+            var selected = IsGridMode ? gridList?.SelectedItems : fileList?.ItemList.SelectedItems;
             return selected?.OfType<ListRow>().ToList() ?? [];
         }
 
