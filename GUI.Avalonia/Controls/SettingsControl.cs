@@ -2,20 +2,27 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Media;
 using GUI.Utils;
 
 namespace GUI.Controls
 {
     /// <summary>
-    /// The Settings tab, grouped like the WinForms SettingsControl. Changes are saved when the tab is left.
+    /// The Settings tab, laid out like the WinForms SettingsControl: full width group boxes one under another, with
+    /// their controls where the WinForms designer puts them. Changes are saved when the tab is left.
     /// </summary>
     sealed class SettingsControl : ScrollViewer
     {
         private static readonly int[] AntiAliasingSampleOptions = [0, 2, 4, 8, 16];
         private static readonly int[] ShadowQualityResolutions = [512, 1024, 2048, 4096];
         private static readonly string[] ShadowQualityNames = ["Low", "Medium", "High", "Very High"];
+
+        // WinForms places group box contents from the top of the box, a little above the frame's line, where the
+        // group boxes here start their contents below the title
+        private const double GroupTitleOffset = 15;
 
         private readonly ListBox gamePaths;
 
@@ -25,13 +32,15 @@ namespace GUI.Controls
         public SettingsControl()
         {
             Classes.Add("page");
+            Classes.Add("settings");
 
             var config = Settings.Config;
 
             // Game content search paths
-            gamePaths = new ListBox { Height = 140, ItemsSource = config.GameSearchPaths.ToList() };
+            gamePaths = new ListBox { Height = 123, ItemsSource = config.GameSearchPaths.ToList() };
+            gamePaths.Classes.Add("settingsList");
 
-            var gamePathsAdd = new Button { Content = AppIcons.CreateHeader("FileAdd", "Add .vpk or gameinfo.gi", 16) };
+            var gamePathsAdd = new Button { Content = "Add .vpk or gameinfo.gi", Width = 212, Height = 30, Margin = new(0, 9, 8, 9) };
             gamePathsAdd.Click += async (_, _) =>
             {
                 var files = await AppFileDialogs.OpenFilesAsync(null, "Valve Pak (*.vpk) or gameinfo.gi|*.vpk;gameinfo.gi|All files (*.*)|*.*", multiselect: false, updateRemembered: false).ConfigureAwait(true);
@@ -56,7 +65,7 @@ namespace GUI.Controls
                 AddGamePath(fileName);
             };
 
-            var gamePathsAddFolder = new Button { Content = AppIcons.CreateHeader("FolderAdd", "Add folder", 16) };
+            var gamePathsAddFolder = new Button { Content = "Add folder", Width = 88, Height = 30, Margin = new(8, 9, 8, 9) };
             gamePathsAddFolder.Click += async (_, _) =>
             {
                 var folder = await AppFileDialogs.PickFolderAsync(null, AppFileDialogs.RememberIn.OpenDirectory, updateRemembered: false).ConfigureAwait(true);
@@ -68,7 +77,7 @@ namespace GUI.Controls
                 }
             };
 
-            var gamePathsRemove = new Button { Content = AppIcons.CreateHeader("FolderRemove", "Remove", 16) };
+            var gamePathsRemove = new Button { Content = "Remove", Width = 88, Height = 30, Margin = new(8, 9, 0, 9) };
             gamePathsRemove.Click += (_, _) =>
             {
                 if (gamePaths.SelectedItem is string path)
@@ -78,50 +87,57 @@ namespace GUI.Controls
                 }
             };
 
-            var gamePathsGroup = new StackPanel
+            var gamePathsButtons = new DockPanel();
+            DockPanel.SetDock(gamePathsAdd, Dock.Left);
+            DockPanel.SetDock(gamePathsAddFolder, Dock.Left);
+            DockPanel.SetDock(gamePathsRemove, Dock.Right);
+            gamePathsButtons.Children.Add(gamePathsAdd);
+            gamePathsButtons.Children.Add(gamePathsAddFolder);
+            gamePathsButtons.Children.Add(gamePathsRemove);
+            gamePathsButtons.Children.Add(new Panel());
+
+            var gamePathsGroup = GroupBox.Create("Game content search paths", new StackPanel
             {
-                Spacing = 6,
-                Children =
-                {
-                    gamePaths,
-                    new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { gamePathsAdd, gamePathsAddFolder, gamePathsRemove } },
-                },
-            };
+                Margin = new(16, 36 - GroupTitleOffset, 16, 0),
+                Height = 243 - 36 - 2,
+                Children = { gamePaths, gamePathsButtons },
+            }, new Avalonia.Thickness(0));
 
             // Video settings
-            var maxTextureSize = Numeric(config.MaxTextureSize, 64, 16384, 64, v => config.MaxTextureSize = (int)v);
-            var fov = Numeric((decimal)config.FieldOfView, 10, 170, 1, v => config.FieldOfView = (float)v, "0.######");
-            var viewmodelFov = Numeric((decimal)config.ViewmodelFieldOfView, 10, 170, 1, v => config.ViewmodelFieldOfView = (float)v, "0.######");
-
-            var shadowQualityIndex = Array.FindIndex(ShadowQualityResolutions, r => config.ShadowResolution <= r);
-            var shadowQuality = Combo(ShadowQualityNames, shadowQualityIndex < 0 ? ShadowQualityResolutions.Length - 1 : shadowQualityIndex, i => config.ShadowResolution = ShadowQualityResolutions[i]);
-
             var antiAliasingIndex = Array.FindLastIndex(AntiAliasingSampleOptions, s => config.AntiAliasingSamples >= s);
             var antiAliasing = Combo(AntiAliasingSampleOptions.Select(static s => $"{s}x").ToArray(), antiAliasingIndex, i => config.AntiAliasingSamples = AntiAliasingSampleOptions[i]);
 
-            var sensitivityValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 32 };
-            var sensitivity = SliderRow(config.MouseSensitivity * 10, 0, 80, sensitivityValue, v =>
+            var fov = Numeric((decimal)config.FieldOfView, 1, 170, 1, v => config.FieldOfView = (float)v, "0.######");
+            var viewmodelFov = Numeric((decimal)config.ViewmodelFieldOfView, 50, 70, 1, v => config.ViewmodelFieldOfView = (float)v, "0.######");
+            var maxTextureSize = Numeric(config.MaxTextureSize, 16, 10240, 64, v => config.MaxTextureSize = (int)v);
+
+            var sensitivityValue = new TextBlock();
+            var sensitivity = Slider(config.MouseSensitivity * 10, 80, tickFrequency: 5, height: 45, sensitivityValue, v =>
             {
                 config.MouseSensitivity = (float)(v / 10);
                 return config.MouseSensitivity.ToString("0.0", CultureInfo.InvariantCulture);
             });
 
-            var videoGroup = new StackPanel
-            {
-                Spacing = 6,
-                Children =
-                {
-                    Check("Vertical Sync", config.Vsync != 0, v => config.Vsync = v ? 1 : 0),
-                    Check("Display FPS", config.DisplayFps != 0, v => config.DisplayFps = v ? 1 : 0),
-                    Check("Smooth camera", config.SmoothCameraEnabled, v => config.SmoothCameraEnabled = v),
-                    Row("Camera FOV:", fov),
-                    Row("Viewmodel FOV:", viewmodelFov),
-                    Row("Max texture size:", maxTextureSize),
-                    Row("Anti-aliasing:", antiAliasing),
-                    Row("Shadow quality:", shadowQuality),
-                    Row("Mouse sensitivity:", sensitivity),
-                },
-            };
+            var shadowQualityIndex = Array.FindIndex(ShadowQualityResolutions, r => config.ShadowResolution <= r);
+            var shadowQuality = Combo(ShadowQualityNames, shadowQualityIndex < 0 ? ShadowQualityResolutions.Length - 1 : shadowQualityIndex, i => config.ShadowResolution = ShadowQualityResolutions[i]);
+
+            var videoGroup = CanvasGroup("Video settings", 442,
+                (Label("Anti-aliasing:"), 15, 36),
+                (antiAliasing, 170, 33),
+                (Label("Camera FOV:"), 15, 83),
+                (fov, 170, 81),
+                (Label("Viewmodel FOV:"), 15, 134),
+                (viewmodelFov, 170, 132),
+                (Label("Max texture size:"), 15, 185),
+                (maxTextureSize, 170, 183),
+                (Label("Mouse sensitivity:"), 15, 224),
+                (sensitivity, 170, 221),
+                (sensitivityValue, 340, 227),
+                (Label("Shadow quality:"), 15, 268),
+                (shadowQuality, 170, 266),
+                (Check("Vertical Sync", config.Vsync != 0, v => config.Vsync = v ? 1 : 0), 15, 301),
+                (Check("Display FPS", config.DisplayFps != 0, v => config.DisplayFps = v ? 1 : 0), 15, 333),
+                (Check("Smooth camera", config.SmoothCameraEnabled, v => config.SmoothCameraEnabled = v), 15, 401));
 
             // Quick file preview
             var quickPreviewFlags = (Settings.QuickPreviewFlags)config.QuickFilePreview;
@@ -132,72 +148,68 @@ namespace GUI.Controls
                 config.QuickFilePreview = (int)(enabled ? flags | flag : flags & ~flag);
             }
 
-            var quickPreviewGroup = new StackPanel
-            {
-                Spacing = 6,
-                Children =
-                {
-                    Check("Preview files after selecting", (quickPreviewFlags & Settings.QuickPreviewFlags.Enabled) != 0, v => SetQuickPreviewFlag(Settings.QuickPreviewFlags.Enabled, v)),
-                    Check("Auto play sounds", (quickPreviewFlags & Settings.QuickPreviewFlags.AutoPlaySounds) != 0, v => SetQuickPreviewFlag(Settings.QuickPreviewFlags.AutoPlaySounds, v)),
-                },
-            };
+            var quickPreviewGroup = CanvasGroup("Quick file preview", 138,
+                (Check("Preview files after selecting", (quickPreviewFlags & Settings.QuickPreviewFlags.Enabled) != 0, v => SetQuickPreviewFlag(Settings.QuickPreviewFlags.Enabled, v)), 16, 39),
+                (Check("Auto play sounds", (quickPreviewFlags & Settings.QuickPreviewFlags.AutoPlaySounds) != 0, v => SetQuickPreviewFlag(Settings.QuickPreviewFlags.AutoPlaySounds, v)), 16, 78));
 
             // Audio
-            var volumeValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 32 };
-            var volume = SliderRow(MathF.Round(Math.Clamp(config.Volume, 0, 1) * 100), 0, 100, volumeValue, v =>
+            var volumeValue = new TextBlock();
+            var volume = Slider(MathF.Round(Math.Clamp(config.Volume, 0, 1) * 100), 100, tickFrequency: 0, height: 28, volumeValue, v =>
             {
                 config.Volume = (float)(v / 100);
                 return string.Create(CultureInfo.InvariantCulture, $"{(int)v}%");
             });
 
+            var audioGroup = CanvasGroup("Audio", 99,
+                (Label("Volume:"), 15, 46),
+                (volume, 170, 42),
+                (volumeValue, 340, 46));
+
             // Explorer
             var themes = Enum.GetValues<Themer.AppTheme>();
-            var theme = Combo(themes.Select(Themer.GetDisplayName).ToArray(), Math.Clamp(config.Theme, 0, themes.Length - 1), i =>
+            var theme = Combo(themes.Select(static theme => theme.ToString()).ToArray(), Math.Clamp(config.Theme, 0, themes.Length - 1), i =>
             {
                 config.Theme = i;
                 Themer.ApplyTheme(themes[i]);
             });
 
-            var explorerGroup = new StackPanel
+            var explorerItems = new List<(Control, double, double)>
             {
-                Spacing = 6,
-                Children =
-                {
-                    Check("Open explorer on start", config.OpenExplorerOnStart != 0, v => config.OpenExplorerOnStart = v ? 1 : 0),
-                    Row("Text viewer font size:", Numeric(config.TextViewerFontSize, 7, 30, 1, v => config.TextViewerFontSize = (int)v)),
-                    Row("Theme:", theme),
-                },
+                (Label("Theme:"), 15, 32),
+                (theme, 209, 29),
+                (Label("Text viewer font size:"), 15, 78),
+                (Numeric(config.TextViewerFontSize, 8, 24, 1, v => config.TextViewerFontSize = (int)v), 209, 76),
+                (Check("Open explorer on start", config.OpenExplorerOnStart != 0, v => config.OpenExplorerOnStart = v ? 1 : 0), 15, 124),
             };
 
             if (FileAssociation.IsSupported)
             {
-                var registerAssociation = new Button { Content = AppIcons.CreateHeader("VPKLink", "Register .vpk file association", 16) };
+                var registerAssociation = new Button { Content = "Register .vpk file association", Width = 208, Height = 30 };
                 registerAssociation.Click += async (_, _) => await FileAssociation.RegisterAsync().ConfigureAwait(true);
-                explorerGroup.Children.Add(registerAssociation);
+                explorerItems.Add((registerAssociation, 15, 174));
             }
+
+            var explorerGroup = CanvasGroup("Explorer", 243, [.. explorerItems]);
 
             var footer = new TextBlock
             {
                 Text = "No regrets, Mr. Freeman",
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new(0, 32),
-                Opacity = 0.5,
+                VerticalAlignment = VerticalAlignment.Center,
             };
+            footer.Classes.Add("settingsFooter");
 
             Content = new StackPanel
             {
-                Margin = new(16),
-                Spacing = 12,
-                MaxWidth = 640,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new(16, 18, 16, 18),
                 Children =
                 {
-                    GroupBox.Create("Game content search paths", gamePathsGroup),
-                    GroupBox.Create("Video settings", videoGroup),
-                    GroupBox.Create("Quick file preview", quickPreviewGroup),
-                    GroupBox.Create("Audio", Row("Volume:", volume)),
-                    GroupBox.Create("Explorer", explorerGroup),
-                    footer,
+                    gamePathsGroup,
+                    videoGroup,
+                    quickPreviewGroup,
+                    audioGroup,
+                    explorerGroup,
+                    new Border { Height = 100, Child = footer },
                 },
             };
 
@@ -224,19 +236,29 @@ namespace GUI.Controls
             gamePaths.ItemsSource = Settings.Config.GameSearchPaths.ToList();
         }
 
-        private static Grid Row(string label, Control control)
+        /// <summary>
+        /// A group box of the given height in WinForms, with its controls placed at their WinForms designer positions.
+        /// </summary>
+        private static Grid CanvasGroup(string title, double height, params (Control Control, double X, double Y)[] items)
         {
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("170,*") };
-            var text = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(control, 1);
-            grid.Children.Add(text);
-            grid.Children.Add(control);
-            return grid;
+            var canvas = new Canvas { Height = height - GroupTitleOffset - 2 };
+
+            foreach (var (control, x, y) in items)
+            {
+                Canvas.SetLeft(control, x);
+                Canvas.SetTop(control, y - GroupTitleOffset);
+                canvas.Children.Add(control);
+            }
+
+            return GroupBox.Create(title, canvas, new Avalonia.Thickness(0));
         }
+
+        private static TextBlock Label(string text) => new() { Text = text };
 
         private static CheckBox Check(string label, bool current, Action<bool> set)
         {
             var check = new CheckBox { Content = label, IsChecked = current };
+            check.Classes.Add("settings");
             check.IsCheckedChanged += (_, _) => set(check.IsChecked == true);
             return check;
         }
@@ -247,8 +269,10 @@ namespace GUI.Controls
             {
                 ItemsSource = items,
                 SelectedIndex = selectedIndex,
-                MinWidth = 150,
+                Width = 100,
+                Height = 26,
             };
+            combo.Classes.Add("settings");
             combo.SelectionChanged += (_, _) =>
             {
                 if (combo.SelectedIndex >= 0)
@@ -259,6 +283,7 @@ namespace GUI.Controls
             return combo;
         }
 
+        /// <summary>A number typed into a box, like the WinForms ThemedNumeric, which has no spin buttons.</summary>
         private static NumericUpDown Numeric(decimal value, decimal min, decimal max, decimal increment, Action<decimal> set, string format = "0")
         {
             var numeric = new NumericUpDown
@@ -268,9 +293,11 @@ namespace GUI.Controls
                 Maximum = max,
                 Increment = increment,
                 FormatString = format,
-                Width = 150,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                ShowButtonSpinner = false,
+                Width = 100,
+                Height = 25,
             };
+            numeric.Classes.Add("settings");
             numeric.ValueChanged += (_, e) =>
             {
                 if (e.NewValue is { } newValue)
@@ -281,27 +308,32 @@ namespace GUI.Controls
             return numeric;
         }
 
-        private static DockPanel SliderRow(double value, double min, double max, TextBlock valueLabel, Func<double, string> set)
+        private static Avalonia.Controls.Slider Slider(double value, double max, double tickFrequency, double height, TextBlock valueLabel, Func<double, string> set)
         {
             var slider = new Avalonia.Controls.Slider
             {
-                Minimum = min,
+                Minimum = 0,
                 Maximum = max,
                 Value = value,
                 IsSnapToTickEnabled = true,
-                TickFrequency = 1,
-                Width = 200,
+                TickFrequency = tickFrequency > 0 ? tickFrequency : 1,
+                SmallChange = 1,
+                TickPlacement = tickFrequency > 0 ? TickPlacement.BottomRight : TickPlacement.None,
+                Width = 160,
+                Height = height,
             };
 
-            valueLabel.Margin = new(8, 0, 0, 0);
-            valueLabel.Text = set(value);
-            slider.ValueChanged += (_, e) => valueLabel.Text = set(e.NewValue);
+            // Ticks are drawn sparser than the steps the value snaps to
+            if (tickFrequency > 0)
+            {
+                slider.IsSnapToTickEnabled = false;
+                slider.ValueChanged += (_, _) => slider.Value = Math.Round(slider.Value);
+            }
 
-            var row = new DockPanel { HorizontalAlignment = HorizontalAlignment.Left };
-            DockPanel.SetDock(slider, Dock.Left);
-            row.Children.Add(slider);
-            row.Children.Add(valueLabel);
-            return row;
+            valueLabel.Text = set(value);
+            slider.ValueChanged += (_, e) => valueLabel.Text = set(Math.Round(e.NewValue));
+
+            return slider;
         }
     }
 }
