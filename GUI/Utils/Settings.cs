@@ -121,8 +121,6 @@ namespace GUI.Utils
             public string CharacterExportGameDir { get; set; } = string.Empty;
             /// <summary>Gets or sets the width of the character export dialog's controls next to its preview, at 96 DPI, or 0 for the default width.</summary>
             public int CharacterExportControlsWidth { get; set; }
-            /// <summary>Gets or sets what to do with a file downloaded in the dota2prnfx tab: 0 to ask, 1 to open it, 2 to leave it.</summary>
-            public int D2PfxAutoOpenAction { get; set; }
             /// <summary>Internal settings file version used to apply migrations when upgrading from older versions. Do not modify manually.</summary>
             public int _VERSION_DO_NOT_MODIFY { get; set; }
             /// <summary>Gets or sets the application update check state.</summary>

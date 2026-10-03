@@ -188,4 +188,9 @@
     <Style Selector="WindowDrawnDecorations /template/ Panel#PART_TitleTextPanel">
         <Setter Property="Opacity" Value="0" />
     </Style>
+
+    <!-- No fullscreen button among the window buttons, the WinForms title bar has none -->
+    <Style Selector="WindowDrawnDecorations:has-fullscreen /template/ Button#PART_FullScreenButton">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
 </Styles>

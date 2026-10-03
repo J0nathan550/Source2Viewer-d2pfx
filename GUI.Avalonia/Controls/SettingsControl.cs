@@ -19,6 +19,9 @@ namespace GUI.Controls
 
         private readonly ListBox gamePaths;
 
+        // Without this the ScrollViewer theme is not applied, so the page has no template and can not scroll
+        protected override Type StyleKeyOverride => typeof(ScrollViewer);
+
         public SettingsControl()
         {
             Classes.Add("page");

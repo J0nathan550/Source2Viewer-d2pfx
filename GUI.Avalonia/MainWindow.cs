@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Chrome;
-using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -42,12 +41,6 @@ namespace GUI
         private ExplorerControl? explorerControl;
         private string windowTitle = AppTitle;
 
-        // The web view is destroyed whenever it leaves the visual tree, which a tab page does each time another
-        // tab is selected. So it lives over the pages instead, and is only shown while its tab is selected.
-        private readonly Decorator pageOverlay;
-        private ContentPresenter? pageHost;
-        private DocumentTab? d2pfxTab;
-
         public MainWindow()
         {
             Title = AppTitle;
@@ -74,15 +67,6 @@ namespace GUI
             mainTabs.ItemsPanel = new FuncTemplate<Panel?>(static () => new MainTabStripPanel());
             mainTabs.SelectionChanged += OnMainSelectedTabChanged;
             mainTabs.AddHandler(ContextRequestedEvent, OnTabContextRequested, RoutingStrategies.Bubble);
-            mainTabs.TemplateApplied += (_, e) => pageHost = e.NameScope.Find<ContentPresenter>("PART_SelectedContentHost");
-            mainTabs.LayoutUpdated += (_, _) => UpdatePageOverlayBounds();
-
-            pageOverlay = new Decorator
-            {
-                IsVisible = false,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-            };
 
             consoleTab = new DocumentTab("Console", "Log", closable: false)
             {
@@ -101,7 +85,7 @@ namespace GUI
             DockPanel.SetDock(bottomPanel, Dock.Bottom);
             root.Children.Add(topBar);
             root.Children.Add(bottomPanel);
-            root.Children.Add(new Panel { Children = { mainTabs, pageOverlay } });
+            root.Children.Add(mainTabs);
             Content = root;
 
             AddKeyBindings();
@@ -185,7 +169,7 @@ namespace GUI
             menu.Items.Add(new Separator());
             Item("_Close", Close, gesture: new KeyGesture(Key.F4, KeyModifiers.Alt));
             menu.Items.Add(new Separator());
-            Item("Website", () => AboutWindow.OpenUrl(D2PfxBrowserControl.TargetUrl));
+            Item("Website", () => AboutWindow.OpenUrl("https://h6rd.github.io/Dota2PornFxWeb/"));
             Item("Settings", OpenSettings);
             Item("About", () => _ = ShowAboutDialogAsync());
 
@@ -270,7 +254,6 @@ namespace GUI
                     tools,
                     TopLevelItem("_Settings", "Settings", OpenSettings),
                     TopLevelItem("_About", "About", () => _ = ShowAboutDialogAsync()),
-                    TopLevelItem("dota2prnfx", "dota2pornfx", ShowD2PfxTab),
                 },
             };
         }
@@ -549,31 +532,7 @@ namespace GUI
                 return;
             }
 
-            pageOverlay.IsVisible = d2pfxTab != null && SelectedTab == d2pfxTab;
             ShowSelectedTabStatus();
-        }
-
-        /// <summary>Keeps <see cref="pageOverlay"/> exactly over the page of the selected tab.</summary>
-        private void UpdatePageOverlayBounds()
-        {
-            if (pageHost?.TranslatePoint(default, mainTabs) is not { } origin)
-            {
-                return;
-            }
-
-            var margin = new Thickness(origin.X, origin.Y, 0, 0);
-            var size = pageHost.Bounds.Size;
-
-            if (pageOverlay.Margin != margin)
-            {
-                pageOverlay.Margin = margin;
-            }
-
-            if (pageOverlay.Width != size.Width || pageOverlay.Height != size.Height)
-            {
-                pageOverlay.Width = size.Width;
-                pageOverlay.Height = size.Height;
-            }
         }
 
         private void UpdateWindowTitle(string? toolTipText)
@@ -684,27 +643,6 @@ namespace GUI
             InsertSpecialTab(new DocumentTab("Settings", "Settings") { ToolTipText = "Settings", Content = new SettingsControl() }, 1);
         }
 
-        /// <summary>Opens the dota2prnfx site in a tab, or selects that tab if it is already open.</summary>
-        public void ShowD2PfxTab()
-        {
-            if (d2pfxTab != null)
-            {
-                mainTabs.SelectedItem = d2pfxTab;
-                return;
-            }
-
-            // The page itself is shown by the overlay, the tab only holds its place
-            var tab = new DocumentTab("dota2prnfx", "dota2pornfx") { Content = new Border() };
-
-            // The icon is a picture that fills its whole square, shrink it to sit like the other icons
-            tab.SetIconScale(0.72);
-
-            pageOverlay.Child = new D2PfxBrowserControl();
-            d2pfxTab = tab;
-
-            InsertSpecialTab(tab, mainTabs.ItemCount);
-        }
-
         /// <summary>Opens an empty package that folders and files can be added to, then saved as a VPK.</summary>
         private void CreateVpkFromFolder()
         {
@@ -735,16 +673,6 @@ namespace GUI
 
             var index = mainTabs.Items.IndexOf(tab);
             var wasSelected = mainTabs.SelectedItem == tab;
-
-            if (tab == d2pfxTab)
-            {
-                d2pfxTab = null;
-                pageOverlay.IsVisible = false;
-
-                var browser = pageOverlay.Child as D2PfxBrowserControl;
-                pageOverlay.Child = null;
-                browser?.Dispose();
-            }
 
             // The explorer is kept alive and reused when it is opened again
             if (explorerControl != null && (tab.Content == explorerControl || tab.Content is WelcomeControl))
