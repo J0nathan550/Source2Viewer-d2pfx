@@ -14,6 +14,19 @@ The Icons tab lists the hero's portrait, minimap icon, ability icons and the sho
 
 With "Replace default assets" on, the export also writes the chosen look over the hero's default files, so it shows without the items equipped. The arcana or persona model is written as the hero's base model (e.g. `models/heroes/earthshaker/earthshaker.vmdl`) with the chosen style's skin as its default. Chosen items and their refits are written over the default items' models, and items that dress a unit the hero creates are written over that unit's model. Every model the hero wears gets the body group choices the equipped items set, like the "arcana" body group the arcana level switches, and the meshes of the other choices are removed from it. That way a style 2 arcana shows its style 2 meshes, and the parts it hides on other items, like Earthshaker's saddle, stay hidden. Items without a default model to be written over, like a head for a hero without a default head, and the extra models items add, have their meshes added to the hero's base model. Particles the items swap in are written over the ones they replace, and particles the items create are added to the models as model particles. Particles every hero uses, like the blink dagger or stun effects, are only replaced when you also tick "Also shared particles".
 
+# Source2Viewer Avalonia
+
+Before the project was done using Forms and for old users Forms project remains. There is another implementation done with Avalonia.
+Avalonia Implementation provides 1:1 recreation of Source2Viewer Forms. Core idea was to make Source2Viewer work natively in Linux.
+
+Avalonia related implementation you can find in this repository in GUI.Avalonia folder.
+Below there is provided image of Source2Viewer working on Linux with help of Avalonia.
+
+<img width="1494" height="853" alt="image" src="https://github.com/user-attachments/assets/9d747bcd-a170-4933-a4ed-cbd92f97c11f" />
+<img width="1422" height="794" alt="image" src="https://github.com/user-attachments/assets/bef09893-e3bd-416a-9fd6-b8257d6004f0" />
+
+
+
 ## Downloads
 
 Every release has the Windows build (`gui-windows-x64.zip`) and a cross-platform build of the same viewer for Windows (`gui-avalonia-windows-x64.zip`) and Linux (`gui-avalonia-linux-x64.zip`), which has all of the tools above. Both builds check for updates and install them from the About dialog, after verifying that the download was built by this repository's release workflow.
