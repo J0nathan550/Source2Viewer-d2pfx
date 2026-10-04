@@ -34,6 +34,9 @@
     <PackageReference Include="Sigstore" Version="1.0.1" />
     <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
+    <!-- Avalonia brings the Linux native library of an older SkiaSharp, which the newer SkiaSharp used by
+         ValveResourceFormat refuses to load, so the native library has to match that SkiaSharp version -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.2" />
     <PackageReference Include="Svg.Skia" Version="5.2.3" />
   </ItemGroup>
 
