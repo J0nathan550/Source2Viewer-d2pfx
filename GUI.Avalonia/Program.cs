@@ -7,6 +7,7 @@ using System.Text;
 using Avalonia;
 using Avalonia.Threading;
 using GUI.Utils;
+using OpenTK.Windowing.Desktop;
 using ValveResourceFormat.Renderer;
 
 namespace GUI
@@ -70,6 +71,10 @@ namespace GUI
             UpdateInstaller.CleanupPreviousInstall();
 
             Settings.Load();
+
+            // GLFW reports errors from inside its native calls, where a thrown exception aborts the process outside
+            // of Windows. OpenTK throws for a failed call itself once it returns, so the error only has to be logged.
+            GLFWProvider.SetErrorCallback(static (errorCode, description) => Log.Error("GLFW", $"{errorCode}: {description}"));
 
             return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
