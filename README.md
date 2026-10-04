@@ -32,6 +32,15 @@ Source2Viewer Avalonia port working on Steam Deck (SteamOS)
 <img width="1280" height="800" alt="image" src="https://github.com/user-attachments/assets/fa425c63-b62d-4090-a691-035f803970e4" />
 <img width="1279" height="797" alt="image" src="https://github.com/user-attachments/assets/c84639ac-6f8f-4766-8b7a-2cfe98a8882d" />
 
+Source2Viewer Avalonia port working on Windows
+
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/e02ebf0c-82ef-4bca-a02a-954da99e6e70" />
+<img width="1588" height="967" alt="image" src="https://github.com/user-attachments/assets/0a8f66d8-4868-4c0a-ba72-980c1a25cae4" />
+
+Comparing side by side original Source2Viewer.WinForms and Source2Viewer.Avalonia
+
+<img width="1919" height="1029" alt="image" src="https://github.com/user-attachments/assets/0b2efe25-7621-4231-be99-84a481ca32df" />
+
 
 ## Downloads
 
