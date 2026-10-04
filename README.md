@@ -25,6 +25,12 @@ Below there is provided image of Source2Viewer working on Linux with help of Ava
 <img width="1494" height="853" alt="image" src="https://github.com/user-attachments/assets/9d747bcd-a170-4933-a4ed-cbd92f97c11f" />
 <img width="1422" height="794" alt="image" src="https://github.com/user-attachments/assets/bef09893-e3bd-416a-9fd6-b8257d6004f0" />
 
+Source2Viewer Avalonia port working on Steam Deck (SteamOS)
+
+<img width="1280" height="799" alt="image" src="https://github.com/user-attachments/assets/666ff25f-be88-4990-830b-354046aec90e" />
+<img width="1280" height="800" alt="image" src="https://github.com/user-attachments/assets/16c9e184-a1f1-46a5-99f5-e778f7059de4" />
+<img width="1280" height="800" alt="image" src="https://github.com/user-attachments/assets/fa425c63-b62d-4090-a691-035f803970e4" />
+<img width="1279" height="797" alt="image" src="https://github.com/user-attachments/assets/c84639ac-6f8f-4766-8b7a-2cfe98a8882d" />
 
 
 ## Downloads
@@ -36,7 +42,7 @@ Every release has the Windows build (`gui-windows-x64.zip`) and a cross-platform
 - [Source 2 Viewer / ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat) and its original authors and contributors, whose work this fork is built entirely on top of.
 - [fvckmindself](https://github.com/fvckmindself) for [VmdlExtractor](https://github.com/fvckmindself/VmdlExtractor), the custom VMDL extraction pipeline this fork integrates.
 - [ibcsz12](https://github.com/ibcsz12) for improving Export character assets (items_game.txt).
-- [J0nathan550](https://github.com/J0nathan550) for this fork.
+- [J0nathan550](https://github.com/J0nathan550) for this fork and for implementing Source2Viewer.Avalonia port. 
 
 ## License
 
