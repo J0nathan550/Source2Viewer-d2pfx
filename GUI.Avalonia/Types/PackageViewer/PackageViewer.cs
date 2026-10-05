@@ -58,6 +58,7 @@ namespace GUI.Types.PackageViewer
         private Button? forwardButton;
         private RadioButton? listRadioButton;
         private RadioButton? gridRadioButton;
+        private bool isGridMode;
         private Avalonia.Controls.Slider? gridSizeSlider;
         private Border? toolbar;
         private Panel? contentHost;
@@ -236,13 +237,31 @@ namespace GUI.Types.PackageViewer
             ToolTip.SetTip(forwardButton, "Forward");
             forwardButton.Click += (_, _) => NavigateForward();
 
-            var gridView = Settings.Config.PackageGridView != 0;
+            isGridMode = Settings.Config.PackageGridView != 0;
 
-            listRadioButton = new RadioButton { Content = "List", GroupName = "PackageView", IsChecked = !gridView, Margin = new(12, 0, 0, 0) };
-            gridRadioButton = new RadioButton { Content = "Grid", GroupName = "PackageView", IsChecked = gridView };
+            // No group name: a named group spans the whole window, so every open package would share one view mode.
+            // Unnamed radio buttons are grouped by their parent panel instead.
+            listRadioButton = new RadioButton { Content = "List", IsChecked = !isGridMode, Margin = new(12, 0, 0, 0) };
+            gridRadioButton = new RadioButton { Content = "Grid", IsChecked = isGridMode };
             listRadioButton.Classes.Add("small");
             gridRadioButton.Classes.Add("small");
-            listRadioButton.IsCheckedChanged += (_, _) => OnViewModeChanged();
+
+            // The newly checked button raises its event before the group unchecks the other one,
+            // so the mode comes from whichever button just became checked rather than from reading both
+            listRadioButton.IsCheckedChanged += (_, _) =>
+            {
+                if (listRadioButton.IsChecked == true)
+                {
+                    SetViewMode(grid: false);
+                }
+            };
+            gridRadioButton.IsCheckedChanged += (_, _) =>
+            {
+                if (gridRadioButton.IsChecked == true)
+                {
+                    SetViewMode(grid: true);
+                }
+            };
 
             gridSizeSlider = new Avalonia.Controls.Slider
             {
@@ -253,7 +272,7 @@ namespace GUI.Types.PackageViewer
                 TickFrequency = 1,
                 TickPlacement = TickPlacement.BottomRight,
                 Width = 107,
-                IsEnabled = gridView,
+                IsEnabled = isGridMode,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -356,7 +375,6 @@ namespace GUI.Types.PackageViewer
             tree.SelectedItem = rootNode;
             suppressTreeSelection = false;
 
-            OnViewModeChanged();
             DisplayNodes(VirtualRoot);
 
             return root;
@@ -389,15 +407,22 @@ namespace GUI.Types.PackageViewer
             return item;
         }
 
-        private bool IsGridMode => gridRadioButton?.IsChecked == true;
+        private bool IsGridMode => isGridMode;
 
-        private void OnViewModeChanged()
+        private void SetViewMode(bool grid)
         {
-            Settings.Config.PackageGridView = IsGridMode ? 1 : 0;
+            if (isGridMode == grid)
+            {
+                return;
+            }
+
+            isGridMode = grid;
+            Settings.Config.PackageGridView = grid ? 1 : 0;
+            Settings.Save();
 
             if (gridSizeSlider != null)
             {
-                gridSizeSlider.IsEnabled = IsGridMode;
+                gridSizeSlider.IsEnabled = grid;
             }
 
             RefreshItems();
