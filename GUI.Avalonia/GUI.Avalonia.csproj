@@ -1,7 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- VmdlExtractor is an executable used as a library, it stays framework dependent inside the self-contained GUI -->
-    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <OutputType>WinExe</OutputType>
     <RollForward>LatestMajor</RollForward>
     <Description>Cross-platform Source 2 resource viewer</Description>

@@ -1,7 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- The GUIs call it as a library. An executable reference would be built for the runtime each GUI is
+         published for, which Visual Studio's publish does not do, so the command line tool is opt-in:
+         dotnet build -p:VmdlExtractorExe=true -->
+    <OutputType Condition="'$(VmdlExtractorExe)' == 'true'">Exe</OutputType>
+    <OutputType Condition="'$(VmdlExtractorExe)' != 'true'">Library</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -9,9 +13,6 @@
     <AssemblyName>VmdlExtractor</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <LangVersion>latest</LangVersion>
-    <!-- The GUIs reference it as a library. Without this the SDK builds it for the runtime the GUI is published
-         for, which Visual Studio's publish does not do for references, so the publish cannot find it. -->
-    <IsRidAgnostic>true</IsRidAgnostic>
     <!-- Vendored third-party decompiler, adapted to build against the in-repo
          ValveResourceFormat project. Not held to the repo-wide analyzer/warnings
          gate that applies to first-party library and app code. -->
