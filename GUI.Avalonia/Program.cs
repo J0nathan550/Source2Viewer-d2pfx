@@ -8,6 +8,7 @@ using Avalonia;
 using Avalonia.Threading;
 using GUI.Utils;
 using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using ValveResourceFormat.Renderer;
 
 namespace GUI
@@ -31,6 +32,14 @@ namespace GUI
 
         /// <summary>The update channel that produced this build.</summary>
         public static Settings.UpdateChannel BuildChannel => IsReleaseBuild ? Settings.UpdateChannel.Stable : Settings.UpdateChannel.Dev;
+
+        /// <summary>
+        /// The file the viewer was started from: the AppImage when running from one, whose own executable is
+        /// inside a temporary read-only mount, and the executable otherwise.
+        /// </summary>
+        public static string? ApplicationPath => OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("APPIMAGE") is { Length: > 0 } appImage
+            ? appImage
+            : Environment.ProcessPath;
 
         /// <summary>Files passed on the command line, opened once the main window exists.</summary>
         public static string[] StartupFiles { get; private set; } = [];
@@ -75,6 +84,14 @@ namespace GUI
             // GLFW reports errors from inside its native calls, where a thrown exception aborts the process outside
             // of Windows. OpenTK throws for a failed call itself once it returns, so the error only has to be logged.
             GLFWProvider.SetErrorCallback(static (errorCode, description) => Log.Error("GLFW", $"{errorCode}: {description}"));
+
+            // The GL windows are hidden and only own the contexts the viewers render offscreen with, which move between
+            // the loading and render threads. On Wayland the EGL drivers refuse that after the first frame, so GLX
+            // through XWayland is used whenever it is there, like the main window does.
+            if (OperatingSystem.IsLinux() && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")))
+            {
+                GLFW.InitHint(InitHintPlatform.Platform, Platform.X11);
+            }
 
             return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }

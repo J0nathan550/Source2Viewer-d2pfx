@@ -35,10 +35,11 @@ static class UpdateInstaller
     public static string? InstalledVersionText { get; private set; }
 
     /// <summary>
-    /// Whether this build can replace itself with a downloaded one: the single file builds for Windows and Linux.
+    /// Whether this build can replace itself with a downloaded one: the AppImage on Linux, and the single file builds.
     /// </summary>
     public static bool CanInstall => (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
-        && Environment.ProcessPath is { } exePath && IsSingleFileBundle(exePath);
+        && Program.ApplicationPath is { } path
+        && (path != Environment.ProcessPath || IsSingleFileBundle(path));
 
     // A single file publish has nothing but the bundle on disk. A development build has the managed
     // assembly next to its apphost, and cannot be replaced by a single downloaded file.
@@ -50,7 +51,7 @@ static class UpdateInstaller
     /// </summary>
     public static void CleanupPreviousInstall()
     {
-        var exePath = Environment.ProcessPath;
+        var exePath = Program.ApplicationPath;
 
         if (exePath == null)
         {
@@ -91,7 +92,7 @@ static class UpdateInstaller
     {
         var url = UpdateChecker.DownloadUrl;
         var expectedHash = UpdateChecker.DownloadSha256;
-        var exePath = Environment.ProcessPath ?? throw new InvalidOperationException("Could not determine the path of the running executable.");
+        var exePath = Program.ApplicationPath ?? throw new InvalidOperationException("Could not determine the path of the running executable.");
 
         // Only a download that can be verified is ever offered, there is no unverified fallback
         if (url == null || expectedHash == null)
@@ -142,7 +143,7 @@ static class UpdateInstaller
             return;
         }
 
-        if (!IsSingleFileBundle(exePath))
+        if (!CanInstall)
         {
             // Nothing to swap for a non bundled build, leave the verified file for inspection
             await AppMessageDialogs.ShowMessageAsync(
@@ -198,7 +199,7 @@ static class UpdateInstaller
     /// </summary>
     public static void Restart()
     {
-        var exePath = Environment.ProcessPath!;
+        var exePath = Program.ApplicationPath!;
         var mainWindow = Program.MainForm;
         var closed = false;
 
