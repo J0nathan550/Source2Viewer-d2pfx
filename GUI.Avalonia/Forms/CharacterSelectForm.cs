@@ -484,10 +484,16 @@ namespace GUI.Forms
 
         private static CheckBox Check(string text, bool isChecked) => new()
         {
-            Content = text,
+            Content = PlainText(text),
             IsChecked = isChecked,
             Margin = new(3, 1),
         };
+
+        /// <summary>
+        /// Text for a check box that shows underscores as they are, e.g. in file names, rather than taking the first one
+        /// as the mark of an access key.
+        /// </summary>
+        private static TextBlock PlainText(string text) => new() { Text = text };
 
         private static void AddCell(Grid grid, Control control, int row, int column, int columnSpan = 1)
         {
@@ -1983,7 +1989,7 @@ namespace GUI.Forms
 
                     var checkBox = new CheckBox
                     {
-                        Content = Path.GetFileNameWithoutExtension(particle),
+                        Content = PlainText(Path.GetFileNameWithoutExtension(particle)),
                         IsChecked = pickedModelEffects.TryGetValue(particle, out var kept) ? kept : !staging,
                         Margin = new(24, 2, 3, 2),
                         Tag = particle,
@@ -2160,7 +2166,7 @@ namespace GUI.Forms
 
             var checkBox = new CheckBox
             {
-                Content = Path.GetFileNameWithoutExtension(effect.Particle) + required,
+                Content = PlainText(Path.GetFileNameWithoutExtension(effect.Particle) + required),
                 IsChecked = pickedEffects.TryGetValue(effect.Particle, out var picked) ? picked : shown,
                 Margin = new(12, 2, 3, 2),
                 Tag = effect,

@@ -937,7 +937,8 @@ namespace GUI.Types.PackageViewer
 
             if (isRoot && CharacterAssetsExporter.CanExport(vrfGuiContext))
             {
-                Item("Export character assets (items_game.txt)...", "Decompile", () => RunAsync(() => CharacterAssetsExporter.ExportAsync(vrfGuiContext)));
+                // A single underscore marks the access key in a menu header
+                Item("Export character assets (items__game.txt)...", "Decompile", () => RunAsync(() => CharacterAssetsExporter.ExportAsync(vrfGuiContext)));
             }
 
             menu.Items.Add(new Separator());
