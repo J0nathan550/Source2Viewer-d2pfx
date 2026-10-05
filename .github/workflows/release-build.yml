@@ -262,6 +262,39 @@ jobs:
       contents: write
 
     steps:
+    # The whole history and its tags, to list what changed since the previous release
+    - uses: actions/checkout@v7
+      with:
+        path: source
+        fetch-depth: 0
+
+    - name: Write changelog
+      working-directory: source
+      env:
+        REPOSITORY: ${{ github.repository }}
+        TAG: ${{ needs.version.outputs.tag }}
+      run: |
+        set -euo pipefail
+
+        # The closest release before the built commit, whichever tag it has
+        previous=$(git describe --tags --abbrev=0 --exclude "$TAG" HEAD 2>/dev/null || true)
+
+        {
+          echo "## What's changed"
+          echo
+
+          if [[ -n "$previous" ]]; then
+            changes=$(git log --no-merges --format='- %s ([%h](https://github.com/'"$REPOSITORY"'/commit/%H))' "$previous..HEAD")
+            echo "${changes:-No changes since $previous.}"
+            echo
+            echo "**Full changelog**: https://github.com/$REPOSITORY/compare/$previous...$TAG"
+          else
+            git log --no-merges --max-count=50 --format='- %s ([%h](https://github.com/'"$REPOSITORY"'/commit/%H))' HEAD
+          fi
+        } > ../changelog.md
+
+        cat ../changelog.md >> "$GITHUB_STEP_SUMMARY"
+
     - name: Download artifacts
       uses: actions/download-artifact@v8
       with:
@@ -345,6 +378,7 @@ jobs:
         target_commitish: ${{ github.sha }}
         # The updater reads latest.json from the latest release, so every release must become it
         make_latest: true
+        body_path: changelog.md
         files: release/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
