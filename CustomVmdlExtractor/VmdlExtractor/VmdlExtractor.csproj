@@ -9,6 +9,9 @@
     <AssemblyName>VmdlExtractor</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <LangVersion>latest</LangVersion>
+    <!-- The GUIs reference it as a library. Without this the SDK builds it for the runtime the GUI is published
+         for, which Visual Studio's publish does not do for references, so the publish cannot find it. -->
+    <IsRidAgnostic>true</IsRidAgnostic>
     <!-- Vendored third-party decompiler, adapted to build against the in-repo
          ValveResourceFormat project. Not held to the repo-wide analyzer/warnings
          gate that applies to first-party library and app code. -->

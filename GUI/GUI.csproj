@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- VmdlExtractor is an executable used as a library, it stays framework dependent inside the self-contained GUI -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <OutputType>WinExe</OutputType>
     <TargetFramework>$(TargetFramework)-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
