@@ -33,6 +33,14 @@ namespace GUI
         /// <summary>The update channel that produced this build.</summary>
         public static Settings.UpdateChannel BuildChannel => IsReleaseBuild ? Settings.UpdateChannel.Stable : Settings.UpdateChannel.Dev;
 
+        /// <summary>
+        /// The file the viewer was started from: the AppImage when running from one, whose own executable is
+        /// inside a temporary read-only mount, and the executable otherwise.
+        /// </summary>
+        public static string? ApplicationPath => OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("APPIMAGE") is { Length: > 0 } appImage
+            ? appImage
+            : Environment.ProcessPath;
+
         /// <summary>Files passed on the command line, opened once the main window exists.</summary>
         public static string[] StartupFiles { get; private set; } = [];
 

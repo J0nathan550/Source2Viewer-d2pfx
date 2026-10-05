@@ -16,7 +16,7 @@ static partial class FileAssociation
 
     public static async Task<bool> RegisterAsync()
     {
-        var applicationPath = Environment.ProcessPath;
+        var applicationPath = Program.ApplicationPath;
 
         if (applicationPath == null)
         {

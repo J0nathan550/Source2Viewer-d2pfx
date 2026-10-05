@@ -16,7 +16,9 @@ With "Replace default assets" on, the export also writes the chosen look over th
 
 ## Downloads
 
-Every release has the Windows build (`gui-windows-x64.zip`) and a cross-platform build of the same viewer for Windows (`gui-avalonia-windows-x64.zip`) and Linux (`gui-avalonia-linux-x64.zip`), which has all of the tools above. Both builds check for updates and install them from the About dialog, after verifying that the download was built by this repository's release workflow.
+Every release has the Windows build (`gui-windows-x64.zip`) and a cross-platform build of the same viewer for Windows (`gui-avalonia-windows-x64.zip`) and Linux (`Source2Viewer-x86_64.AppImage`), which has all of the tools above. Both builds check for updates and install them from the About dialog, after verifying that the download was built by this repository's release workflow.
+
+The AppImage runs on any recent distribution without installing anything: make it executable (`chmod +x Source2Viewer-x86_64.AppImage`) and start it. It needs FUSE, which most desktops have; without it, start it with `--appimage-extract-and-run`.
 
 ## Credits
 
