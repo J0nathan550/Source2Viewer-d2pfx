@@ -273,7 +273,6 @@ namespace GUI
 
             var tools = CreateTopLevelItem("_Tools", "Tools");
 
-            // A single underscore marks the access key in a menu header
             var exportCharacterAssets = Item("Export character assets (items__game.txt)...", "Decompile", () => RunTool(ExportCharacterAssetsAsync));
             ToolTip.SetShowOnDisabled(exportCharacterAssets, true);
             tools.Items.Add(exportCharacterAssets);
