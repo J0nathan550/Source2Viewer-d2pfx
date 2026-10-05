@@ -116,6 +116,7 @@ namespace GUI.Forms
         private readonly CheckBox spriteSheetCheckBox;
         private readonly CheckBox itemsGameCheckBox;
         private readonly CheckBox skipUnchangedCheckBox;
+        private readonly CheckBox arcanaMaterialsCheckBox;
         private readonly RadioButton recommendedRadioButton;
         private readonly RadioButton customRadioButton;
         private readonly TextBlock exportHintLabel;
@@ -139,6 +140,7 @@ namespace GUI.Forms
             HeroModel = IsChecked(heroModelCheckBox),
             ItemModels = IsChecked(itemModelsCheckBox),
             Materials = IsChecked(materialsCheckBox) || slotRecolors.Count > 0,
+            ArcanaMaterials = IsChecked(arcanaMaterialsCheckBox),
             MergeAdditionalWearables = IsChecked(mergeWearablesCheckBox),
             ItemParticles = IsChecked(itemParticlesCheckBox),
             ItemEffects = GetItemEffects(),
@@ -269,15 +271,17 @@ namespace GUI.Forms
             soundsCheckBox = Check("Replace sounds", true);
             replaceDefaultsCheckBox = Check("Replace default assets", true);
             replaceSharedParticlesCheckBox = Check("Also shared particles", false);
-            materialsCheckBox = Check("Materials and textures", true);
+            materialsCheckBox = Check("Materials and textures", false);
             mergeWearablesCheckBox = Check("Extra meshes", true);
             renameModelsCheckBox = Check("Rename models over the defaults, disabling unused styles", true);
             animatePartsCheckBox = Check("Add items that animate parts of their own to the hero's model", true);
             spriteSheetCheckBox = Check("Replace the minimap icon (writes a copy of mod_textures.txt)", false);
             itemsGameCheckBox = Check("Make the items the hero's default items (writes a copy of items_game.txt)", false);
             skipUnchangedCheckBox = Check("Only models the loadout changes", true);
+            arcanaMaterialsCheckBox = Check("Materials of arcana models", true);
 
             replaceDefaultsCheckBox.IsCheckedChanged += (_, _) => UpdateReplaceDefaultsDependents();
+            materialsCheckBox.IsCheckedChanged += (_, _) => UpdateReplaceDefaultsDependents();
 
             foreach (var checkBox in ExportCheckBoxes)
             {
@@ -324,6 +328,7 @@ namespace GUI.Forms
             AddCell(includeTable, spriteSheetCheckBox, 8, 0, columnSpan: 3);
             AddCell(includeTable, itemsGameCheckBox, 9, 0, columnSpan: 3);
             AddCell(includeTable, skipUnchangedCheckBox, 10, 0, columnSpan: 3);
+            AddCell(includeTable, arcanaMaterialsCheckBox, 11, 0, columnSpan: 3);
 
             var modePanel = new StackPanel
             {
@@ -534,8 +539,11 @@ namespace GUI.Forms
                 "a persona's items over the hero's own default items, hiding the ones it has nothing in place of,\n" +
                 "particles the items swap in over the ones they replace, and particles items create added to their models");
             ToolTip.SetTip(materialsCheckBox,
-                "Decompile the materials the exported models use, with their textures, so the addon compiles its own copies.\n" +
-                "Some item materials, e.g. of arcanas, render semi-transparent in game when the addon uses the game's own.");
+                "Decompile the materials every exported model uses, with their textures, so the addon compiles its own copies.\n" +
+                "Otherwise the models use the game's own materials, which it applies by itself. Recoloring items exports them anyway.");
+            ToolTip.SetTip(arcanaMaterialsCheckBox,
+                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level.\n" +
+                "Those render semi-transparent in game when the addon uses the game's own.");
             ToolTip.SetTip(mergeWearablesCheckBox, "When replacing default assets, add the meshes of the extra models items wear, e.g. an arcana's frost overlay,\n" +
                 "to the hero's model. They are exported as models of their own either way.");
             ToolTip.SetTip(replaceSharedParticlesCheckBox, "Also replace particles every hero uses, like the blink dagger, stun and status effects");
@@ -814,6 +822,7 @@ namespace GUI.Forms
             spriteSheetCheckBox.IsChecked = options.SpriteSheet;
             itemsGameCheckBox.IsChecked = options.DefaultItemsInItemsGame;
             skipUnchangedCheckBox.IsChecked = options.SkipUnchangedModels;
+            arcanaMaterialsCheckBox.IsChecked = options.ArcanaMaterials;
         }
 
         private CheckBox[] ExportCheckBoxes =>
@@ -821,7 +830,7 @@ namespace GUI.Forms
             heroModelCheckBox, itemModelsCheckBox, pedestalCheckBox, itemParticlesCheckBox, heroParticlesCheckBox, iconsCheckBox,
             itemSoundsCheckBox, heroSoundsCheckBox, heroVoiceCheckBox, includeAudioCheckBox, soundsCheckBox, replaceDefaultsCheckBox,
             replaceSharedParticlesCheckBox, materialsCheckBox, mergeWearablesCheckBox, renameModelsCheckBox, animatePartsCheckBox,
-            spriteSheetCheckBox, itemsGameCheckBox, skipUnchangedCheckBox,
+            spriteSheetCheckBox, itemsGameCheckBox, skipUnchangedCheckBox, arcanaMaterialsCheckBox,
         ];
 
         // Not read from the radio buttons, the newly checked one tells before the other one is unchecked
@@ -836,6 +845,7 @@ namespace GUI.Forms
             HeroModel = IsChecked(heroModelCheckBox),
             ItemModels = IsChecked(itemModelsCheckBox),
             Materials = IsChecked(materialsCheckBox),
+            ArcanaMaterials = IsChecked(arcanaMaterialsCheckBox),
             MergeAdditionalWearables = IsChecked(mergeWearablesCheckBox),
             ItemParticles = IsChecked(itemParticlesCheckBox),
             HeroParticles = IsChecked(heroParticlesCheckBox),
@@ -894,6 +904,7 @@ namespace GUI.Forms
             renameModelsCheckBox.IsEnabled = enabled;
             animatePartsCheckBox.IsEnabled = enabled;
             skipUnchangedCheckBox.IsEnabled = enabled;
+            arcanaMaterialsCheckBox.IsEnabled = !IsChecked(materialsCheckBox) && !IsRecommended;
             pedestalCheckBox.IsEnabled = loadoutHasPedestal && !IsRecommended;
         }
 

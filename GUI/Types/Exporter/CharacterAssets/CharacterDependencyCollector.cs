@@ -33,10 +33,17 @@ namespace GUI.Types.Exporter.CharacterAssets
         public bool ItemModels { get; set; } = true;
 
         /// <summary>
-        /// The materials the exported models use, with their textures, so the addon compiles its own copies. Some item
-        /// materials, e.g. of arcanas, render semi-transparent in game when the addon uses the game's compiled ones.
+        /// The materials every exported model uses, with their textures, so the addon compiles its own copies. Otherwise
+        /// the models use the game's, which it applies by itself, see <see cref="ArcanaMaterials"/> for the exception.
+        /// Recolors always export them, they are what gets recolored.
         /// </summary>
-        public bool Materials { get; set; } = true;
+        public bool Materials { get; set; }
+
+        /// <summary>
+        /// Without <see cref="Materials"/>, still exports the materials of the models that switch their meshes by the
+        /// arcana level, which render semi-transparent in game when the addon uses the game's compiled ones.
+        /// </summary>
+        public bool ArcanaMaterials { get; set; } = true;
 
         /// <summary>
         /// Adds the meshes of the models items wear besides their own, e.g. an arcana's frost overlay, to the hero's model
@@ -188,7 +195,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// The options that make an addon of only what the loadout changes about the hero: its look written over the
-        /// default assets, the materials those models need, the effects the game shows with the items, the sounds and icons
+        /// default assets, the materials only of arcana models and recolors, the effects the game shows with the items, the sounds and icons
         /// picked, and nothing the game already has as it is.
         /// </summary>
         public static CharacterExportOptions Recommended => new()
@@ -196,7 +203,8 @@ namespace GUI.Types.Exporter.CharacterAssets
             OnlyWhatChanges = true,
             HeroModel = true,
             ItemModels = true,
-            Materials = true,
+            Materials = false,
+            ArcanaMaterials = true,
             MergeAdditionalWearables = true,
             ItemParticles = true,
             HeroParticles = false,
@@ -231,6 +239,11 @@ namespace GUI.Types.Exporter.CharacterAssets
             else if (!SkipUnchangedModels && (HeroModel || ItemModels))
             {
                 warnings.Add("Only models the loadout changes is off: models the game already has as they are, like the hero's own model, are exported too.");
+            }
+
+            if (Materials && (HeroModel || ItemModels))
+            {
+                warnings.Add("Materials and textures: copies of every material the exported models use, which the game already has and applies by itself. Recolors and arcana models get theirs either way.");
             }
 
             if (HeroParticles)
@@ -537,9 +550,14 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
             }
 
-            if (options.Materials)
+            if (options.Materials || options.RecolorOptions.Count > 0)
             {
-                AddMaterials(plan, cancellationToken);
+                AddMaterials(plan, plan.Models, cancellationToken);
+            }
+            else if (options.ArcanaMaterials && plan.Models.Where(IsArcanaModel).ToList() is { Count: > 0 } arcanaModels)
+            {
+                AddMaterials(plan, arcanaModels, cancellationToken);
+                plan.Notes.Add($"the materials of {arcanaModels.Count} arcana model{(arcanaModels.Count == 1 ? "" : "s")} were exported, the other models use the game's own");
             }
 
             foreach (var (model, remaps) in styleMaterialRemaps)
@@ -650,9 +668,29 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// Whether a model switches its meshes by the arcana level, see <see cref="CharacterLoadout.ArcanaBodyGroup"/>,
+        /// whose materials need copies of their own, see <see cref="CharacterExportOptions.ArcanaMaterials"/>.
+        /// </summary>
+        private bool IsArcanaModel(string compiledPath)
+        {
+            try
+            {
+                using var resource = fileLoader.LoadFile(compiledPath);
+
+                return resource?.DataBlock is Model model
+                    && model.MeshGroups.BodyGroups.Any(static group => group.Name.Equals(CharacterLoadout.ArcanaBodyGroup, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception e)
+            {
+                progress?.Report($"  ! failed to read \"{compiledPath}\": {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Adds the materials the models use, including those of their reference meshes and material groups.
         /// </summary>
-        private void AddMaterials(CharacterExportPlan plan, CancellationToken cancellationToken)
+        private void AddMaterials(CharacterExportPlan plan, List<string> models, CancellationToken cancellationToken)
         {
             var materials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -667,7 +705,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
             }
 
-            foreach (var modelPath in plan.Models)
+            foreach (var modelPath in models)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
