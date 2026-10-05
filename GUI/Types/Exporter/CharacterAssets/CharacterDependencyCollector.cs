@@ -20,6 +20,12 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// </summary>
     sealed class CharacterExportOptions
     {
+        /// <summary>
+        /// Whether the dialog picks the options from the loadout, see <see cref="Recommended"/>, rather than as ticked by
+        /// hand. The other options then hold what was last ticked by hand.
+        /// </summary>
+        public bool OnlyWhatChanges { get; set; } = true;
+
         /// <summary>The hero's model, or the one an equipped item swaps it for.</summary>
         public bool HeroModel { get; set; } = true;
 
@@ -51,14 +57,17 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>Every particle in the hero's particle folder, which covers its abilities.</summary>
         public bool HeroParticles { get; set; }
 
-        /// <summary>The sound event files of the sound events the selected items swap in.</summary>
-        public bool ItemSounds { get; set; } = true;
+        /// <summary>
+        /// The sound event files of the sound events the selected items swap in, as they are. <see cref="Sounds"/> already
+        /// writes the swapped in events over the hero's own, so these are only of use to edit them by hand.
+        /// </summary>
+        public bool ItemSounds { get; set; }
 
-        /// <summary>The hero's game sound events file.</summary>
-        public bool HeroSounds { get; set; } = true;
+        /// <summary>The hero's game sound events file, as it is, see <see cref="ItemSounds"/>.</summary>
+        public bool HeroSounds { get; set; }
 
-        /// <summary>The hero's voice line events file.</summary>
-        public bool HeroVoice { get; set; } = true;
+        /// <summary>The hero's voice line events file, as it is, see <see cref="ItemSounds"/>.</summary>
+        public bool HeroVoice { get; set; }
 
         /// <summary>
         /// The sounds the exported sound events play. Without them, only the sound event files are written, which keep
@@ -157,11 +166,118 @@ namespace GUI.Types.Exporter.CharacterAssets
         public bool AnimateOwnParts { get; set; } = true;
 
         /// <summary>
+        /// With <see cref="ReplaceDefaults"/>, leaves out the models the loadout does not change, e.g. the hero's own model
+        /// when only an item is swapped. They would be copies of what the game already has.
+        /// </summary>
+        public bool SkipUnchangedModels { get; set; } = true;
+
+        /// <summary>
+        /// Particles taken out of the models the export writes, as package source paths, see
+        /// <see cref="ModelDocEditor.GetOwnParticles"/>. Models that would otherwise be left as they are get written
+        /// for it too.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlySet<string> RemovedModelParticles { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Need to apply recolor options to a model
         /// </summary>
         public Dictionary<string, ItemRecolorOption> RecolorOptions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
         public Dictionary<string, Color> ParticleRecolorOptions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The options that make an addon of only what the loadout changes about the hero: its look written over the
+        /// default assets, the materials those models need, the effects the game shows with the items, the sounds and icons
+        /// picked, and nothing the game already has as it is.
+        /// </summary>
+        public static CharacterExportOptions Recommended => new()
+        {
+            OnlyWhatChanges = true,
+            HeroModel = true,
+            ItemModels = true,
+            Materials = true,
+            MergeAdditionalWearables = true,
+            ItemParticles = true,
+            HeroParticles = false,
+            ItemSounds = false,
+            HeroSounds = false,
+            HeroVoice = false,
+            IncludeAudio = false,
+            Icons = true,
+            SpriteSheet = false,
+            DefaultItemsInItemsGame = false,
+            Sounds = true,
+            Pedestal = false,
+            ReplaceDefaults = true,
+            ReplaceSharedParticles = false,
+            RenameModels = true,
+            AnimateOwnParts = true,
+            SkipUnchangedModels = true,
+        };
+
+        /// <summary>
+        /// What the options add that a hero mod most likely does not need, or that changes more than the hero, to warn
+        /// about before exporting.
+        /// </summary>
+        public List<string> GetWarnings()
+        {
+            var warnings = new List<string>();
+
+            if (!ReplaceDefaults)
+            {
+                warnings.Add("Replace default assets is off: the models are exported as they are, and nothing in game uses them until they are put in place by hand.");
+            }
+            else if (!SkipUnchangedModels && (HeroModel || ItemModels))
+            {
+                warnings.Add("Only models the loadout changes is off: models the game already has as they are, like the hero's own model, are exported too.");
+            }
+
+            if (HeroParticles)
+            {
+                warnings.Add("All hero particles: every particle of the hero's abilities, as the game has them.");
+            }
+
+            if (HeroSounds)
+            {
+                warnings.Add("Hero sound events: the hero's whole game_sounds file, as the game has it. Replace sounds already writes the sounds the loadout changes.");
+            }
+
+            if (HeroVoice)
+            {
+                warnings.Add("Voice line events: the hero's whole voice file, as the game has it. Replace sounds already writes the voice the loadout picks.");
+            }
+
+            if (ItemSounds && (Sounds || ReplaceDefaults))
+            {
+                warnings.Add("Item sound events: the files the items' sounds are defined in, as the game has them. Replace sounds already writes them over the hero's own.");
+            }
+
+            if (IncludeAudio)
+            {
+                warnings.Add("Include the sounds they play: copies of sounds the game already has, usually most of the export's size.");
+            }
+
+            if (Pedestal)
+            {
+                warnings.Add("Pedestal: only shown in the loadout screen, which custom games do not have.");
+            }
+
+            if (ReplaceDefaults && ReplaceSharedParticles)
+            {
+                warnings.Add("Also shared particles: effects every hero uses, like the blink dagger's, change for all heroes.");
+            }
+
+            return warnings;
+        }
+
+        /// <summary>
+        /// The question to ask before exporting with <see cref="GetWarnings"/>.
+        /// </summary>
+        public static string GetWarningsMessage(IEnumerable<string> warnings)
+            => "These options add what the mod most likely does not need, or change more than the hero:\n\n" +
+                string.Join("\n", warnings.Select(static warning => $"- {warning}")) +
+                "\n\nThe Recommended options export only what the loadout changes. Export with these anyway?";
     }
 
     public sealed record ItemRecolorOption(Color Color, bool Enabled = true);
@@ -243,6 +359,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>Particles written over the default ones once everything is exported.</summary>
         public List<ParticleReplacement> ParticleReplacements { get; } = [];
+
+        /// <summary>Particles taken out of the models written over others, see <see cref="CharacterExportOptions.RemovedModelParticles"/>.</summary>
+        public IReadOnlySet<string> RemovedModelParticles { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// The particles the swapped in particles play that reference particles written over, rewritten to reference copies
@@ -335,6 +454,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             if (options.ReplaceDefaults)
             {
                 AddReplacements(loadout, options, equippedAssets, plan);
+                AddParticleRemovals(loadout, options, plan);
                 AddParticleRedirects(plan, cancellationToken);
             }
             else
@@ -346,6 +466,9 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 AddPedestals(loadout, options, plan);
             }
+
+            var keptModels = options.ReplaceDefaults && options.SkipUnchangedModels ? GetChangedModels(loadout, options, plan) : null;
+            var skippedModels = 0;
 
             if (options.Icons)
             {
@@ -391,7 +514,19 @@ namespace GUI.Types.Exporter.CharacterAssets
             while (queue.TryDequeue(out var next))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (keptModels != null && next.Path.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase) && !keptModels.Contains(next.Path))
+                {
+                    skippedModels++;
+                    continue;
+                }
+
                 Visit(next.Path, next.IncludeSounds, plan);
+            }
+
+            if (skippedModels > 0)
+            {
+                plan.Notes.Add($"{skippedModels} model{(skippedModels == 1 ? " the loadout does not change was" : "s the loadout does not change were")} left out, the game already has {(skippedModels == 1 ? "it" : "them")}");
             }
 
             foreach (var (particle, controlPoints) in loadout.ParticleControlPoints)
@@ -413,6 +548,105 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return plan;
+        }
+
+        /// <summary>
+        /// The models that end up changed in the addon, see <see cref="CharacterExportOptions.SkipUnchangedModels"/>: the
+        /// ones written over others or added to them, and the ones exported as they are for want of a model to be written
+        /// over, which would otherwise be lost.
+        /// </summary>
+        private static HashSet<string> GetChangedModels(CharacterLoadout loadout, CharacterExportOptions options, CharacterExportPlan plan)
+        {
+            var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var replacement in plan.ModelReplacements)
+            {
+                models.Add(replacement.Source);
+                models.UnionWith(replacement.Merged.Select(static merged => merged.Model));
+            }
+
+            models.UnionWith(plan.UnplacedModels);
+
+            if (options.ItemModels)
+            {
+                models.UnionWith(loadout.AdditionalWearables
+                    .Where(wearable => !loadout.IsAppliedByGame(wearable.Item))
+                    .Select(static wearable => NormalizePath(wearable.Model)));
+            }
+
+            if (options.Pedestal)
+            {
+                models.UnionWith(loadout.Pedestals.Select(static pedestal => NormalizePath(pedestal.Model)));
+            }
+
+            return models;
+        }
+
+        /// <summary>
+        /// Writes the models the hero wears that create a particle taken out, see
+        /// <see cref="CharacterExportOptions.RemovedModelParticles"/>, over themselves when nothing else is written over
+        /// them, so they are written without it.
+        /// </summary>
+        private void AddParticleRemovals(CharacterLoadout loadout, CharacterExportOptions options, CharacterExportPlan plan)
+        {
+            plan.RemovedModelParticles = options.RemovedModelParticles;
+
+            if (options.RemovedModelParticles.Count == 0)
+            {
+                return;
+            }
+
+            var worn = new List<string>();
+
+            if (options.HeroModel && (loadout.HeroModel ?? loadout.Hero.Model) is { } heroModel)
+            {
+                worn.Add(heroModel);
+            }
+
+            if (options.ItemModels)
+            {
+                foreach (var item in loadout.Items)
+                {
+                    // Models that replace another one are written already, so only the ones the game shows as they are
+                    if (loadout.IsWornByHero(item.Item.Slot) && loadout.GetItemModel(item) is { } itemModel
+                        && CharacterLoadout.IsSamePath(itemModel, loadout.GetDefaultModel(item.Item.Slot)))
+                    {
+                        worn.Add(itemModel);
+                    }
+                }
+            }
+
+            foreach (var model in worn.Select(NormalizePath).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (plan.ModelReplacements.Any(replacement => CharacterLoadout.IsSamePath(replacement.Source, model)
+                    || replacement.Merged.Any(merged => CharacterLoadout.IsSamePath(merged.Model, model))))
+                {
+                    continue;
+                }
+
+                List<string> particles;
+
+                try
+                {
+                    particles = ModelDocEditor.GetOwnParticles(fileLoader, model);
+                }
+                catch (Exception e)
+                {
+                    progress?.Report($"  ! failed to read the particles of \"{model}\": {e.Message}");
+                    continue;
+                }
+
+                if (!particles.Any(options.RemovedModelParticles.Contains))
+                {
+                    continue;
+                }
+
+                // Nothing about the model changes but the particles, or it would have been written over already
+                plan.ModelReplacements.Add(new ModelReplacement(model, model, 0, []));
+                plan.Notes.Add($"{model} was written as it is to take particles out of it");
+
+                Enqueue(model);
+            }
         }
 
         /// <summary>

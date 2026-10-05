@@ -47,6 +47,19 @@ namespace GUI.Forms
         private readonly List<(CreatedEffect Effect, CheckBox CheckBox)> effectRows = [];
         private readonly Dictionary<string, bool> pickedEffects = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, bool> loadoutStagedEffects = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<(string Particle, CheckBox CheckBox)> modelEffectRows = [];
+        private readonly Dictionary<string, bool> pickedModelEffects = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<string>> modelParticles = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, bool> stagingParticles = new(StringComparer.OrdinalIgnoreCase);
+#pragma warning disable CA2213 // Disposed with the export group box they are added to
+        private readonly CheckBox skipUnchangedCheckBox;
+        private readonly RadioButton recommendedRadioButton;
+        private readonly RadioButton customRadioButton;
+        private readonly Label exportHintLabel;
+#pragma warning restore CA2213
+        private CharacterExportOptions customOptions = new();
+        private bool loadoutHasPedestal;
+        private bool isRecommended;
         private readonly Dictionary<EconItem, UnusualEffect> pickedUnusuals = [];
         private readonly Dictionary<string, Image?> thumbnails = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string>? soundEventFiles;
@@ -76,6 +89,9 @@ namespace GUI.Forms
 
         public CharacterExportOptions Options => new()
         {
+            OnlyWhatChanges = isRecommended,
+            SkipUnchangedModels = skipUnchangedCheckBox.Checked,
+            RemovedModelParticles = GetRemovedModelParticles(),
             HeroModel = heroModelCheckBox.Checked,
             ItemModels = itemModelsCheckBox.Checked,
             Materials = materialsCheckBox.Checked || slotRecolors.Count > 0,
@@ -96,7 +112,7 @@ namespace GUI.Forms
             Sounds = soundsCheckBox.Checked,
             SoundReplacements = GetSoundReplacements(),
             Voice = voiceComboBox?.SelectedItem is VoiceChoice { Criteria: not null } voice ? voice : null,
-            Pedestal = pedestalCheckBox.Checked && pedestalCheckBox.Enabled,
+            Pedestal = pedestalCheckBox.Checked && loadoutHasPedestal,
             ReplaceDefaults = replaceDefaultsCheckBox.Checked,
             ParticleRecolorOptions = new Dictionary<string, Color>(effectRecolors, StringComparer.OrdinalIgnoreCase),
             ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
@@ -117,6 +133,50 @@ namespace GUI.Forms
             this.package = package;
 
             InitializeComponent();
+
+            skipUnchangedCheckBox = new CheckBox { AutoSize = true, Text = "Only models the loadout changes", Checked = true };
+            includeTable.RowCount++;
+            includeTable.RowStyles.Add(new RowStyle());
+            includeTable.Controls.Add(skipUnchangedCheckBox, 0, includeTable.RowCount - 1);
+            includeTable.SetColumnSpan(skipUnchangedCheckBox, 3);
+
+            recommendedRadioButton = new RadioButton { AutoSize = true, Text = "Recommended", Checked = true, Margin = new Padding(3, 3, 12, 3) };
+            customRadioButton = new RadioButton { AutoSize = true, Text = "Custom" };
+            recommendedRadioButton.CheckedChanged += (_, _) =>
+            {
+                if (recommendedRadioButton.Checked)
+                {
+                    SetRecommended(true);
+                }
+            };
+            customRadioButton.CheckedChanged += (_, _) =>
+            {
+                if (customRadioButton.Checked)
+                {
+                    SetRecommended(false);
+                }
+            };
+
+            var modePanel = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Dock = DockStyle.Top,
+            };
+            modePanel.Controls.Add(recommendedRadioButton);
+            modePanel.Controls.Add(customRadioButton);
+
+            exportHintLabel = new Label { AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(3, 0, 3, 4) };
+
+            // Docked in reverse order of how they are added, so the mode goes first, then the hint, then the options
+            includeGroupBox.Controls.Add(exportHintLabel);
+            includeGroupBox.Controls.Add(modePanel);
+
+            foreach (var checkBox in ExportCheckBoxes)
+            {
+                checkBox.CheckedChanged += (_, _) => UpdateExportHint();
+            }
 
             toolTip.SetToolTip(heroParticlesCheckBox, "Every particle in the hero's particle folder, which covers the effects of its abilities");
             toolTip.SetToolTip(iconsCheckBox,
@@ -159,6 +219,13 @@ namespace GUI.Forms
                 "The minimap draws hero icons from this sprite sheet, not from the icon images.\n" +
                 "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
                 "A copy an earlier export wrote there is updated, so several heroes can share it.");
+            toolTip.SetToolTip(recommendedRadioButton,
+                "Export only what the loadout changes about the hero: the changed models written over the default ones with their materials,\n" +
+                "the effects the game shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is.");
+            toolTip.SetToolTip(customRadioButton, "Pick what to export yourself. Options that add files the mod most likely does not need are pointed out before exporting.");
+            toolTip.SetToolTip(skipUnchangedCheckBox,
+                "When replacing default assets, leave out the models the loadout does not change, e.g. the hero's own model when only a weapon is swapped.\n" +
+                "They would only be copies of what the game already has.");
             toolTip.SetToolTip(itemsGameCheckBox,
                 "Write the equipped items over the hero's default items in a copy of scripts/items/items_game.txt in the game folder,\n" +
                 "so the game shows them as the hero's default look, with the picked style. No model has to be replaced for this.\n" +
@@ -166,19 +233,21 @@ namespace GUI.Forms
                 "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
                 "A copy an earlier export wrote there is updated, so several heroes can share it.");
 
-            if (preferences.Options != null)
+            customOptions = preferences.Options ?? new CharacterExportOptions();
+
+            if (customOptions.OnlyWhatChanges)
             {
-                ApplyOptions(preferences.Options);
+                SetRecommended(true, keepTicked: false);
+            }
+            else
+            {
+                customRadioButton.Checked = true;
             }
 
             previewEffectsCheckBox.Checked = preferences.PreviewEffects;
             toolTip.SetToolTip(previewEffectsCheckBox,
                 "Play the ticked effects and the unusual effects on the preview. Only roughly how the game shows them,\n" +
                 "not everything particles do is supported.");
-
-            replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
-            renameModelsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
-            animatePartsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
 
             // The game folder goes first, so one chosen by hand is not replaced by the one that goes with the content folder
             gameFolderTextBox.Text = Settings.Config.CharacterExportGameDir;
@@ -242,7 +311,7 @@ namespace GUI.Forms
         /// </summary>
         private bool IsLoadoutPicked()
         {
-            if (pickedEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0
+            if (pickedEffects.Count > 0 || pickedModelEffects.Count > 0 || pickedIcons.Count > 0 || pickedSounds.Count > 0 || pickedVoice || pickedUnusuals.Count > 0
                 || slotRecolors.Count > 0 || effectRecolors.Count > 0)
             {
                 return true;
@@ -278,6 +347,7 @@ namespace GUI.Forms
             var saved = new SavedLoadout
             {
                 Effects = new(pickedEffects),
+                ModelEffects = new(pickedModelEffects),
             };
 
             foreach (var row in slotRows)
@@ -369,6 +439,11 @@ namespace GUI.Forms
                 pickedEffects[particle] = enabled;
             }
 
+            foreach (var (particle, kept) in saved.ModelEffects ?? [])
+            {
+                pickedModelEffects[particle] = kept;
+            }
+
             // Picking these by hand marks them picked, so the equipped items' choices do not replace them
             foreach (var (slot, comboBox, _) in iconRows)
             {
@@ -419,13 +494,111 @@ namespace GUI.Forms
             animatePartsCheckBox.Checked = options.AnimateOwnParts;
             spriteSheetCheckBox.Checked = options.SpriteSheet;
             itemsGameCheckBox.Checked = options.DefaultItemsInItemsGame;
+            skipUnchangedCheckBox.Checked = options.SkipUnchangedModels;
         }
 
-        private void ReplaceDefaultsCheckBox_CheckedChanged(object? sender, EventArgs e)
+        private CheckBox[] ExportCheckBoxes =>
+        [
+            heroModelCheckBox, itemModelsCheckBox, pedestalCheckBox, itemParticlesCheckBox, heroParticlesCheckBox, iconsCheckBox,
+            itemSoundsCheckBox, heroSoundsCheckBox, heroVoiceCheckBox, includeAudioCheckBox, soundsCheckBox, replaceDefaultsCheckBox,
+            replaceSharedParticlesCheckBox, materialsCheckBox, mergeWearablesCheckBox, renameModelsCheckBox, animatePartsCheckBox,
+            spriteSheetCheckBox, itemsGameCheckBox, skipUnchangedCheckBox,
+        ];
+
+        /// <summary>
+        /// The options as ticked, without what the loadout adds to them, to be remembered for <see cref="customOptions"/>.
+        /// </summary>
+        private CharacterExportOptions GetTickedOptions() => new()
         {
-            replaceSharedParticlesCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
-            renameModelsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
-            animatePartsCheckBox.Enabled = replaceDefaultsCheckBox.Checked;
+            OnlyWhatChanges = isRecommended,
+            HeroModel = heroModelCheckBox.Checked,
+            ItemModels = itemModelsCheckBox.Checked,
+            Materials = materialsCheckBox.Checked,
+            MergeAdditionalWearables = mergeWearablesCheckBox.Checked,
+            ItemParticles = itemParticlesCheckBox.Checked,
+            HeroParticles = heroParticlesCheckBox.Checked,
+            ItemSounds = itemSoundsCheckBox.Checked,
+            HeroSounds = heroSoundsCheckBox.Checked,
+            HeroVoice = heroVoiceCheckBox.Checked,
+            IncludeAudio = includeAudioCheckBox.Checked,
+            Icons = iconsCheckBox.Checked,
+            SpriteSheet = spriteSheetCheckBox.Checked,
+            DefaultItemsInItemsGame = itemsGameCheckBox.Checked,
+            Sounds = soundsCheckBox.Checked,
+            Pedestal = pedestalCheckBox.Checked,
+            ReplaceDefaults = replaceDefaultsCheckBox.Checked,
+            ReplaceSharedParticles = replaceSharedParticlesCheckBox.Checked,
+            RenameModels = renameModelsCheckBox.Checked,
+            AnimateOwnParts = animatePartsCheckBox.Checked,
+            SkipUnchangedModels = skipUnchangedCheckBox.Checked,
+        };
+
+        /// <summary>
+        /// Switches between the options picked from the loadout, shown ticked but locked, and the ones ticked by hand,
+        /// which are kept aside meanwhile.
+        /// </summary>
+        /// <param name="keepTicked">Whether the options ticked by hand are on show, to be kept aside.</param>
+        private void SetRecommended(bool recommended, bool keepTicked = true)
+        {
+            if (recommended)
+            {
+                if (keepTicked)
+                {
+                    customOptions = GetTickedOptions();
+                }
+
+                isRecommended = true;
+                ApplyOptions(CharacterExportOptions.Recommended);
+            }
+            else
+            {
+                isRecommended = false;
+                ApplyOptions(customOptions);
+            }
+
+            foreach (var checkBox in ExportCheckBoxes)
+            {
+                checkBox.Enabled = !recommended;
+            }
+
+            UpdateReplaceDefaultsDependents();
+            UpdateExportHint();
+        }
+
+        private void ReplaceDefaultsCheckBox_CheckedChanged(object? sender, EventArgs e) => UpdateReplaceDefaultsDependents();
+
+        private void UpdateReplaceDefaultsDependents()
+        {
+            var enabled = replaceDefaultsCheckBox.Checked && !isRecommended;
+            replaceSharedParticlesCheckBox.Enabled = enabled;
+            renameModelsCheckBox.Enabled = enabled;
+            animatePartsCheckBox.Enabled = enabled;
+            skipUnchangedCheckBox.Enabled = enabled;
+            pedestalCheckBox.Enabled = loadoutHasPedestal && !isRecommended;
+        }
+
+        /// <summary>
+        /// Says what the recommended options do, or how many of the options ticked by hand add what the mod most likely
+        /// does not need, see <see cref="CharacterExportOptions.GetWarnings"/>.
+        /// </summary>
+        private void UpdateExportHint()
+        {
+            if (isRecommended)
+            {
+                exportHintLabel.Text = "Exports only what the loadout changes.";
+                toolTip.SetToolTip(exportHintLabel, "Pick Custom to choose what to export yourself.");
+                return;
+            }
+
+            var warnings = GetTickedOptions().GetWarnings();
+
+            exportHintLabel.Text = warnings.Count switch
+            {
+                0 => "Exports what is ticked below.",
+                1 => "1 option adds what the mod may not need, hover for details.",
+                var count => $"{count} options add what the mod may not need, hover for details.",
+            };
+            toolTip.SetToolTip(exportHintLabel, warnings.Count > 0 ? string.Join("\n", warnings) : null);
         }
 
         protected override void OnLoad(EventArgs e)
@@ -469,7 +642,8 @@ namespace GUI.Forms
                 SaveLoadout();
             }
 
-            preferences.Options = Options;
+            preferences.Options = isRecommended ? customOptions : GetTickedOptions();
+            preferences.Options.OnlyWhatChanges = isRecommended;
             preferences.PreviewEffects = previewEffectsCheckBox.Checked;
             preferences.Save();
 
@@ -605,6 +779,7 @@ namespace GUI.Forms
                 BuildIconRows(hero);
                 BuildSoundRows(hero);
                 pickedEffects.Clear();
+                pickedModelEffects.Clear();
                 pickedUnusuals.Clear();
                 pickedSlots.Clear();
                 ResetLoadout(persona: false);
@@ -1281,7 +1456,7 @@ namespace GUI.Forms
             return -1;
         }
 
-        private void ExportButton_Click(object? sender, EventArgs e)
+        private async void ExportButton_Click(object? sender, EventArgs e)
         {
             if (SelectedHero == null)
             {
@@ -1308,6 +1483,13 @@ namespace GUI.Forms
                 {
                     return;
                 }
+            }
+
+            if (!isRecommended && GetTickedOptions().GetWarnings() is { Count: > 0 } warnings
+                && !await AppMessageDialogs.ConfirmAsync(CharacterExportOptions.GetWarningsMessage(warnings), "Check the export options",
+                    MessageIcon.Warning, ConfirmButtons.YesNo).ConfigureAwait(true))
+            {
+                return;
             }
 
             Settings.Config.CharacterExportContentDir = ContentFolder;
@@ -1399,7 +1581,8 @@ namespace GUI.Forms
 
             var loadout = CreateLoadout();
 
-            pedestalCheckBox.Enabled = loadout.Pedestals.Any();
+            loadoutHasPedestal = loadout.Pedestals.Any();
+            pedestalCheckBox.Enabled = loadoutHasPedestal && !isRecommended;
             UpdateIconChoices(loadout);
             UpdateSoundChoices(loadout);
             BuildEffectRows(loadout);
@@ -1423,6 +1606,7 @@ namespace GUI.Forms
             effectsTable.RowStyles.Clear();
             effectsTable.RowCount = 0;
             effectRows.Clear();
+            modelEffectRows.Clear();
 
             void AddRow(Control control)
             {
@@ -1534,6 +1718,8 @@ namespace GUI.Forms
                         AddRow(CreateEffectRow(loadout, effect));
                     }
                 }
+
+                AddModelEffectRows(loadout, AddRow);
             }
             finally
             {
@@ -1738,6 +1924,123 @@ namespace GUI.Forms
         }
 
         private void PreviewEffectsCheckBox_CheckedChanged(object? sender, EventArgs e) => SchedulePreviewUpdate();
+
+        /// <summary>
+        /// Lists the particles the models the hero wears create themselves, ticked to be kept unless they look like
+        /// staging for the loadout screen, e.g. a circle on the ground, see <see cref="ModelDocEditor.LooksLikeStaging"/>.
+        /// The unticked ones are taken out of the exported models.
+        /// </summary>
+        private void AddModelEffectRows(CharacterLoadout loadout, Action<Control> addRow)
+        {
+            var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var first = true;
+
+            foreach (var model in loadout.WornModels)
+            {
+                var particles = GetModelParticles(model).Where(listed.Add).ToList();
+
+                if (particles.Count == 0)
+                {
+                    continue;
+                }
+
+                if (first)
+                {
+                    first = false;
+
+                    var header = new Label
+                    {
+                        AutoSize = true,
+                        Text = "Effects the models play themselves",
+                        Font = groupFont ??= new Font(Font, FontStyle.Bold),
+                        Margin = new Padding(3, 14, 3, 3),
+                    };
+                    toolTip.SetToolTip(header, "Unticked effects are taken out of the exported models, which are written for it even when nothing else about them changes.");
+                    addRow(header);
+                }
+
+                addRow(new Label
+                {
+                    AutoSize = true,
+                    Text = Path.GetFileNameWithoutExtension(model),
+                    Margin = new Padding(12, 4, 3, 1),
+                });
+
+                foreach (var particle in particles)
+                {
+                    var staging = LooksLikeStaging(particle);
+
+                    var checkBox = new CheckBox
+                    {
+                        AutoSize = true,
+                        Text = Path.GetFileNameWithoutExtension(particle),
+                        Checked = pickedModelEffects.TryGetValue(particle, out var kept) ? kept : !staging,
+                        Margin = new Padding(24, 2, 3, 2),
+                        Tag = particle,
+                    };
+
+                    toolTip.SetToolTip(checkBox, staging
+                        ? $"{particle}\nIt looks like staging for the loadout screen, e.g. a circle on the ground, so it is taken out by default. Tick it to keep it"
+                        : $"{particle}\nUntick it to take it out of the exported model");
+
+                    checkBox.CheckedChanged += (_, _) =>
+                    {
+                        if (!updatingEffects)
+                        {
+                            pickedModelEffects[particle] = checkBox.Checked;
+                        }
+                    };
+
+                    modelEffectRows.Add((particle, checkBox));
+                    addRow(checkBox);
+                }
+            }
+        }
+
+        private List<string> GetModelParticles(string model)
+        {
+            if (!modelParticles.TryGetValue(model, out var particles))
+            {
+                try
+                {
+                    particles = ModelDocEditor.GetOwnParticles(guiContext.FileLoaderNoCache, model);
+                }
+                catch (Exception e)
+                {
+                    Log.Error(nameof(CharacterSelectForm), $"Failed to read the particles of '{model}': {e.Message}");
+                    particles = [];
+                }
+
+                modelParticles[model] = particles;
+            }
+
+            return particles;
+        }
+
+        /// <summary>
+        /// See <see cref="ModelDocEditor.LooksLikeStaging"/>.
+        /// </summary>
+        private bool LooksLikeStaging(string particle)
+        {
+            if (!stagingParticles.TryGetValue(particle, out var staging))
+            {
+                try
+                {
+                    staging = ModelDocEditor.LooksLikeStaging(guiContext.FileLoaderNoCache, particle);
+                }
+                catch (Exception e)
+                {
+                    Log.Error(nameof(CharacterSelectForm), $"Failed to read '{particle}': {e.Message}");
+                }
+
+                stagingParticles[particle] = staging;
+            }
+
+            return staging;
+        }
+
+        private HashSet<string> GetRemovedModelParticles()
+            => modelEffectRows.Where(static row => !row.CheckBox.Checked).Select(static row => row.Particle).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         private Dictionary<string, bool> GetItemEffects()
         {

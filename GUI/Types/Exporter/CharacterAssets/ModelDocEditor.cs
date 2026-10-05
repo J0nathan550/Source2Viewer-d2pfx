@@ -49,6 +49,11 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             """;
 
+        // Game data lists of particles a model creates when it spawns
+        private static readonly string[] ParticleListKeys = ["particles_list", "particle_cfg_list"];
+
+        private static readonly char[] NameSeparators = ['_', '-', ' '];
+
         /// <summary>
         /// Makes a material group the default one, so the model shows that skin without anything picking it.
         /// </summary>
@@ -986,6 +991,135 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// The particles a compiled model creates itself when it spawns, from its "particles_list" and
+        /// "particle_cfg_list" game data, as package source paths.
+        /// </summary>
+        public static List<string> GetOwnParticles(IFileLoader fileLoader, string model)
+        {
+            using var resource = fileLoader.LoadFileCompiled(model);
+
+            if (resource?.DataBlock is not Model modelData)
+            {
+                return [];
+            }
+
+            var particles = new List<string>();
+            var keyValues = modelData.KeyValues;
+
+            foreach (var listKey in ParticleListKeys)
+            {
+                if (!keyValues.ContainsKey(listKey) || keyValues[listKey].ValueType != KVValueType.Array)
+                {
+                    continue;
+                }
+
+                foreach (var entry in keyValues.GetArray(listKey) ?? [])
+                {
+                    // The compiler keeps the keys of these entries quoted
+                    foreach (var (key, value) in entry.Children)
+                    {
+                        if (key?.Trim('"') == "name"
+                            && value.ValueType == KVValueType.String
+                            && value.ToString() is { } name
+                            && name.EndsWith(".vpcf", StringComparison.OrdinalIgnoreCase)
+                            && !particles.Contains(CharacterLoadout.NormalizePath(name), StringComparer.OrdinalIgnoreCase))
+                        {
+                            particles.Add(CharacterLoadout.NormalizePath(name));
+                        }
+                    }
+                }
+            }
+
+            return particles;
+        }
+
+        /// <summary>
+        /// Takes particles out of the model's game data, so the model no longer creates them when it spawns.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="particles">The particles to take out, as package source paths.</param>
+        /// <param name="details">Gets what was taken out, for the export log.</param>
+        public static string RemoveParticles(string vmdl, IReadOnlySet<string> particles, ICollection<string>? details = null)
+        {
+            if (particles.Count == 0)
+            {
+                return vmdl;
+            }
+
+            var removals = new List<(int Start, int End)>();
+            var removed = new List<string>();
+
+            foreach (var (start, end) in FindObjects(vmdl))
+            {
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header
+                    || header.Groups["class"].Value != "GenericGameData"
+                    || removals.Any(removal => start > removal.Start && end <= removal.End))
+                {
+                    continue;
+                }
+
+                var gameClass = GameClassRegex().Match(vmdl, start, end - start);
+
+                if (!gameClass.Success || gameClass.Groups["class"].Value is not ("particle" or "particle_cfg"))
+                {
+                    continue;
+                }
+
+                foreach (Match path in QuotedParticlePathRegex().Matches(vmdl[start..end]))
+                {
+                    var particle = CharacterLoadout.NormalizePath(path.Groups["path"].Value);
+
+                    if (particles.Contains(particle))
+                    {
+                        removals.Add((start, end));
+                        removed.Add(particle);
+                        break;
+                    }
+                }
+            }
+
+            if (removals.Count == 0)
+            {
+                return vmdl;
+            }
+
+            foreach (var (start, end) in removals.OrderByDescending(static removal => removal.Start))
+            {
+                var lineStart = GetLineStart(vmdl, start);
+                vmdl = string.Concat(vmdl.AsSpan(0, lineStart), vmdl.AsSpan(GetLineEnd(vmdl, end)));
+            }
+
+            foreach (var particle in removed.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                details?.Add($"without {Path.GetFileNameWithoutExtension(particle)}");
+            }
+
+            return Validate(vmdl);
+        }
+
+        /// <summary>
+        /// Whether a particle a model creates itself looks like staging for the loadout screen or hero selection rather than
+        /// part of the hero, e.g. a glowing circle on the ground: it is set up for the loadout screen at the world origin,
+        /// see <see cref="IsStagedForLoadout"/>, or its name says it is a ground circle, ring or pedestal effect.
+        /// </summary>
+        public static bool LooksLikeStaging(IFileLoader fileLoader, string particle)
+        {
+            var name = Path.GetFileNameWithoutExtension(particle);
+            var words = name.Split(NameSeparators, StringSplitOptions.RemoveEmptyEntries);
+
+            if (words.Any(static word => word.Equals("loadout", StringComparison.OrdinalIgnoreCase)
+                || word.Equals("pedestal", StringComparison.OrdinalIgnoreCase)
+                || word.Equals("circle", StringComparison.OrdinalIgnoreCase)
+                || word.Equals("ring", StringComparison.OrdinalIgnoreCase)
+                || word.Equals("ground", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            return IsStagedForLoadout(fileLoader, particle);
+        }
+
+        /// <summary>
         /// Picks the control point configuration a particle plays under in game, which drives all of its control points
         /// from the model's attachments: the "game" one, else one made for something other than the preview, else the
         /// preview one, which most item particles only have. Configurations staged for the loadout screen are skipped,
@@ -1416,6 +1550,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"_class\s*=\s*""RootNode""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex RootNodeChildrenRegex();
+
+        [GeneratedRegex(@"\bgame_class\s*=\s*""(?<class>[^""]*)""", RegexOptions.CultureInvariant)]
+        private static partial Regex GameClassRegex();
+
+        [GeneratedRegex(@"""(?<path>[^""]+\.vpcf)""", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+        private static partial Regex QuotedParticlePathRegex();
 
         // Only the root's own, which the decompiler writes one tab in
         [GeneratedRegex(@"^\tm_PreEmissionOperators\s*=\s*\[", RegexOptions.CultureInvariant | RegexOptions.Multiline)]

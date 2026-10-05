@@ -345,6 +345,16 @@ namespace GUI.Types.Exporter.CharacterAssets
                 .Select(modifier => (item, modifier.Asset!)));
 
         /// <summary>
+        /// The models the hero is shown with: its own model or the one an item swaps it for, then the models of the items
+        /// it wears, as package source paths.
+        /// </summary>
+        public IEnumerable<string> WornModels => new[] { HeroModel }
+            .Concat(Items.Where(item => IsWornByHero(item.Item.Slot)).Select(GetItemModel))
+            .OfType<string>()
+            .Select(NormalizePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// The models the hero stands on in the loadout screen, which the equipped items bring, with the material group
         /// the item's style shows them with.
         /// </summary>
