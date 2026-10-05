@@ -403,6 +403,18 @@ namespace GUI.Types.Exporter.CharacterAssets
                         }
                     }
 
+                    if (plan.RemovedModelParticles.Count > 0)
+                    {
+                        try
+                        {
+                            vmdl = ModelDocEditor.RemoveParticles(vmdl, plan.RemovedModelParticles, details);
+                        }
+                        catch (Exception e)
+                        {
+                            progress.Report($"  ! {replacement.Target}: particles were not taken out: {e.Message}");
+                        }
+                    }
+
                     if (replacement.Particles.Count > 0)
                     {
                         try

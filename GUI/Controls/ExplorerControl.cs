@@ -449,6 +449,54 @@ namespace GUI.Controls
             {
                 Program.MainForm.OpenFile(path);
             }
+            else
+            {
+                ShowMissingFile(path);
+            }
+        }
+
+        /// <summary>
+        /// Says a file picked from the lists is gone, and offers to take it off the recent files and bookmarks, which
+        /// would otherwise keep offering it.
+        /// </summary>
+        private void ShowMissingFile(string path)
+        {
+            var inRecent = Settings.Config.RecentFiles.Contains(path);
+            var inBookmarks = Settings.Config.BookmarkedFiles.Contains(path);
+            var message = $"The file does not exist:\n{path}\n\nIt may have been moved, renamed or deleted, or is on a drive that is not connected.";
+
+            if (!inRecent && !inBookmarks)
+            {
+                _ = AppMessageDialogs.ShowMessageAsync(message, "File not found", MessageIcon.Warning);
+                return;
+            }
+
+            var lists = (inRecent, inBookmarks) switch
+            {
+                (true, true) => "recent files and bookmarks",
+                (true, false) => "recent files",
+                _ => "bookmarks",
+            };
+
+            // The WinForms dialogs are modal and done by the time they return
+            if (!AppMessageDialogs.ConfirmAsync($"{message}\n\nRemove it from the {lists}?", "File not found", MessageIcon.Warning, ConfirmButtons.YesNo).GetAwaiter().GetResult())
+            {
+                return;
+            }
+
+            if (inRecent)
+            {
+                Settings.Config.RecentFiles.Remove(path);
+                RedrawList(APPID_RECENT_FILES, GetRecentFileNodes());
+            }
+
+            if (inBookmarks)
+            {
+                Settings.Config.BookmarkedFiles.Remove(path);
+                RedrawList(APPID_BOOKMARKS, GetBookmarkedFileNodes());
+            }
+
+            Settings.Save();
         }
 
         private void OnTreeViewNodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)

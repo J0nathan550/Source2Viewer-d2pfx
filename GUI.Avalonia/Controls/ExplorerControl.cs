@@ -531,7 +531,7 @@ namespace GUI.Controls
             _ => null,
         };
 
-        private void OpenSelected()
+        private async Task OpenSelectedAsync()
         {
             if (treeView.SelectedItem is not TreeViewItem { Tag: FileItem file })
             {
@@ -544,17 +544,60 @@ namespace GUI.Controls
             }
             else
             {
-                Log.Error(nameof(ExplorerControl), $"File '{file.Path}' does not exist.");
+                await ShowMissingFileAsync(file.Path).ConfigureAwait(true);
             }
         }
 
-        private void OnDoubleTapped(object? sender, TappedEventArgs e) => OpenSelected();
+        /// <summary>
+        /// Says a file picked from the lists is gone, and offers to take it off the recent files and bookmarks, which
+        /// would otherwise keep offering it.
+        /// </summary>
+        private async Task ShowMissingFileAsync(string path)
+        {
+            var inRecent = Settings.Config.RecentFiles.Contains(path);
+            var inBookmarks = Settings.Config.BookmarkedFiles.Contains(path);
+            var message = $"The file does not exist:\n{path}\n\nIt may have been moved, renamed or deleted, or is on a drive that is not connected.";
+
+            if (!inRecent && !inBookmarks)
+            {
+                await AppMessageDialogs.ShowMessageAsync(message, "File not found", MessageIcon.Warning).ConfigureAwait(true);
+                return;
+            }
+
+            var lists = (inRecent, inBookmarks) switch
+            {
+                (true, true) => "recent files and bookmarks",
+                (true, false) => "recent files",
+                _ => "bookmarks",
+            };
+
+            if (!await AppMessageDialogs.ConfirmAsync($"{message}\n\nRemove it from the {lists}?", "File not found", "Remove", "Keep", MessageIcon.Warning).ConfigureAwait(true))
+            {
+                return;
+            }
+
+            if (inRecent)
+            {
+                Settings.Config.RecentFiles.Remove(path);
+                SetChildren(APPID_RECENT_FILES, GetFileItems(Settings.Config.RecentFiles));
+            }
+
+            if (inBookmarks)
+            {
+                Settings.Config.BookmarkedFiles.Remove(path);
+                SetChildren(APPID_BOOKMARKS, GetFileItems(Settings.Config.BookmarkedFiles));
+            }
+
+            Settings.Save();
+        }
+
+        private void OnDoubleTapped(object? sender, TappedEventArgs e) => _ = OpenSelectedAsync();
 
         private void OnTreeKeyDown(object? sender, KeyEventArgs e)
         {
             if (e.Key == Key.Enter)
             {
-                OpenSelected();
+                _ = OpenSelectedAsync();
                 e.Handled = true;
             }
         }

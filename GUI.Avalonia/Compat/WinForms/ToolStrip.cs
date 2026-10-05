@@ -21,9 +21,12 @@ public sealed class ToolStripMenuItem : ToolStripItem
 {
     private readonly MenuItem menuItem;
 
+    private string text;
+
     public ToolStripMenuItem(string text)
     {
-        menuItem = new MenuItem { Header = text };
+        this.text = text;
+        menuItem = new MenuItem { Header = EscapeAccessKeys(text) };
         menuItem.Click += (_, _) => Click?.Invoke(this, EventArgs.Empty);
     }
 
@@ -31,9 +34,16 @@ public sealed class ToolStripMenuItem : ToolStripItem
 
     public string Text
     {
-        get => menuItem.Header as string ?? string.Empty;
-        set => menuItem.Header = value;
+        get => text;
+        set
+        {
+            text = value;
+            menuItem.Header = EscapeAccessKeys(value);
+        }
     }
+
+    // WinForms marks access keys with '&', Avalonia with '_', which shows up in names like "Open some_file.vmdl"
+    private static string EscapeAccessKeys(string text) => text.Replace("_", "__", StringComparison.Ordinal);
 
     public bool Enabled
     {
