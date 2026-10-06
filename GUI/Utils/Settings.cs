@@ -121,6 +121,8 @@ namespace GUI.Utils
             public string CharacterExportGameDir { get; set; } = string.Empty;
             /// <summary>Gets or sets the width of the character export dialog's controls next to its preview, at 96 DPI, or 0 for the default width.</summary>
             public int CharacterExportControlsWidth { get; set; }
+            /// <summary>Gets or sets the height of the character export dialog's export options, at 96 DPI, or 0 to fit them all.</summary>
+            public int CharacterExportOptionsHeight { get; set; }
             /// <summary>Internal settings file version used to apply migrations when upgrading from older versions. Do not modify manually.</summary>
             public int _VERSION_DO_NOT_MODIFY { get; set; }
             /// <summary>Gets or sets the application update check state.</summary>

@@ -57,7 +57,9 @@ namespace GUI.Forms
         private readonly RadioButton recommendedRadioButton;
         private readonly RadioButton customRadioButton;
         private readonly Label exportHintLabel;
+        private readonly SplitContainer exportSplitContainer;
 #pragma warning restore CA2213
+        private bool exportOptionsResized = Settings.Config.CharacterExportOptionsHeight > 0;
         private CharacterExportOptions customOptions = new();
         private bool loadoutHasPedestal;
         private bool isRecommended;
@@ -142,7 +144,7 @@ namespace GUI.Forms
             includeTable.Controls.Add(skipUnchangedCheckBox, 0, includeTable.RowCount - 1);
             includeTable.SetColumnSpan(skipUnchangedCheckBox, 3);
 
-            arcanaMaterialsCheckBox = new CheckBox { AutoSize = true, Text = "Materials of arcana models", Checked = true };
+            arcanaMaterialsCheckBox = new CheckBox { AutoSize = true, Text = "Materials of arcana models" };
             includeTable.RowCount++;
             includeTable.RowStyles.Add(new RowStyle());
             includeTable.Controls.Add(arcanaMaterialsCheckBox, 0, includeTable.RowCount - 1);
@@ -187,6 +189,41 @@ namespace GUI.Forms
                 checkBox.CheckedChanged += (_, _) => UpdateExportHint();
             }
 
+            // The loadout tabs and the export options, divided like the preview and the controls so the options can be
+            // made smaller and scrolled. They fit every option until the divider is first dragged.
+            exportSplitContainer = new SplitContainer
+            {
+                Orientation = Orientation.Horizontal,
+                Dock = DockStyle.Fill,
+                FixedPanel = FixedPanel.Panel2,
+                SplitterWidth = 8,
+                TabStop = false,
+                Margin = Padding.Empty,
+            };
+
+            var loadoutRow = controlsTable.GetRow(loadoutTabControl);
+            controlsTable.Controls.Remove(loadoutTabControl);
+            controlsTable.Controls.Remove(includeGroupBox);
+
+            exportSplitContainer.Panel1.Controls.Add(loadoutTabControl);
+            includeGroupBox.Dock = DockStyle.Top;
+            exportSplitContainer.Panel2.AutoScroll = true;
+            exportSplitContainer.Panel2.Controls.Add(includeGroupBox);
+            controlsTable.Controls.Add(exportSplitContainer, 0, loadoutRow);
+
+            exportSplitContainer.Paint += (_, e) => PaintSplitter(e.Graphics, exportSplitContainer.SplitterRectangle, horizontal: true);
+            exportSplitContainer.SplitterMoved += (_, _) => exportSplitContainer.Invalidate();
+            exportSplitContainer.SplitterMoving += (_, _) => exportOptionsResized = true;
+            exportSplitContainer.MouseDoubleClick += (_, e) =>
+            {
+                // Back to fitting every option
+                if (exportSplitContainer.SplitterRectangle.Contains(e.Location))
+                {
+                    SetExportOptionsHeight(includeGroupBox.PreferredSize.Height);
+                    exportOptionsResized = false;
+                }
+            };
+
             toolTip.SetToolTip(heroParticlesCheckBox, "Every particle in the hero's particle folder, which covers the effects of its abilities");
             toolTip.SetToolTip(iconsCheckBox,
                 "Copy the icons picked on the Icons tab into the addon's game folder, under the names of the hero's own icons.\n" +
@@ -211,8 +248,8 @@ namespace GUI.Forms
                 "Decompile the materials every exported model uses, with their textures, so the addon compiles its own copies.\n" +
                 "Otherwise the models use the game's own materials, which it applies by itself. Recoloring items exports them anyway.");
             toolTip.SetToolTip(arcanaMaterialsCheckBox,
-                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level.\n" +
-                "Those render semi-transparent in game when the addon uses the game's own.");
+                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level,\n" +
+                "for an arcana that renders semi-transparent in game with the game's own. Off by default, the game applies its own to most.");
             toolTip.SetToolTip(mergeWearablesCheckBox, "When replacing default assets, add the meshes of the extra models items wear, e.g. an arcana's frost overlay,\n" +
                 "to the hero's model. They are exported as models of their own either way.");
             toolTip.SetToolTip(replaceSharedParticlesCheckBox, "Also replace particles every hero uses, like the blink dagger, stun and status effects");
@@ -222,18 +259,18 @@ namespace GUI.Forms
                 "so they can be turned back on in ModelDoc, and the _dummy choices are removed. The style's skin becomes the default one.\n" +
                 "No extra meshes are merged. Particles items create and activity modifiers are still added.");
             toolTip.SetToolTip(animatePartsCheckBox,
-                "When replacing default assets, add items that animate parts of their own, e.g. a wind-up key, to the hero's model,\n" +
-                "with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
+                "When replacing default assets, add persona pieces that animate parts of their own, e.g. the wind-up key on Morphling's automaton,\n" +
+                "to the hero's model, with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
                 "The game combines an addon hero's items into it, where such parts would otherwise stand still.\n" +
-                "Untick it for models this does not suit, they are then written over the default models like other items.");
+                "Items of the hero's own slots, like arcana pieces, are always written over their default models.");
             toolTip.SetToolTip(spriteSheetCheckBox,
                 "Point the hero's minimap icon at the one picked on the Icons tab, in a copy of scripts/mod_textures.txt in the game folder.\n" +
                 "The minimap draws hero icons from this sprite sheet, not from the icon images.\n" +
                 "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
                 "A copy an earlier export wrote there is updated, so several heroes can share it.");
             toolTip.SetToolTip(recommendedRadioButton,
-                "Export only what the loadout changes about the hero: the changed models written over the default ones with their materials,\n" +
-                "the effects the game shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is.");
+                "Export only what the loadout changes about the hero: the changed models written over the default ones, the effects the game\n" +
+                "shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is, materials included.");
             toolTip.SetToolTip(customRadioButton, "Pick what to export yourself. Options that add files the mod most likely does not need are pointed out before exporting.");
             toolTip.SetToolTip(skipUnchangedCheckBox,
                 "When replacing default assets, leave out the models the loadout does not change, e.g. the hero's own model when only a weapon is swapped.\n" +
@@ -625,6 +662,12 @@ namespace GUI.Forms
             mainSplitContainer.Panel1MinSize = this.AdjustForDPI(200);
             SetControlsWidth(this.AdjustForDPI(savedWidth > 0 ? savedWidth : DefaultControlsWidth));
             mainSplitContainer.Panel2MinSize = this.AdjustForDPI(440);
+
+            var savedOptionsHeight = Settings.Config.CharacterExportOptionsHeight;
+
+            exportSplitContainer.Panel1MinSize = this.AdjustForDPI(140);
+            SetExportOptionsHeight(savedOptionsHeight > 0 ? this.AdjustForDPI(savedOptionsHeight) : includeGroupBox.PreferredSize.Height);
+            exportSplitContainer.Panel2MinSize = this.AdjustForDPI(60);
         }
 
         protected override void OnShown(EventArgs e)
@@ -664,9 +707,13 @@ namespace GUI.Forms
 
             var controlsWidth = (int)MathF.Round(mainSplitContainer.Panel2.Width * 96f / DeviceDpi);
 
-            if (controlsWidth != Settings.Config.CharacterExportControlsWidth)
+            // Left fitting every option until the divider is dragged
+            var optionsHeight = exportOptionsResized ? (int)MathF.Round(exportSplitContainer.Panel2.Height * 96f / DeviceDpi) : 0;
+
+            if (controlsWidth != Settings.Config.CharacterExportControlsWidth || optionsHeight != Settings.Config.CharacterExportOptionsHeight)
             {
                 Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                Settings.Config.CharacterExportOptionsHeight = optionsHeight;
                 Settings.Save();
             }
 
@@ -696,28 +743,50 @@ namespace GUI.Forms
             mainSplitContainer.SplitterDistance = Math.Clamp(distance, mainSplitContainer.Panel1MinSize, Math.Max(mainSplitContainer.Panel1MinSize, maximum));
         }
 
+        /// <summary>
+        /// Moves the divider so the export options get the given height, as far as the loadout tabs' minimum height lets them.
+        /// </summary>
+        private void SetExportOptionsHeight(int height)
+        {
+            var maximum = exportSplitContainer.Height - exportSplitContainer.SplitterWidth - exportSplitContainer.Panel2MinSize;
+            var distance = exportSplitContainer.Height - exportSplitContainer.SplitterWidth - height;
+
+            exportSplitContainer.SplitterDistance = Math.Clamp(distance, exportSplitContainer.Panel1MinSize, Math.Max(exportSplitContainer.Panel1MinSize, maximum));
+        }
+
         private void MainSplitContainer_SplitterMoved(object? sender, SplitterEventArgs e) => mainSplitContainer.Invalidate();
 
+        private void MainSplitContainer_Paint(object? sender, PaintEventArgs e) => PaintSplitter(e.Graphics, mainSplitContainer.SplitterRectangle, horizontal: false);
+
         /// <summary>
-        /// Draws the divider between the preview and the controls, which is otherwise the same color as the dialog, with
-        /// a grip in its middle to show it can be dragged.
+        /// Draws a divider, which is otherwise the same color as the dialog, with a grip in its middle to show it can be
+        /// dragged: between the preview and the controls, and between the loadout tabs and the export options.
         /// </summary>
-        private void MainSplitContainer_Paint(object? sender, PaintEventArgs e)
+        /// <param name="horizontal">Whether the divider lies across, between panels above and below it.</param>
+        private void PaintSplitter(Graphics graphics, Rectangle bounds, bool horizontal)
         {
-            var bounds = mainSplitContainer.SplitterRectangle;
             var x = bounds.X + (bounds.Width / 2);
             var y = bounds.Y + (bounds.Height / 2);
             var dot = Math.Max(2, this.AdjustForDPI(3));
             var gap = dot * 2;
 
             using var pen = new Pen(Themer.CurrentThemeColors.Border, Math.Max(1, this.AdjustForDPI(1)));
-            e.Graphics.DrawLine(pen, x, bounds.Top, x, bounds.Bottom);
+
+            if (horizontal)
+            {
+                graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+            }
+            else
+            {
+                graphics.DrawLine(pen, x, bounds.Top, x, bounds.Bottom);
+            }
 
             using var brush = new SolidBrush(Themer.CurrentThemeColors.Contrast);
 
             for (var i = -2; i <= 2; i++)
             {
-                e.Graphics.FillEllipse(brush, x - (dot / 2f), y + (i * gap) - (dot / 2f), dot, dot);
+                var (dotX, dotY) = horizontal ? (x + (i * gap), y) : (x, y + (i * gap));
+                graphics.FillEllipse(brush, dotX - (dot / 2f), dotY - (dot / 2f), dot, dot);
             }
         }
 

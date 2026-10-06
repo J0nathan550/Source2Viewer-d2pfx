@@ -34,16 +34,17 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// The materials every exported model uses, with their textures, so the addon compiles its own copies. Otherwise
-        /// the models use the game's, which it applies by itself, see <see cref="ArcanaMaterials"/> for the exception.
+        /// the models use the game's, which it applies by itself, see <see cref="ArcanaMaterials"/> to export only some.
         /// Recolors always export them, they are what gets recolored.
         /// </summary>
         public bool Materials { get; set; }
 
         /// <summary>
         /// Without <see cref="Materials"/>, still exports the materials of the models that switch their meshes by the
-        /// arcana level, which render semi-transparent in game when the addon uses the game's compiled ones.
+        /// arcana level, for the arcanas that render semi-transparent in game when the addon uses the game's compiled
+        /// ones. Off by default, the game applies its own materials to most.
         /// </summary>
-        public bool ArcanaMaterials { get; set; } = true;
+        public bool ArcanaMaterials { get; set; }
 
         /// <summary>
         /// Adds the meshes of the models items wear besides their own, e.g. an arcana's frost overlay, to the hero's model
@@ -160,15 +161,17 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// The picked style's skin is made the default material group, extra wearables are not merged, and the
         /// particles items create and the activity modifiers are still added. Items without a default model of their
         /// own take the place of the model they swap to fit them, e.g. a helmet renamed over the hero's head in place of
-        /// the face refit that goes under it; without this they are added to that model with it.
+        /// the face refit that goes under it; without this they are added to that model with it. Those that swap none
+        /// are added to the hero's model either way, e.g. Earthshaker's arcana head.
         /// </summary>
         public bool RenameModels { get; set; } = true;
 
         /// <summary>
-        /// With <see cref="ReplaceDefaults"/>, adds items the game keeps apart from the hero so they play animations of
-        /// their own, e.g. a wind-up key, to the hero's model with those animations layered on the hero's, see
-        /// <see cref="ModelDocEditor.AddLayeredAnimations"/>. Otherwise they are written over the default models like
-        /// other items, and those parts stand still in game.
+        /// With <see cref="ReplaceDefaults"/>, adds the persona pieces the game keeps apart from the hero so they play
+        /// animations of their own, e.g. the wind-up key on Morphling's automaton, to the hero's model with those
+        /// animations layered on the hero's, see <see cref="ModelDocEditor.AddLayeredAnimations"/>. Otherwise they are
+        /// written over the default models like other items, and those parts stand still in game. Items of the hero's
+        /// own slots, like arcana pieces, are always written over their default models.
         /// </summary>
         public bool AnimateOwnParts { get; set; } = true;
 
@@ -195,8 +198,8 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// The options that make an addon of only what the loadout changes about the hero: its look written over the
-        /// default assets, the materials only of arcana models and recolors, the effects the game shows with the items, the sounds and icons
-        /// picked, and nothing the game already has as it is.
+        /// default assets, the effects the game shows with the items, the sounds and icons picked, and nothing the game
+        /// already has as it is, materials included.
         /// </summary>
         public static CharacterExportOptions Recommended => new()
         {
@@ -204,7 +207,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             HeroModel = true,
             ItemModels = true,
             Materials = false,
-            ArcanaMaterials = true,
+            ArcanaMaterials = false,
             MergeAdditionalWearables = true,
             ItemParticles = true,
             HeroParticles = false,
@@ -243,7 +246,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             if (Materials && (HeroModel || ItemModels))
             {
-                warnings.Add("Materials and textures: copies of every material the exported models use, which the game already has and applies by itself. Recolors and arcana models get theirs either way.");
+                warnings.Add("Materials and textures: copies of every material the exported models use, which the game already has and applies by itself. Recolors get theirs either way.");
             }
 
             if (HeroParticles)
@@ -327,6 +330,14 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <see cref="ModelDocEditor.AddLayeredAnimations"/>. Empty when only the hero's skeleton moves it.
         /// </summary>
         public IReadOnlyList<string> AnimatedBones { get; init; } = [];
+
+        /// <summary>
+        /// Whether the model shows only the body group choices picked for it, like the game shows the item at the arcana
+        /// level, with that choice's own materials, rather than the arcana body group's first choice given the style's
+        /// materials, see <see cref="ModelDocEditor.SelectBodyGroupChoices"/>. For items added to a model for want of
+        /// one of their own to be written over, e.g. Earthshaker's arcana head, which the hero's model then shows as is.
+        /// </summary>
+        public bool PickedChoicesOnly { get; init; }
     }
 
     /// <summary>
@@ -1017,8 +1028,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                     if (options.AnimateOwnParts && options.HeroModel && hero.Model != null && GetAnimatedBones(loadout, item, model) is { Count: > 0 } animatedBones)
                     {
                         // Written over the slot's default model it would be combined into the hero and stand still
-                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
-                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups) { AnimatedBones = animatedBones });
+                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin, styleRemaps: false);
+                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups) { AnimatedBones = animatedBones, PickedChoicesOnly = true });
                         heroParticles.AddRange(createdParticles);
 
                         if (defaultModel != null)
@@ -1044,15 +1055,16 @@ namespace GUI.Types.Exporter.CharacterAssets
                     }
                     else if (!isDefault && loadout.IsWornByHero(item.Item.Slot))
                     {
-                        // Nothing of the hero's to write it over, e.g. a helmet for a hero whose head is a slot of its own.
-                        // Left as is it would not show at all, so it goes with a model it swaps to fit it, else the hero's.
-                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin);
+                        // Nothing of the hero's to write it over, e.g. Earthshaker's arcana head, since his head is part of
+                        // his model. Left as is it would not show at all, so it goes with a model it swaps to fit it, else
+                        // the hero's, renamed or not.
+                        var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin, styleRemaps: false);
                         var companions = item.Modifiers
                             .Where(static modifier => modifier.Type == "model" && IsAssetPath(modifier.Asset))
                             .Select(static modifier => NormalizePath(modifier.Asset!))
                             .ToList();
 
-                        slotless.Add((new MergedModel(NormalizePath(model), skin, bodyGroups), createdParticles, companions));
+                        slotless.Add((new MergedModel(NormalizePath(model), skin, bodyGroups) { PickedChoicesOnly = true }, createdParticles, companions));
                     }
                     else if (!isDefault)
                     {
@@ -1210,14 +1222,19 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
-        /// The bones an item's model moves with animations of its own that the hero's model does not have. The game keeps
-        /// such items apart from the hero so they play their own sequences, but an addon hero's wearables are all
-        /// combined into it, where nothing would move those bones. Empty for items the game combines too, or whose
-        /// model only has the hero's bones.
+        /// The bones a persona piece's model moves with animations of its own that the hero's model does not have, e.g. the
+        /// wind-up key on Morphling's automaton. The game keeps such items apart from the hero so they play their own
+        /// sequences, but an addon hero's wearables are all combined into it, where nothing would move those bones. Empty
+        /// for items the game combines too, or whose model only has the hero's bones, and for the items of the hero's
+        /// own slots: arcana pieces are kept apart as well, e.g. Earthshaker's and Drow Ranger's, and have to be written
+        /// over their default models like other items.
         /// </summary>
         private List<string> GetAnimatedBones(CharacterLoadout loadout, EquippedItem item, string model)
         {
-            if (!item.Item.SkipModelCombine || !loadout.IsWornByHero(item.Item.Slot) || (loadout.HeroModel ?? loadout.Hero.Model) is not { } heroModelPath)
+            if (!item.Item.SkipModelCombine
+                || !CharacterLoadout.IsPersonaSlot(item.Item.Slot)
+                || !loadout.IsWornByHero(item.Item.Slot)
+                || (loadout.HeroModel ?? loadout.Hero.Model) is not { } heroModelPath)
             {
                 return [];
             }

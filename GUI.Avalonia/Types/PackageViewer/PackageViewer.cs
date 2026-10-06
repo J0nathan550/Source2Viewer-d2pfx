@@ -304,6 +304,7 @@ namespace GUI.Types.PackageViewer
             // List and grid
             var list = new PackageListView();
             list.ItemList.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
+            list.ItemList.SelectionChanged += (_, _) => RevealSelectedRow();
             list.ItemList.KeyDown += OnItemsKeyDown;
             list.ItemList.ContextRequested += (_, e) => OnContextRequested(list.ItemList, e);
             fileList = list;
@@ -317,6 +318,7 @@ namespace GUI.Types.PackageViewer
             grid.Classes.Add("packageGrid");
             ScrollViewer.SetHorizontalScrollBarVisibility(grid, ScrollBarVisibility.Disabled);
             grid.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
+            grid.SelectionChanged += (_, _) => RevealSelectedRow();
             grid.KeyDown += OnItemsKeyDown;
             grid.ContextRequested += (_, e) => OnContextRequested(grid, e);
             gridList = grid;
@@ -810,6 +812,57 @@ namespace GUI.Types.PackageViewer
         {
             var selected = IsGridMode ? gridList?.SelectedItems : fileList?.ItemList.SelectedItems;
             return selected?.OfType<ListRow>().ToList() ?? [];
+        }
+
+        /// <summary>
+        /// Shows where the single item picked in the list or grid is in the package, by selecting it in the tree.
+        /// </summary>
+        private void RevealSelectedRow()
+        {
+            if (SelectedRows() is not [{ IsParent: false } row])
+            {
+                return;
+            }
+
+            if (row.PkgNode != null)
+            {
+                SelectInTree(row.PkgNode, null);
+            }
+            else if (row.PackageEntry != null && FindFolder(row.PackageEntry) is { } folder)
+            {
+                SelectInTree(folder, row.PackageEntry);
+            }
+        }
+
+        /// <summary>
+        /// The folder of the package tree a file is in, which search results do not come from.
+        /// </summary>
+        private VirtualPackageNode? FindFolder(PackageEntry entry)
+        {
+            if (VirtualRoot == null)
+            {
+                return null;
+            }
+
+            var node = VirtualRoot;
+            var directory = (entry.DirectoryName ?? string.Empty).AsSpan().Trim(Package.DirectorySeparatorChar);
+
+            if (directory.IsEmpty)
+            {
+                return node.Files.Contains(entry) ? node : null;
+            }
+
+            foreach (var segmentRange in directory.Split([Package.DirectorySeparatorChar]))
+            {
+                if (!node.Folders.TryGetValue(directory[segmentRange].ToString(), out var next))
+                {
+                    return null;
+                }
+
+                node = next;
+            }
+
+            return node;
         }
 
         private void OnItemsDoubleTapped(TappedEventArgs e)

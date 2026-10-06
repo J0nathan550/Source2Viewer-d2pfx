@@ -39,6 +39,10 @@ namespace GUI.Forms
         private const int DefaultControlsWidth = 540;
         private const int MinimumControlsWidth = 440;
 
+        // Heights the loadout tabs and the export options can be made as small as with the divider between them
+        private const int MinimumLoadoutHeight = 140;
+        private const int MinimumOptionsHeight = 60;
+
         private readonly CharacterExportPreferences preferences = CharacterExportPreferences.Load();
         private readonly ItemsGameCatalog catalog;
         private readonly VrfGuiContext guiContext;
@@ -86,6 +90,7 @@ namespace GUI.Forms
 
         private readonly Window window;
         private readonly Grid mainGrid;
+        private readonly RowDefinition exportOptionsRow;
         private readonly Border previewPanel;
         private readonly TextBlock previewStatusLabel;
         private readonly TextBlock heroNameLabel;
@@ -274,11 +279,11 @@ namespace GUI.Forms
             materialsCheckBox = Check("Materials and textures", false);
             mergeWearablesCheckBox = Check("Extra meshes", true);
             renameModelsCheckBox = Check("Rename models over the defaults, disabling unused styles", true);
-            animatePartsCheckBox = Check("Add items that animate parts of their own to the hero's model", true);
+            animatePartsCheckBox = Check("Add persona pieces that animate parts of their own to the hero's model", true);
             spriteSheetCheckBox = Check("Replace the minimap icon (writes a copy of mod_textures.txt)", false);
             itemsGameCheckBox = Check("Make the items the hero's default items (writes a copy of items_game.txt)", false);
             skipUnchangedCheckBox = Check("Only models the loadout changes", true);
-            arcanaMaterialsCheckBox = Check("Materials of arcana models", true);
+            arcanaMaterialsCheckBox = Check("Materials of arcana models", false);
 
             replaceDefaultsCheckBox.IsCheckedChanged += (_, _) => UpdateReplaceDefaultsDependents();
             materialsCheckBox.IsCheckedChanged += (_, _) => UpdateReplaceDefaultsDependents();
@@ -375,17 +380,75 @@ namespace GUI.Forms
             AddCell(buttonsTable, exportButton, 0, 1);
             AddCell(buttonsTable, cancelButton, 0, 2);
 
-            var controlsTable = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,*,Auto,Auto,Auto") };
+            // The loadout tabs and the export options, divided like the preview and the controls so the options can be
+            // made smaller and scrolled. They fit every option until the divider is first dragged.
+            var savedOptionsHeight = Settings.Config.CharacterExportOptionsHeight;
+
+            exportOptionsRow = new RowDefinition(savedOptionsHeight > 0 ? new GridLength(savedOptionsHeight) : GridLength.Auto)
+            {
+                MinHeight = MinimumOptionsHeight,
+            };
+
+            var exportOptions = new ScrollViewer
+            {
+                Content = includeGroupBox,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            };
+
+            var optionsGrip = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 3,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            for (var i = 0; i < 5; i++)
+            {
+                var dot = new Ellipse { Width = 3, Height = 3 };
+                dot.Classes.Add("grip");
+                optionsGrip.Children.Add(dot);
+            }
+
+            var optionsGripLine = new Border { Height = 1, Margin = new(3, 0) };
+            optionsGripLine.Classes.Add("gripLine");
+
+            var optionsSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Rows, Background = Brushes.Transparent };
+            ToolTip.SetTip(optionsSplitter, "Drag to make the export options smaller or bigger, double-click to fit them all again");
+            optionsSplitter.DoubleTapped += (_, _) => exportOptionsRow.Height = GridLength.Auto;
+
+            var controlsTable = new Grid
+            {
+                RowDefinitions =
+                {
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(1, GridUnitType.Star) { MinHeight = MinimumLoadoutHeight },
+                    new RowDefinition(8, GridUnitType.Pixel),
+                    exportOptionsRow,
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                },
+            };
             AddCell(controlsTable, heroNavigationTable, 0, 0);
             AddCell(controlsTable, heroSearchTextBox, 1, 0);
             AddCell(controlsTable, itemSetLabel, 2, 0);
             AddCell(controlsTable, itemSetComboBox, 3, 0);
             AddCell(controlsTable, loadoutTabControl, 4, 0);
-            AddCell(controlsTable, includeGroupBox, 5, 0);
-            AddCell(controlsTable, outputGroupBox, 6, 0);
-            AddCell(controlsTable, buttonsTable, 7, 0);
+            AddCell(controlsTable, optionsGripLine, 5, 0);
+            AddCell(controlsTable, optionsGrip, 5, 0);
+            AddCell(controlsTable, optionsSplitter, 5, 0);
+            AddCell(controlsTable, exportOptions, 6, 0);
+            AddCell(controlsTable, outputGroupBox, 7, 0);
+            AddCell(controlsTable, buttonsTable, 8, 0);
             heroNavigationTable.VerticalAlignment = VerticalAlignment.Stretch;
             loadoutTabControl.VerticalAlignment = VerticalAlignment.Stretch;
+            optionsSplitter.VerticalAlignment = VerticalAlignment.Stretch;
+            optionsSplitter.HorizontalAlignment = HorizontalAlignment.Stretch;
+            exportOptions.VerticalAlignment = VerticalAlignment.Stretch;
 
             // Preview and controls, divided by a splitter with a grip in its middle to show it can be dragged
             var savedWidth = Settings.Config.CharacterExportControlsWidth;
@@ -548,8 +611,8 @@ namespace GUI.Forms
                 "Decompile the materials every exported model uses, with their textures, so the addon compiles its own copies.\n" +
                 "Otherwise the models use the game's own materials, which it applies by itself. Recoloring items exports them anyway.");
             ToolTip.SetTip(arcanaMaterialsCheckBox,
-                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level.\n" +
-                "Those render semi-transparent in game when the addon uses the game's own.");
+                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level,\n" +
+                "for an arcana that renders semi-transparent in game with the game's own. Off by default, the game applies its own to most.");
             ToolTip.SetTip(mergeWearablesCheckBox, "When replacing default assets, add the meshes of the extra models items wear, e.g. an arcana's frost overlay,\n" +
                 "to the hero's model. They are exported as models of their own either way.");
             ToolTip.SetTip(replaceSharedParticlesCheckBox, "Also replace particles every hero uses, like the blink dagger, stun and status effects");
@@ -559,10 +622,10 @@ namespace GUI.Forms
                 "so they can be turned back on in ModelDoc, and the _dummy choices are removed. The style's skin becomes the default one.\n" +
                 "No extra meshes are merged. Particles items create and activity modifiers are still added.");
             ToolTip.SetTip(animatePartsCheckBox,
-                "When replacing default assets, add items that animate parts of their own, e.g. a wind-up key, to the hero's model,\n" +
-                "with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
+                "When replacing default assets, add persona pieces that animate parts of their own, e.g. the wind-up key on Morphling's automaton,\n" +
+                "to the hero's model, with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
                 "The game combines an addon hero's items into it, where such parts would otherwise stand still.\n" +
-                "Untick it for models this does not suit, they are then written over the default models like other items.");
+                "Items of the hero's own slots, like arcana pieces, are always written over their default models.");
             ToolTip.SetTip(spriteSheetCheckBox,
                 "Point the hero's minimap icon at the one picked on the Icons tab, in a copy of scripts/mod_textures.txt in the game folder.\n" +
                 "The minimap draws hero icons from this sprite sheet, not from the icon images.\n" +
@@ -575,8 +638,8 @@ namespace GUI.Forms
                 "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
                 "A copy an earlier export wrote there is updated, so several heroes can share it.");
             ToolTip.SetTip(recommendedRadioButton,
-                "Export only what the loadout changes about the hero: the changed models written over the default ones with their materials,\n" +
-                "the effects the game shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is.");
+                "Export only what the loadout changes about the hero: the changed models written over the default ones, the effects the game\n" +
+                "shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is, materials included.");
             ToolTip.SetTip(customRadioButton, "Pick what to export yourself. Options that add files the mod most likely does not need are pointed out before exporting.");
             ToolTip.SetTip(skipUnchangedCheckBox,
                 "When replacing default assets, leave out the models the loadout does not change, e.g. the hero's own model when only a weapon is swapped.\n" +
@@ -970,9 +1033,18 @@ namespace GUI.Forms
 
             var controlsWidth = (int)Math.Round(mainGrid.ColumnDefinitions[2].ActualWidth);
 
-            if (controlsWidth > 0 && controlsWidth != Settings.Config.CharacterExportControlsWidth)
+            // Left fitting every option until the divider is dragged
+            var optionsHeight = exportOptionsRow.Height.IsAbsolute ? (int)Math.Round(exportOptionsRow.Height.Value) : 0;
+
+            if ((controlsWidth > 0 && controlsWidth != Settings.Config.CharacterExportControlsWidth)
+                || optionsHeight != Settings.Config.CharacterExportOptionsHeight)
             {
-                Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                if (controlsWidth > 0)
+                {
+                    Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                }
+
+                Settings.Config.CharacterExportOptionsHeight = optionsHeight;
                 Settings.Save();
             }
 
