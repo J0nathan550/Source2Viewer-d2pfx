@@ -222,10 +222,10 @@ namespace GUI.Forms
                 "so they can be turned back on in ModelDoc, and the _dummy choices are removed. The style's skin becomes the default one.\n" +
                 "No extra meshes are merged. Particles items create and activity modifiers are still added.");
             toolTip.SetToolTip(animatePartsCheckBox,
-                "When replacing default assets, add items that animate parts of their own, e.g. a wind-up key, to the hero's model,\n" +
-                "with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
+                "When replacing default assets, add persona pieces that animate parts of their own, e.g. the wind-up key on Morphling's automaton,\n" +
+                "to the hero's model, with their animations played on those parts during the hero's, and hide the default model of their slot.\n" +
                 "The game combines an addon hero's items into it, where such parts would otherwise stand still.\n" +
-                "Untick it for models this does not suit, they are then written over the default models like other items.");
+                "Items of the hero's own slots, like arcana pieces, are always written over their default models.");
             toolTip.SetToolTip(spriteSheetCheckBox,
                 "Point the hero's minimap icon at the one picked on the Icons tab, in a copy of scripts/mod_textures.txt in the game folder.\n" +
                 "The minimap draws hero icons from this sprite sheet, not from the icon images.\n" +

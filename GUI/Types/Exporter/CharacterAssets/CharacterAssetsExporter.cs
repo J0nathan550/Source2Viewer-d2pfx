@@ -376,7 +376,9 @@ namespace GUI.Types.Exporter.CharacterAssets
                     {
                         try
                         {
-                            var mergedVmdl = ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, plan.StyleMaterialRemaps.GetValueOrDefault(merged.Model), progress, details: null);
+                            var mergedVmdl = merged.PickedChoicesOnly
+                                ? ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, materialRemaps: null, progress, details: null, keepArcanaDefault: false)
+                                : ReadModel(outputRoot, merged.Model, merged.Skin, merged.BodyGroups, plan.StyleMaterialRemaps.GetValueOrDefault(merged.Model), progress, details: null);
 
                             var prefix = Path.GetFileNameWithoutExtension(merged.Model);
 
@@ -655,8 +657,13 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <summary>
         /// Reads an exported model, with the skin and body group choices the loadout shows it with made its defaults.
         /// </summary>
+        /// <param name="keepArcanaDefault">
+        /// Whether the arcana body group may keep its first choice, see <see cref="ModelDocEditor.SelectBodyGroupChoices"/>.
+        /// It only does with style materials to give it, otherwise it would show the default style: the picked choice is
+        /// left alone with its own materials, like the game shows it.
+        /// </param>
         private static string ReadModel(string outputRoot, string model, int skin, Dictionary<string, int> bodyGroups,
-            IReadOnlyDictionary<string, string>? materialRemaps, IProgress<string> progress, List<string>? details)
+            IReadOnlyDictionary<string, string>? materialRemaps, IProgress<string> progress, List<string>? details, bool keepArcanaDefault = true)
         {
             var vmdl = File.ReadAllText(GetExportedPath(outputRoot, model, "vmdl"));
 
@@ -677,7 +684,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             {
                 try
                 {
-                    vmdl = ModelDocEditor.SelectBodyGroupChoices(vmdl, bodyGroups, details);
+                    vmdl = ModelDocEditor.SelectBodyGroupChoices(vmdl, bodyGroups, details, keepArcanaDefault && materialRemaps is { Count: > 0 });
                 }
                 catch (Exception e)
                 {

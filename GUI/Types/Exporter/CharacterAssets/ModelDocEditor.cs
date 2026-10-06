@@ -162,7 +162,13 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <param name="vmdl">The .vmdl text.</param>
         /// <param name="choices">The index of the choice to pick, by body group name. Groups the model does not have are skipped.</param>
         /// <param name="details">Receives a description of every choice that was picked.</param>
-        public static string SelectBodyGroupChoices(string vmdl, IReadOnlyDictionary<string, int> choices, ICollection<string>? details = null)
+        /// <param name="keepArcanaDefault">
+        /// Whether the arcana body group keeps its first choice. Without it the picked choice is all that is left, with
+        /// its own materials, like the game shows the item at the arcana level, which models merged into another one
+        /// need, e.g. Earthshaker's arcana head: <see cref="MergeModel"/> only takes the first choice of a body group.
+        /// </param>
+        public static string SelectBodyGroupChoices(string vmdl, IReadOnlyDictionary<string, int> choices, ICollection<string>? details = null,
+            bool keepArcanaDefault = true)
         {
             var bodyGroups = GetBodyGroups(GetRootChildren(vmdl));
             var removedChoices = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -186,7 +192,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                     continue;
                 }
 
-                var keepFirst = bodyGroup.Name.Equals(CharacterLoadout.ArcanaBodyGroup, StringComparison.OrdinalIgnoreCase);
+                var keepFirst = keepArcanaDefault && bodyGroup.Name.Equals(CharacterLoadout.ArcanaBodyGroup, StringComparison.OrdinalIgnoreCase);
                 var kept = bodyGroup.Choices.Where((_, choiceIndex) => choiceIndex == picked || (keepFirst && choiceIndex == 0));
 
                 var keptMeshes = bodyGroups
@@ -644,7 +650,12 @@ namespace GUI.Types.Exporter.CharacterAssets
                 AddRemaps(otherRemaps, otherDefaultGroup);
             }
 
-            if (otherRemaps.Count > 0 && GetMaterialGroups(children) is [var defaultGroup, ..])
+            if (otherRemaps.Count > 0 && GetMaterialGroups(children) is not [_, ..])
+            {
+                // Without material groups of its own the model gets a default one for them, or they would be lost
+                vmdl = AddDefaultMaterialRemaps(vmdl, otherRemaps.ToDictionary(static remap => remap.From, static remap => remap.To, StringComparer.OrdinalIgnoreCase));
+            }
+            else if (otherRemaps.Count > 0 && GetMaterialGroups(children) is [var defaultGroup, ..])
             {
                 var remaps = new List<MaterialRemap>();
                 AddRemaps(remaps, defaultGroup);
