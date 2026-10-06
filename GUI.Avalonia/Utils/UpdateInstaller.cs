@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -14,12 +16,16 @@ namespace GUI.Utils;
 
 /// <summary>
 /// Downloads the build offered by <see cref="UpdateChecker"/>, verifies it against the manifest and against the
-/// build provenance attested by the CI, and swaps it in place of the running executable, on Windows and Linux.
+/// build provenance attested by the CI, and puts it in place of the running executable, on Windows and Linux.
 /// </summary>
 static class UpdateInstaller
 {
     private const string ReplacedSuffix = ".old";
     private const string PendingSuffix = ".new";
+
+    // Next to the executable on Windows, where it stays until the viewer exits. It ends in .exe so it can be started
+    // to put itself in place, see ApplyPendingUpdate.
+    private const string WindowsPendingSuffix = ".update.exe";
     private const string Repository = UpdateChecker.Repository;
     private const string RepositoryId = UpdateChecker.RepositoryId;
     private const string Workflow = ".github/workflows/release-build.yml";
@@ -28,11 +34,25 @@ static class UpdateInstaller
     /// <summary>The argument that makes this build print its version and exit, see <see cref="GetReportedVersionAsync"/>.</summary>
     public const string VersionArgument = "--version";
 
+    /// <summary>
+    /// The argument that makes a downloaded Windows build wait for the viewer that downloaded it to exit and then put
+    /// itself in place of its executable, see <see cref="ApplyPendingUpdate"/>. Followed by that viewer's process id
+    /// and optionally <see cref="RestartArgument"/>.
+    /// </summary>
+    public const string ApplyUpdateArgument = "--apply-update";
+
+    /// <summary>Makes <see cref="ApplyUpdateArgument"/> start the viewer again once the update is in place.</summary>
+    public const string RestartArgument = "--restart";
+
     // Keeps the Sigstore trust root cached between verifications
     private static readonly SigstoreVerifier Verifier = new();
 
     /// <summary>The version that has been installed and takes effect on the next start, or null.</summary>
     public static string? InstalledVersionText { get; private set; }
+
+    // The verified download waiting for this process to exit on Windows, and whether it was started to put itself in place
+    private static string? pendingUpdatePath;
+    private static bool pendingUpdateStarted;
 
     /// <summary>
     /// Whether this build can replace itself with a downloaded one: the AppImage on Linux, and the single file builds.
@@ -60,7 +80,15 @@ static class UpdateInstaller
 
         TryDelete(exePath + PendingSuffix);
         _ = DeleteReplacedAsync(exePath + ReplacedSuffix);
+
+        if (OperatingSystem.IsWindows())
+        {
+            // Still running for a moment when it started this instance after putting itself in place
+            _ = DeleteReplacedAsync(GetWindowsPendingPath(exePath));
+        }
     }
+
+    private static string GetWindowsPendingPath(string exePath) => Path.ChangeExtension(exePath, WindowsPendingSuffix);
 
     // The previous instance is usually still exiting when this one starts, so keep trying for a while.
     // Whatever is still in use after that is removed by a later launch.
@@ -153,7 +181,7 @@ static class UpdateInstaller
             return;
         }
 
-        var pendingPath = exePath + PendingSuffix;
+        var pendingPath = OperatingSystem.IsWindows() ? GetWindowsPendingPath(exePath) : exePath + PendingSuffix;
 
         try
         {
@@ -164,7 +192,16 @@ static class UpdateInstaller
 
             await VerifyVersionAsync(pendingPath, exePath).ConfigureAwait(true);
 
-            Swap(exePath, pendingPath);
+            // A single file build reads the assemblies it has not loaded yet from its executable by path for as long as
+            // it runs, so on Windows the executable is only replaced once this process has exited
+            if (OperatingSystem.IsWindows())
+            {
+                pendingUpdatePath = pendingPath;
+            }
+            else
+            {
+                Swap(exePath, pendingPath);
+            }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -215,7 +252,122 @@ static class UpdateInstaller
             return; // Closing was cancelled
         }
 
+        if (pendingUpdatePath != null)
+        {
+            StartPendingUpdate(restart: true);
+            return;
+        }
+
         Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = false });
+    }
+
+    /// <summary>
+    /// Puts an update downloaded on Windows in place once this process has exited, when it was not restarted for it.
+    /// </summary>
+    public static void ApplyPendingUpdateOnExit() => StartPendingUpdate(restart: false);
+
+    private static void StartPendingUpdate(bool restart)
+    {
+        if (pendingUpdatePath == null || pendingUpdateStarted)
+        {
+            return;
+        }
+
+        pendingUpdateStarted = true;
+
+        var startInfo = new ProcessStartInfo(pendingUpdatePath)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add(ApplyUpdateArgument);
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+
+        if (restart)
+        {
+            startInfo.ArgumentList.Add(RestartArgument);
+        }
+
+        try
+        {
+            using var process = Process.Start(startInfo);
+        }
+        catch (Exception e) when (e is Win32Exception or IOException)
+        {
+            Log.Error(nameof(UpdateInstaller), $"Failed to start the update at '{pendingUpdatePath}': {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Runs in the downloaded Windows build, see <see cref="ApplyUpdateArgument"/>: waits for the viewer that downloaded
+    /// it to exit, copies itself over its executable and starts it again if asked to.
+    /// </summary>
+    /// <returns>The process exit code.</returns>
+    public static int ApplyPendingUpdate(string processIdText, bool restart)
+    {
+        var pendingPath = Environment.ProcessPath;
+
+        // Only ever written over the executable it was downloaded next to
+        if (!OperatingSystem.IsWindows() || pendingPath == null || !pendingPath.EndsWith(WindowsPendingSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1;
+        }
+
+        var exePath = string.Concat(pendingPath.AsSpan(0, pendingPath.Length - WindowsPendingSuffix.Length), ".exe");
+        var stagingPath = exePath + PendingSuffix;
+
+        if (int.TryParse(processIdText, NumberStyles.None, CultureInfo.InvariantCulture, out var processId))
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                process.WaitForExit(TimeSpan.FromMinutes(2));
+            }
+            catch (ArgumentException)
+            {
+                // Already exited
+            }
+        }
+
+        try
+        {
+            // Copied next to it first, so the executable is never left half written. The rename that replaces it is
+            // retried while the exiting viewer or a virus scanner still holds it.
+            File.Copy(pendingPath, stagingPath, overwrite: true);
+
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    File.Move(stagingPath, exePath, overwrite: true);
+                    break;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 30)
+                {
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Error(nameof(UpdateInstaller), $"Failed to install the update over '{exePath}': {e.Message}");
+            TryDelete(stagingPath);
+
+            // The previous build is still in place, it is better to come back to that than to nothing
+            if (restart)
+            {
+                Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = false });
+            }
+
+            return 1;
+        }
+
+        if (restart)
+        {
+            Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = false });
+        }
+
+        return 0;
     }
 
     // Hashes and counts what passes through on the way to the file, so the download is verified
@@ -476,8 +628,8 @@ static class UpdateInstaller
         }
     }
 
-    // Windows allows renaming a running executable, only deleting or overwriting it is refused, and on Linux
-    // the running program keeps its file until it exits. The old file is removed on the next launch.
+    // On Linux the running AppImage stays mounted from the file it was started from, so it can be renamed away while it
+    // runs. The old file is removed on the next launch.
     private static void Swap(string exePath, string pendingPath)
     {
         var replacedPath = exePath + ReplacedSuffix;
