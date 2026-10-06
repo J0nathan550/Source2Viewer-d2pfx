@@ -34,16 +34,17 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// The materials every exported model uses, with their textures, so the addon compiles its own copies. Otherwise
-        /// the models use the game's, which it applies by itself, see <see cref="ArcanaMaterials"/> for the exception.
+        /// the models use the game's, which it applies by itself, see <see cref="ArcanaMaterials"/> to export only some.
         /// Recolors always export them, they are what gets recolored.
         /// </summary>
         public bool Materials { get; set; }
 
         /// <summary>
         /// Without <see cref="Materials"/>, still exports the materials of the models that switch their meshes by the
-        /// arcana level, which render semi-transparent in game when the addon uses the game's compiled ones.
+        /// arcana level, for the arcanas that render semi-transparent in game when the addon uses the game's compiled
+        /// ones. Off by default, the game applies its own materials to most.
         /// </summary>
-        public bool ArcanaMaterials { get; set; } = true;
+        public bool ArcanaMaterials { get; set; }
 
         /// <summary>
         /// Adds the meshes of the models items wear besides their own, e.g. an arcana's frost overlay, to the hero's model
@@ -197,8 +198,8 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// The options that make an addon of only what the loadout changes about the hero: its look written over the
-        /// default assets, the materials only of arcana models and recolors, the effects the game shows with the items, the sounds and icons
-        /// picked, and nothing the game already has as it is.
+        /// default assets, the effects the game shows with the items, the sounds and icons picked, and nothing the game
+        /// already has as it is, materials included.
         /// </summary>
         public static CharacterExportOptions Recommended => new()
         {
@@ -206,7 +207,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             HeroModel = true,
             ItemModels = true,
             Materials = false,
-            ArcanaMaterials = true,
+            ArcanaMaterials = false,
             MergeAdditionalWearables = true,
             ItemParticles = true,
             HeroParticles = false,
@@ -245,7 +246,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             if (Materials && (HeroModel || ItemModels))
             {
-                warnings.Add("Materials and textures: copies of every material the exported models use, which the game already has and applies by itself. Recolors and arcana models get theirs either way.");
+                warnings.Add("Materials and textures: copies of every material the exported models use, which the game already has and applies by itself. Recolors get theirs either way.");
             }
 
             if (HeroParticles)

@@ -278,7 +278,7 @@ namespace GUI.Forms
             spriteSheetCheckBox = Check("Replace the minimap icon (writes a copy of mod_textures.txt)", false);
             itemsGameCheckBox = Check("Make the items the hero's default items (writes a copy of items_game.txt)", false);
             skipUnchangedCheckBox = Check("Only models the loadout changes", true);
-            arcanaMaterialsCheckBox = Check("Materials of arcana models", true);
+            arcanaMaterialsCheckBox = Check("Materials of arcana models", false);
 
             replaceDefaultsCheckBox.IsCheckedChanged += (_, _) => UpdateReplaceDefaultsDependents();
             materialsCheckBox.IsCheckedChanged += (_, _) => UpdateReplaceDefaultsDependents();
@@ -548,8 +548,8 @@ namespace GUI.Forms
                 "Decompile the materials every exported model uses, with their textures, so the addon compiles its own copies.\n" +
                 "Otherwise the models use the game's own materials, which it applies by itself. Recoloring items exports them anyway.");
             ToolTip.SetTip(arcanaMaterialsCheckBox,
-                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level.\n" +
-                "Those render semi-transparent in game when the addon uses the game's own.");
+                "Without Materials and textures, still decompile the materials of models that switch their meshes by the arcana level,\n" +
+                "for an arcana that renders semi-transparent in game with the game's own. Off by default, the game applies its own to most.");
             ToolTip.SetTip(mergeWearablesCheckBox, "When replacing default assets, add the meshes of the extra models items wear, e.g. an arcana's frost overlay,\n" +
                 "to the hero's model. They are exported as models of their own either way.");
             ToolTip.SetTip(replaceSharedParticlesCheckBox, "Also replace particles every hero uses, like the blink dagger, stun and status effects");
@@ -575,8 +575,8 @@ namespace GUI.Forms
                 "The copy replaces the whole file, so other mods that change it stop working unless they are in the same folder.\n" +
                 "A copy an earlier export wrote there is updated, so several heroes can share it.");
             ToolTip.SetTip(recommendedRadioButton,
-                "Export only what the loadout changes about the hero: the changed models written over the default ones with their materials,\n" +
-                "the effects the game shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is.");
+                "Export only what the loadout changes about the hero: the changed models written over the default ones, the effects the game\n" +
+                "shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is, materials included.");
             ToolTip.SetTip(customRadioButton, "Pick what to export yourself. Options that add files the mod most likely does not need are pointed out before exporting.");
             ToolTip.SetTip(skipUnchangedCheckBox,
                 "When replacing default assets, leave out the models the loadout does not change, e.g. the hero's own model when only a weapon is swapped.\n" +
