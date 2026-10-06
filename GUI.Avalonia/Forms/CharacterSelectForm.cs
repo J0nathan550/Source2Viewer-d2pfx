@@ -39,6 +39,10 @@ namespace GUI.Forms
         private const int DefaultControlsWidth = 540;
         private const int MinimumControlsWidth = 440;
 
+        // Heights the loadout tabs and the export options can be made as small as with the divider between them
+        private const int MinimumLoadoutHeight = 140;
+        private const int MinimumOptionsHeight = 60;
+
         private readonly CharacterExportPreferences preferences = CharacterExportPreferences.Load();
         private readonly ItemsGameCatalog catalog;
         private readonly VrfGuiContext guiContext;
@@ -86,6 +90,7 @@ namespace GUI.Forms
 
         private readonly Window window;
         private readonly Grid mainGrid;
+        private readonly RowDefinition exportOptionsRow;
         private readonly Border previewPanel;
         private readonly TextBlock previewStatusLabel;
         private readonly TextBlock heroNameLabel;
@@ -375,17 +380,75 @@ namespace GUI.Forms
             AddCell(buttonsTable, exportButton, 0, 1);
             AddCell(buttonsTable, cancelButton, 0, 2);
 
-            var controlsTable = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,*,Auto,Auto,Auto") };
+            // The loadout tabs and the export options, divided like the preview and the controls so the options can be
+            // made smaller and scrolled. They fit every option until the divider is first dragged.
+            var savedOptionsHeight = Settings.Config.CharacterExportOptionsHeight;
+
+            exportOptionsRow = new RowDefinition(savedOptionsHeight > 0 ? new GridLength(savedOptionsHeight) : GridLength.Auto)
+            {
+                MinHeight = MinimumOptionsHeight,
+            };
+
+            var exportOptions = new ScrollViewer
+            {
+                Content = includeGroupBox,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            };
+
+            var optionsGrip = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 3,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            for (var i = 0; i < 5; i++)
+            {
+                var dot = new Ellipse { Width = 3, Height = 3 };
+                dot.Classes.Add("grip");
+                optionsGrip.Children.Add(dot);
+            }
+
+            var optionsGripLine = new Border { Height = 1, Margin = new(3, 0) };
+            optionsGripLine.Classes.Add("gripLine");
+
+            var optionsSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Rows, Background = Brushes.Transparent };
+            ToolTip.SetTip(optionsSplitter, "Drag to make the export options smaller or bigger, double-click to fit them all again");
+            optionsSplitter.DoubleTapped += (_, _) => exportOptionsRow.Height = GridLength.Auto;
+
+            var controlsTable = new Grid
+            {
+                RowDefinitions =
+                {
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(1, GridUnitType.Star) { MinHeight = MinimumLoadoutHeight },
+                    new RowDefinition(8, GridUnitType.Pixel),
+                    exportOptionsRow,
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                },
+            };
             AddCell(controlsTable, heroNavigationTable, 0, 0);
             AddCell(controlsTable, heroSearchTextBox, 1, 0);
             AddCell(controlsTable, itemSetLabel, 2, 0);
             AddCell(controlsTable, itemSetComboBox, 3, 0);
             AddCell(controlsTable, loadoutTabControl, 4, 0);
-            AddCell(controlsTable, includeGroupBox, 5, 0);
-            AddCell(controlsTable, outputGroupBox, 6, 0);
-            AddCell(controlsTable, buttonsTable, 7, 0);
+            AddCell(controlsTable, optionsGripLine, 5, 0);
+            AddCell(controlsTable, optionsGrip, 5, 0);
+            AddCell(controlsTable, optionsSplitter, 5, 0);
+            AddCell(controlsTable, exportOptions, 6, 0);
+            AddCell(controlsTable, outputGroupBox, 7, 0);
+            AddCell(controlsTable, buttonsTable, 8, 0);
             heroNavigationTable.VerticalAlignment = VerticalAlignment.Stretch;
             loadoutTabControl.VerticalAlignment = VerticalAlignment.Stretch;
+            optionsSplitter.VerticalAlignment = VerticalAlignment.Stretch;
+            optionsSplitter.HorizontalAlignment = HorizontalAlignment.Stretch;
+            exportOptions.VerticalAlignment = VerticalAlignment.Stretch;
 
             // Preview and controls, divided by a splitter with a grip in its middle to show it can be dragged
             var savedWidth = Settings.Config.CharacterExportControlsWidth;
@@ -970,9 +1033,18 @@ namespace GUI.Forms
 
             var controlsWidth = (int)Math.Round(mainGrid.ColumnDefinitions[2].ActualWidth);
 
-            if (controlsWidth > 0 && controlsWidth != Settings.Config.CharacterExportControlsWidth)
+            // Left fitting every option until the divider is dragged
+            var optionsHeight = exportOptionsRow.Height.IsAbsolute ? (int)Math.Round(exportOptionsRow.Height.Value) : 0;
+
+            if ((controlsWidth > 0 && controlsWidth != Settings.Config.CharacterExportControlsWidth)
+                || optionsHeight != Settings.Config.CharacterExportOptionsHeight)
             {
-                Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                if (controlsWidth > 0)
+                {
+                    Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                }
+
+                Settings.Config.CharacterExportOptionsHeight = optionsHeight;
                 Settings.Save();
             }
 

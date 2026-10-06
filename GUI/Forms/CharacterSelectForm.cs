@@ -57,7 +57,9 @@ namespace GUI.Forms
         private readonly RadioButton recommendedRadioButton;
         private readonly RadioButton customRadioButton;
         private readonly Label exportHintLabel;
+        private readonly SplitContainer exportSplitContainer;
 #pragma warning restore CA2213
+        private bool exportOptionsResized = Settings.Config.CharacterExportOptionsHeight > 0;
         private CharacterExportOptions customOptions = new();
         private bool loadoutHasPedestal;
         private bool isRecommended;
@@ -186,6 +188,41 @@ namespace GUI.Forms
             {
                 checkBox.CheckedChanged += (_, _) => UpdateExportHint();
             }
+
+            // The loadout tabs and the export options, divided like the preview and the controls so the options can be
+            // made smaller and scrolled. They fit every option until the divider is first dragged.
+            exportSplitContainer = new SplitContainer
+            {
+                Orientation = Orientation.Horizontal,
+                Dock = DockStyle.Fill,
+                FixedPanel = FixedPanel.Panel2,
+                SplitterWidth = 8,
+                TabStop = false,
+                Margin = Padding.Empty,
+            };
+
+            var loadoutRow = controlsTable.GetRow(loadoutTabControl);
+            controlsTable.Controls.Remove(loadoutTabControl);
+            controlsTable.Controls.Remove(includeGroupBox);
+
+            exportSplitContainer.Panel1.Controls.Add(loadoutTabControl);
+            includeGroupBox.Dock = DockStyle.Top;
+            exportSplitContainer.Panel2.AutoScroll = true;
+            exportSplitContainer.Panel2.Controls.Add(includeGroupBox);
+            controlsTable.Controls.Add(exportSplitContainer, 0, loadoutRow);
+
+            exportSplitContainer.Paint += (_, e) => PaintSplitter(e.Graphics, exportSplitContainer.SplitterRectangle, horizontal: true);
+            exportSplitContainer.SplitterMoved += (_, _) => exportSplitContainer.Invalidate();
+            exportSplitContainer.SplitterMoving += (_, _) => exportOptionsResized = true;
+            exportSplitContainer.MouseDoubleClick += (_, e) =>
+            {
+                // Back to fitting every option
+                if (exportSplitContainer.SplitterRectangle.Contains(e.Location))
+                {
+                    SetExportOptionsHeight(includeGroupBox.PreferredSize.Height);
+                    exportOptionsResized = false;
+                }
+            };
 
             toolTip.SetToolTip(heroParticlesCheckBox, "Every particle in the hero's particle folder, which covers the effects of its abilities");
             toolTip.SetToolTip(iconsCheckBox,
@@ -625,6 +662,12 @@ namespace GUI.Forms
             mainSplitContainer.Panel1MinSize = this.AdjustForDPI(200);
             SetControlsWidth(this.AdjustForDPI(savedWidth > 0 ? savedWidth : DefaultControlsWidth));
             mainSplitContainer.Panel2MinSize = this.AdjustForDPI(440);
+
+            var savedOptionsHeight = Settings.Config.CharacterExportOptionsHeight;
+
+            exportSplitContainer.Panel1MinSize = this.AdjustForDPI(140);
+            SetExportOptionsHeight(savedOptionsHeight > 0 ? this.AdjustForDPI(savedOptionsHeight) : includeGroupBox.PreferredSize.Height);
+            exportSplitContainer.Panel2MinSize = this.AdjustForDPI(60);
         }
 
         protected override void OnShown(EventArgs e)
@@ -664,9 +707,13 @@ namespace GUI.Forms
 
             var controlsWidth = (int)MathF.Round(mainSplitContainer.Panel2.Width * 96f / DeviceDpi);
 
-            if (controlsWidth != Settings.Config.CharacterExportControlsWidth)
+            // Left fitting every option until the divider is dragged
+            var optionsHeight = exportOptionsResized ? (int)MathF.Round(exportSplitContainer.Panel2.Height * 96f / DeviceDpi) : 0;
+
+            if (controlsWidth != Settings.Config.CharacterExportControlsWidth || optionsHeight != Settings.Config.CharacterExportOptionsHeight)
             {
                 Settings.Config.CharacterExportControlsWidth = controlsWidth;
+                Settings.Config.CharacterExportOptionsHeight = optionsHeight;
                 Settings.Save();
             }
 
@@ -696,28 +743,50 @@ namespace GUI.Forms
             mainSplitContainer.SplitterDistance = Math.Clamp(distance, mainSplitContainer.Panel1MinSize, Math.Max(mainSplitContainer.Panel1MinSize, maximum));
         }
 
+        /// <summary>
+        /// Moves the divider so the export options get the given height, as far as the loadout tabs' minimum height lets them.
+        /// </summary>
+        private void SetExportOptionsHeight(int height)
+        {
+            var maximum = exportSplitContainer.Height - exportSplitContainer.SplitterWidth - exportSplitContainer.Panel2MinSize;
+            var distance = exportSplitContainer.Height - exportSplitContainer.SplitterWidth - height;
+
+            exportSplitContainer.SplitterDistance = Math.Clamp(distance, exportSplitContainer.Panel1MinSize, Math.Max(exportSplitContainer.Panel1MinSize, maximum));
+        }
+
         private void MainSplitContainer_SplitterMoved(object? sender, SplitterEventArgs e) => mainSplitContainer.Invalidate();
 
+        private void MainSplitContainer_Paint(object? sender, PaintEventArgs e) => PaintSplitter(e.Graphics, mainSplitContainer.SplitterRectangle, horizontal: false);
+
         /// <summary>
-        /// Draws the divider between the preview and the controls, which is otherwise the same color as the dialog, with
-        /// a grip in its middle to show it can be dragged.
+        /// Draws a divider, which is otherwise the same color as the dialog, with a grip in its middle to show it can be
+        /// dragged: between the preview and the controls, and between the loadout tabs and the export options.
         /// </summary>
-        private void MainSplitContainer_Paint(object? sender, PaintEventArgs e)
+        /// <param name="horizontal">Whether the divider lies across, between panels above and below it.</param>
+        private void PaintSplitter(Graphics graphics, Rectangle bounds, bool horizontal)
         {
-            var bounds = mainSplitContainer.SplitterRectangle;
             var x = bounds.X + (bounds.Width / 2);
             var y = bounds.Y + (bounds.Height / 2);
             var dot = Math.Max(2, this.AdjustForDPI(3));
             var gap = dot * 2;
 
             using var pen = new Pen(Themer.CurrentThemeColors.Border, Math.Max(1, this.AdjustForDPI(1)));
-            e.Graphics.DrawLine(pen, x, bounds.Top, x, bounds.Bottom);
+
+            if (horizontal)
+            {
+                graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+            }
+            else
+            {
+                graphics.DrawLine(pen, x, bounds.Top, x, bounds.Bottom);
+            }
 
             using var brush = new SolidBrush(Themer.CurrentThemeColors.Contrast);
 
             for (var i = -2; i <= 2; i++)
             {
-                e.Graphics.FillEllipse(brush, x - (dot / 2f), y + (i * gap) - (dot / 2f), dot, dot);
+                var (dotX, dotY) = horizontal ? (x + (i * gap), y) : (x, y + (i * gap));
+                graphics.FillEllipse(brush, dotX - (dot / 2f), dotY - (dot / 2f), dot, dot);
             }
         }
 
