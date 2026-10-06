@@ -54,6 +54,11 @@ namespace GUI
                 return 0;
             }
 
+            if (args is [UpdateInstaller.ApplyUpdateArgument, var processId, .. var rest])
+            {
+                return UpdateInstaller.ApplyPendingUpdate(processId, rest is [UpdateInstaller.RestartArgument]);
+            }
+
             AppDomain.CurrentDomain.UnhandledException += UnhandledException;
 
 #if DEBUG
@@ -93,7 +98,11 @@ namespace GUI
                 GLFW.InitHint(InitHintPlatform.Platform, Platform.X11);
             }
 
-            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            var exitCode = BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+
+            UpdateInstaller.ApplyPendingUpdateOnExit();
+
+            return exitCode;
         }
 
         public static AppBuilder BuildAvaloniaApp()
