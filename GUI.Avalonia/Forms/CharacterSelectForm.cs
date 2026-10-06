@@ -122,6 +122,7 @@ namespace GUI.Forms
         private readonly CheckBox itemsGameCheckBox;
         private readonly CheckBox skipUnchangedCheckBox;
         private readonly CheckBox arcanaMaterialsCheckBox;
+        private readonly CheckBox editMaterialsCheckBox;
         private readonly RadioButton recommendedRadioButton;
         private readonly RadioButton customRadioButton;
         private readonly TextBlock exportHintLabel;
@@ -312,6 +313,17 @@ namespace GUI.Forms
 
             exportHintLabel = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.75, Margin = new(3, 2, 3, 4) };
 
+            editMaterialsCheckBox = Check("Also export the materials and textures, to modify them", preferences.RecommendedMaterials);
+            editMaterialsCheckBox.Margin = new(3, 0, 3, 4);
+            editMaterialsCheckBox.IsCheckedChanged += (_, _) =>
+            {
+                if (IsRecommended)
+                {
+                    materialsCheckBox.IsChecked = IsChecked(editMaterialsCheckBox);
+                    UpdateExportHint();
+                }
+            };
+
             var includeTable = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*") };
             AddCell(includeTable, heroModelCheckBox, 0, 0);
             AddCell(includeTable, itemModelsCheckBox, 0, 1);
@@ -341,7 +353,7 @@ namespace GUI.Forms
                 Children = { recommendedRadioButton, customRadioButton },
             };
 
-            var includePanel = new StackPanel { Children = { modePanel, exportHintLabel, includeTable } };
+            var includePanel = new StackPanel { Children = { modePanel, exportHintLabel, editMaterialsCheckBox, includeTable } };
 
             var includeGroupBox = Controls.GroupBox.Create("Export", includePanel);
             includeGroupBox.Margin = new(3);
@@ -639,7 +651,11 @@ namespace GUI.Forms
                 "A copy an earlier export wrote there is updated, so several heroes can share it.");
             ToolTip.SetTip(recommendedRadioButton,
                 "Export only what the loadout changes about the hero: the changed models written over the default ones, the effects the game\n" +
-                "shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is, materials included.");
+                "shows with the items, and the sounds and icons the items swap. Nothing the game already has as it is, materials included,\n" +
+                "unless they are to be modified.");
+            ToolTip.SetTip(editMaterialsCheckBox,
+                "Only for retexturing or otherwise changing the materials: decompile the materials every exported model uses, with their textures,\n" +
+                "so the addon compiles its own copies to edit. Otherwise they are left out, the game applies its own by itself.");
             ToolTip.SetTip(customRadioButton, "Pick what to export yourself. Options that add files the mod most likely does not need are pointed out before exporting.");
             ToolTip.SetTip(skipUnchangedCheckBox,
                 "When replacing default assets, leave out the models the loadout does not change, e.g. the hero's own model when only a weapon is swapped.\n" +
@@ -950,6 +966,7 @@ namespace GUI.Forms
 
                 isRecommended = true;
                 ApplyOptions(CharacterExportOptions.Recommended);
+                materialsCheckBox.IsChecked = IsChecked(editMaterialsCheckBox);
             }
             else
             {
@@ -962,6 +979,7 @@ namespace GUI.Forms
                 checkBox.IsEnabled = !recommended;
             }
 
+            editMaterialsCheckBox.IsVisible = recommended;
             UpdateReplaceDefaultsDependents();
             UpdateExportHint();
         }
@@ -985,7 +1003,9 @@ namespace GUI.Forms
         {
             if (IsRecommended)
             {
-                exportHintLabel.Text = "Only what the loadout changes is exported. Pick Custom to choose for yourself.";
+                exportHintLabel.Text = IsChecked(editMaterialsCheckBox)
+                    ? "Only what the loadout changes is exported, and the materials to modify. Pick Custom to choose for yourself."
+                    : "Only what the loadout changes is exported. Pick Custom to choose for yourself.";
                 ToolTip.SetTip(exportHintLabel, null);
                 return;
             }
@@ -1027,6 +1047,7 @@ namespace GUI.Forms
 
             preferences.Options = IsRecommended ? customOptions : GetTickedOptions();
             preferences.Options.OnlyWhatChanges = IsRecommended;
+            preferences.RecommendedMaterials = IsChecked(editMaterialsCheckBox);
             preferences.PreviewEffects = IsChecked(previewEffectsCheckBox);
             preferences.LastColor = lastPickedColor.ToArgb();
             preferences.Save();

@@ -19,6 +19,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         public CharacterExportOptions? Options { get; set; }
 
+        /// <summary>
+        /// Whether Recommended also exports the materials the models use, with their textures, to be modified, see
+        /// <see cref="CharacterExportOptions.Materials"/>. Left out otherwise, the game applies its own.
+        /// </summary>
+        public bool RecommendedMaterials { get; set; }
+
         /// <summary>The loadout last picked for each hero, by hero name.</summary>
         public Dictionary<string, SavedLoadout> Loadouts { get; set; } = [];
 
