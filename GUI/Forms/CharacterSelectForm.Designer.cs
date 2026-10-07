@@ -672,7 +672,7 @@ namespace GUI.Forms
             animatePartsCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
             animatePartsCheckBox.Name = "animatePartsCheckBox";
             animatePartsCheckBox.TabIndex = 16;
-            animatePartsCheckBox.Text = "Add persona pieces that animate parts of their own to the hero's model";
+            animatePartsCheckBox.Text = "Add items that animate parts of their own to the hero's model";
             animatePartsCheckBox.UseVisualStyleBackColor = true;
             //
             // spriteSheetCheckBox

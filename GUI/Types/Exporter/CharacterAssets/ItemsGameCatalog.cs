@@ -94,6 +94,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public bool SkipModelCombine { get; init; }
 
+        /// <summary>
+        /// Whether the item's model plays its sequences at its own pace rather than in step with the hero's, e.g. wings
+        /// that idle by themselves and raise for one of the hero's abilities.
+        /// </summary>
+        public bool PlaysOwnCycle { get; init; }
+
         /// <summary>The item's styles, empty when it has only the one look.</summary>
         public List<ItemStyle> Styles { get; } = [];
 
@@ -433,6 +439,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 CanBeUnusual = itemData.GetSubCollection("static_attributes") is { ValueType: KVValueType.Collection } staticAttributes
                     && GetValue(staticAttributes, "can roll unusual") == "1",
                 SkipModelCombine = visuals is { ValueType: KVValueType.Collection } && GetValue(visuals, "skip_model_combine") == "1",
+                PlaysOwnCycle = (GetValue(itemData, "match_cycle_to_parent") ?? GetPrefabValue(prefabs, prefab, "match_cycle_to_parent", 0)) == "0",
             };
 
             foreach (var (heroName, value) in usedByHeroes)

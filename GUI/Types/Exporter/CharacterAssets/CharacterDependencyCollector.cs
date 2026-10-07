@@ -1,10 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
 using ValveKeyValue;
-using System.Drawing;
 using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
@@ -167,11 +167,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         public bool RenameModels { get; set; } = true;
 
         /// <summary>
-        /// With <see cref="ReplaceDefaults"/>, adds the persona pieces the game keeps apart from the hero so they play
-        /// animations of their own, e.g. the wind-up key on Morphling's automaton, to the hero's model with those
-        /// animations layered on the hero's, see <see cref="ModelDocEditor.AddLayeredAnimations"/>. Otherwise they are
-        /// written over the default models like other items, and those parts stand still in game. Items of the hero's
-        /// own slots, like arcana pieces, are always written over their default models.
+        /// With <see cref="ReplaceDefaults"/>, adds the persona pieces and items the game keeps apart from the hero so they
+        /// play animations of their own, e.g. the wind-up key on Morphling's automaton or Legion Commander's Hell's Legion
+        /// wings, to the hero's model with those animations layered on the hero's, see
+        /// <see cref="ModelDocEditor.AddLayeredAnimations"/>. Otherwise they are written over the default models like
+        /// other items, and those parts stand still in game. Items that follow the hero's sequences, like arcana pieces,
+        /// are always written over their default models.
         /// </summary>
         public bool AnimateOwnParts { get; set; } = true;
 
@@ -1222,17 +1223,19 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
-        /// The bones a persona piece's model moves with animations of its own that the hero's model does not have, e.g. the
-        /// wind-up key on Morphling's automaton. The game keeps such items apart from the hero so they play their own
-        /// sequences, but an addon hero's wearables are all combined into it, where nothing would move those bones. Empty
-        /// for items the game combines too, or whose model only has the hero's bones, and for the items of the hero's
-        /// own slots: arcana pieces are kept apart as well, e.g. Earthshaker's and Drow Ranger's, and have to be written
-        /// over their default models like other items.
+        /// The bones an item's model moves with animations of its own that the hero's model does not have, e.g. the
+        /// wind-up key on Morphling's automaton or the wings of Legion Commander's Hell's Legion back. The game keeps such
+        /// items apart from the hero so they play their own sequences, but an addon hero's wearables are all combined
+        /// into it, where nothing would move those bones. Only for persona pieces and items that play their own cycle,
+        /// see <see cref="EconItem.PlaysOwnCycle"/>. Empty for items the game combines too, or whose model only has the
+        /// hero's bones, and for other items of the hero's own slots: arcana pieces are kept apart as well, e.g.
+        /// Earthshaker's and Drow Ranger's, but follow the hero's sequences and have to be written over their default
+        /// models like other items.
         /// </summary>
         private List<string> GetAnimatedBones(CharacterLoadout loadout, EquippedItem item, string model)
         {
             if (!item.Item.SkipModelCombine
-                || !CharacterLoadout.IsPersonaSlot(item.Item.Slot)
+                || !(CharacterLoadout.IsPersonaSlot(item.Item.Slot) || item.Item.PlaysOwnCycle)
                 || !loadout.IsWornByHero(item.Item.Slot)
                 || (loadout.HeroModel ?? loadout.Hero.Model) is not { } heroModelPath)
             {
