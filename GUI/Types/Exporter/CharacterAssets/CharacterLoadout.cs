@@ -92,18 +92,20 @@ namespace GUI.Types.Exporter.CharacterAssets
         private readonly Dictionary<string, string> defaultModels;
         private readonly Dictionary<string, HeroSlot> slots;
         private readonly Dictionary<string, string> unitModels;
+        private readonly HashSet<string> itemModels;
 
         public HeroDefinition Hero { get; }
         public IReadOnlyList<EquippedItem> Items { get; }
 
         private CharacterLoadout(HeroDefinition hero, IReadOnlyList<EquippedItem> items, Dictionary<string, string> defaultModels,
-            Dictionary<string, HeroSlot> slots, Dictionary<string, string> unitModels)
+            Dictionary<string, HeroSlot> slots, Dictionary<string, string> unitModels, HashSet<string> itemModels)
         {
             Hero = hero;
             Items = items;
             this.defaultModels = defaultModels;
             this.slots = slots;
             this.unitModels = unitModels;
+            this.itemModels = itemModels;
         }
 
         public static CharacterLoadout Create(ItemsGameCatalog catalog, HeroDefinition hero, IReadOnlyList<EquippedItem> items)
@@ -130,7 +132,16 @@ namespace GUI.Types.Exporter.CharacterAssets
                 }
             }
 
-            return new CharacterLoadout(hero, items, defaultModels, slots, unitModels);
+            // Refits other items swap in count too, since swaps can chain
+            var itemModels = catalog.GetItems(hero)
+                .SelectMany(static item => item.Styles.Select(static style => style.Model)
+                    .Append(item.ModelPlayer)
+                    .Concat(item.AssetModifiers.Where(static modifier => modifier.Type == "model").Select(static modifier => modifier.Modifier)))
+                .OfType<string>()
+                .Select(NormalizePath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return new CharacterLoadout(hero, items, defaultModels, slots, unitModels, itemModels);
         }
 
         /// <summary>
@@ -142,6 +153,21 @@ namespace GUI.Types.Exporter.CharacterAssets
                 .Where(modifier => modifier.Type == "entity_model" && IsModelPath(modifier.Modifier)
                     && modifier.Asset != null && unitModels.ContainsKey(modifier.Asset))
                 .Select(modifier => (Item: item, Model: modifier.Modifier!, DefaultModel: unitModels[modifier.Asset!])))
+            .DistinctBy(static swap => swap.DefaultModel, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Models of the hero's abilities that the equipped items swap, e.g. the mound Nyx Assassin burrows into or
+        /// Tidehunter's fish, with the game's own model they replace. Unlike swaps of other items' models, these apply
+        /// whatever else is equipped. Only the hero's own models count: refits of item models no item of the hero wears,
+        /// e.g. a pedestal, still need that item.
+        /// </summary>
+        public IEnumerable<(EquippedItem Item, string Model, string DefaultModel)> AbilityModelSwaps => Items
+            .SelectMany(item => item.Modifiers
+                .Where(modifier => modifier.Type == "model" && IsModelPath(modifier.Modifier) && IsModelPath(modifier.Asset)
+                    && NormalizePath(modifier.Asset!).StartsWith("models/heroes/", StringComparison.OrdinalIgnoreCase)
+                    && !itemModels.Contains(NormalizePath(modifier.Asset!))
+                    && !IsSamePath(modifier.Asset, Hero.Model))
+                .Select(modifier => (Item: item, Model: modifier.Modifier!, DefaultModel: modifier.Asset!)))
             .DistinctBy(static swap => swap.DefaultModel, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>

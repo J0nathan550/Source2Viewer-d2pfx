@@ -967,6 +967,19 @@ namespace GUI.Types.Exporter.CharacterAssets
                 {
                     Enqueue(unitModel);
                 }
+
+                foreach (var (item, abilityModel, defaultModel) in loadout.AbilityModelSwaps.Where(swap => !loadout.IsAppliedByGame(swap.Item)))
+                {
+                    var (skin, bodyGroups) = GetLook(abilityModel, item.Skin);
+
+                    Enqueue(abilityModel);
+
+                    plan.ModelReplacements.Add(new ModelReplacement(NormalizePath(abilityModel), NormalizePath(defaultModel), skin, [])
+                    {
+                        BodyGroups = bodyGroups,
+                        Rename = rename,
+                    });
+                }
             }
 
             foreach (var item in loadout.Items)
