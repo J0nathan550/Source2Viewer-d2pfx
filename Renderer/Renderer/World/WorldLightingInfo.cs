@@ -84,9 +84,27 @@ namespace ValveResourceFormat.Renderer.World
         }
 
         /// <summary>
-        /// Gets or sets whether barn, rect and omni lights take their intensity from <c>brightness_legacy</c>.
+        /// Creates baked lighting combo args for an object, based on object and scene lighting state.
         /// </summary>
-        public bool UsesLegacyBarnBrightness { get; set; }
+        public Dictionary<string, byte> CreateShaderArguments(bool hasLightmapUvs = false, bool hasVertexLighting = false)
+        {
+            var arguments = new Dictionary<string, byte>(scene.RenderAttributes);
+
+            if (hasLightmapUvs && HasValidLightmaps)
+            {
+                arguments["D_BAKED_LIGHTING_FROM_LIGHTMAP"] = 1;
+            }
+            else if (hasVertexLighting)
+            {
+                arguments["D_BAKED_LIGHTING_FROM_VERTEX_STREAM"] = 1;
+            }
+            else if (HasValidLightProbes)
+            {
+                arguments["D_BAKED_LIGHTING_FROM_PROBE"] = 1;
+            }
+
+            return arguments;
+        }
 
         /// <summary>Gets a value indicating whether the lightmap contains baked shadow data.</summary>
         public bool HasBakedShadowsFromLightmap => scene.RenderAttributes.GetValueOrDefault("S_LIGHTMAP_VERSION_MINOR") > 0;
@@ -601,6 +619,43 @@ namespace ValveResourceFormat.Renderer.World
             LightingData.SunDirection = new Vector4(-envLight.Direction, 0f);
             LightingData.SunColor = new Vector4(premultipliedColor, envLight.RenderSpecular ? 1f : 0f);
             LightingData.SunLightBakedShadowMask = bakedShadowData;
+
+            HasOwnSun = true;
+            isSunBorrowed = false;
+        }
+
+        /// <summary>Gets whether the source map has an environment light.</summary>
+        public bool HasOwnSun { get; private set; }
+
+        private bool isSunBorrowed;
+
+        /// <summary>Uses the sun from <paramref name="donor"/> when this map has none, or clears it when <paramref name="donor"/> is <see langword="null"/>.</summary>
+        public void BorrowSun(WorldLightingInfo? donor)
+        {
+            if (HasOwnSun)
+            {
+                return;
+            }
+
+            if (donor == null)
+            {
+                if (isSunBorrowed)
+                {
+                    LightingData.SunDirection = Vector4.Zero;
+                    LightingData.SunColor = Vector4.Zero;
+                    isSunBorrowed = false;
+                }
+
+                return;
+            }
+
+            LightingData.SunDirection = donor.LightingData.SunDirection;
+            LightingData.SunColor = donor.LightingData.SunColor;
+
+            // These lightmaps have no sun baked in, so nothing is in baked shadow
+            LightingData.SunLightBakedShadowMask = new Vector4(-1f, 0f, 0f, 0f);
+
+            isSunBorrowed = true;
         }
 
         /// <summary>
@@ -645,10 +700,13 @@ namespace ValveResourceFormat.Renderer.World
             BarnLightShadowAtlasSize = atlasSize;
             LightingData.NumBarnLights = 0;
 
-            scene.LightBinner.PollBarnLightVisibility();
+            var binner = scene.ShadingLightBinner;
+            binner?.PollBarnLightVisibility();
 
             ShadowMapper.Bin(BarnLights, camera, atlasSize, BarnLightCookiePaths,
-                scene.LightBinner.VisibilitySequence);
+                binner?.VisibilitySequence ?? 0);
+
+            var tanHalfHorizontalFov = MathF.Tan(camera.GetFOV() * 0.5f) * camera.AspectRatio;
 
             foreach (ref readonly var binned in ShadowMapper.BinnedLights)
             {
@@ -679,7 +737,16 @@ namespace ValveResourceFormat.Renderer.World
                     continue;
                 }
 
+                // Lights and their shadows fade out as they get small on screen
+                var (lightFade, shadowFade) = light.ComputeScreenSizeFades(camera.Location, tanHalfHorizontalFov);
+
+                if (lightFade <= 0f)
+                {
+                    continue;
+                }
+
                 var anyFaceDropped = false;
+                var hasRangeCutoff = light.UsesOmni2Faces && light.FallOff > 0f;
 
                 for (var faceIndex = 0; faceIndex < light.BarnFaces.Length; faceIndex++)
                 {
@@ -703,10 +770,10 @@ namespace ValveResourceFormat.Renderer.World
                         }
 
                         data.BarnLightShadowOffsetScale = placement.OffsetScale;
-                        data.BarnLightShadowScale = 1.0f;
+                        data.BarnLightShadowScale = shadowFade;
                     }
 
-                    var hasRangeCutoff = light.Entity == SceneLight.EntityType.Omni2 && light.FallOff > 0f;
+                    data.BarnLightColor_flCookie *= new Vector4(lightFade, lightFade, lightFade, 1f);
 
                     BinnedBarnLightFaceSlots[LightingData.NumBarnLights] = new BarnLightFaceSlot(light, faceIndex);
 

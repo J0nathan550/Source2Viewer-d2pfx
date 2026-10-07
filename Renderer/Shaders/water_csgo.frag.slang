@@ -1,5 +1,7 @@
 #version 460
 
+#define BARN_LIGHT_CHEAP_WORLD_SHADING 1
+
 #include "common/utils.slang"
 #include "common/features.slang"
 #include "common/ViewConstants.slang"
@@ -144,7 +146,7 @@ void main()
     vec3 viewDirInv = -viewDir; // equivalent to our mat.ViewDir
     vec2 viewParallaxFactor = (viewDir.xy) / (viewDirInv.z + 0.25);
 
-    const float flSkyboxScale = 1.0; // g_bIsSkybox ? g_flSkyBoxScale : 1.0
+    float flSkyboxScale = g_bIsSkybox ? g_flSkyBoxScale : 1.0;
     float distanceToFrag = length(vPositionViewSpace) * flSkyboxScale;
 
     // Skybox corrected projection stuff

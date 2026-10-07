@@ -1,4 +1,5 @@
 using ValveResourceFormat.Renderer.Entities;
+using ValveResourceFormat.ResourceTypes;
 
 namespace ValveResourceFormat.Renderer.Input;
 
@@ -37,6 +38,7 @@ public partial class PlayerMovement : IPlayerController
     private const float ContactNudge = SurfaceEpsilon / 4f; // Clearance kept short of a degenerate opposing surface in the margin-restore push
     private const float UntraceableDistanceSquared = Rubikon.Epsilon * Rubikon.Epsilon;
     private const float StepSize = 18f;                   // Maximum height of steps/obstacles player can climb
+    private const float AirStepSize = StepSize / 3f;      // Lower bar for stepping up while airborne
     private const float GroundProbeDistance = 2f;         // How far below the hull to look for ground contact
     private const float StepDownTolerance = 2f;           // A step may end at most this far below where it started
 
@@ -93,6 +95,7 @@ public partial class PlayerMovement : IPlayerController
     // Footstep and land events are per-material (CT_<Material>.StepLeft / Land_<Material>.StepLeft);
     // physics traces do not return surface materials yet, so default to concrete.
     private const string FootstepSoundEvent = "CT_Concrete.StepLeft";
+    private const string LadderStepSoundEvent = "CT_Ladder.StepLeft";
     private const string JumpSoundEvent = "Default.WalkJump";
     private const string LandSoundEvent = "Land_Concrete.StepLeft";
     private const string GearSoundEvent = "Gear.JumpLand.CT";
@@ -101,6 +104,7 @@ public partial class PlayerMovement : IPlayerController
 
     private static readonly string[] MovementSounds = [
         FootstepSoundEvent,
+        LadderStepSoundEvent,
         JumpSoundEvent,
         LandSoundEvent,
         GearSoundEvent,
@@ -110,6 +114,8 @@ public partial class PlayerMovement : IPlayerController
     private const float StepSoundVelWalk = 90f;           // GetStepSoundVelocities velwalk (standing)
     private const float StepSoundVelRun = 220f;           // GetStepSoundVelocities velrun (standing)
     private const float WalkingStepVolume = 0.8f;         // Slightly quieter steps below run speed (the authored volume is 0.9)
+    private const float LadderStepVolume = 0.5f;
+    private const float LadderStepSoundTime = 0.35f;
     private const float LandMinFallSpeed = 270f;          // CCSPlayer::OnLand - quieter landings are silent (a normal jump lands at ~302)
     private const float FallDamageSpeed = 580f;           // PLAYER_MAX_SAFE_FALL_SPEED
 
@@ -136,7 +142,7 @@ public partial class PlayerMovement : IPlayerController
     private bool HoldingShift => Input.Holding(TrackedKeys.Shift);
 
     private UserInput Input { get; }
-    private Rubikon? Physics => Input.PhysicsWorld;
+    private PhysicsWorld? Physics => Input.PhysicsWorld is { IsEmpty: false } physics ? physics : null;
 
     /// <summary>
     /// Gets or sets a value indicating whether traces also collide with
@@ -190,6 +196,22 @@ public partial class PlayerMovement : IPlayerController
     private const float JumpFriction = 0.25f;
     private const float WalkableSlope = 0.7f; // ~45 degrees
 
+    private const float MaxClimbSpeed = 200f;             // MAX_CLIMB_SPEED
+    private const float LadderScaleSpeed = 0.78f;         // sv_ladder_scale_speed
+    private const float LadderAngle = -0.707f;            // sv_ladder_angle
+    private const float LadderDampen = 0.2f;              // sv_ladder_dampen
+    private const float LadderJumpSpeed = 270f;           // Push off the face when jumping from a ladder
+    private const float LadderJumpBlockTime = 0.2f;       // Jumping off is ignored this long after mounting
+
+    /// <summary>Gets a value indicating whether the player is climbing a ladder.</summary>
+    public bool OnLadder { get; private set; }
+
+    private Vector3 LadderNormal;
+    private float LadderJumpBlockRemaining;
+
+    // A ladder just walked off the top of is grabbed again, but only after a ground move, not after a jump
+    private bool HasWalkMovedSinceLastJump;
+
     /// <summary>Gets or sets a value indicating whether the controller should reinitialize its position from the camera on the next tick.</summary>
     public bool Initialize { get; set; }
     /// <summary>Gets or sets a value indicating whether bunny-hopping is allowed by holding the jump key.</summary>
@@ -241,8 +263,8 @@ public partial class PlayerMovement : IPlayerController
         TracePosition = camera.Location - Vector3.UnitZ * ViewHeightStanding + new Vector3(0, 0, StandingHullHalfExtents.Z);
         Velocity = Vector3.Zero;
         HasValidPosition = false; // Do not restore positions from before the reset
-        pendingPush = Vector3.Zero;
-        pendingPushTimeLeft = 0f;
+        pushViewLag = Vector3.Zero;
+        pushViewLagTimeLeft = 0f;
         SlopeClipNormalZ = 1f;
         HasPreviousYaw = false;
         Effects.Reset();
@@ -267,8 +289,8 @@ public partial class PlayerMovement : IPlayerController
         TracePosition = position;
         TracePositionSmooth = position;
         HasValidPosition = false; // Do not restore positions from before the teleport
-        pendingPush = Vector3.Zero;
-        pendingPushTimeLeft = 0f;
+        pushViewLag = Vector3.Zero;
+        pushViewLagTimeLeft = 0f;
         Effects.ClearStepOffset();
 
         if (angles is { } viewAngles)
@@ -361,8 +383,7 @@ public partial class PlayerMovement : IPlayerController
         // vertical velocity, so it must be sampled while still falling
         var fallSpeed = MathF.Max(0f, -Velocity.Z);
 
-        // What the entity tick's pushers reserved lands here, spread across the frames of the interval
-        ApplyPendingPush(ref position, deltaTime);
+        DecayPushViewLag(deltaTime);
 
         CategorizePosition(ref position, playerHull);
 
@@ -376,7 +397,14 @@ public partial class PlayerMovement : IPlayerController
             OnLanded(fallSpeed, wantsToJump, position, playerHull);
         }
 
-        if (wantsToJump && OnGround)
+        LadderJumpBlockRemaining = MathF.Max(0f, LadderJumpBlockRemaining - deltaTime);
+
+        if (!LadderMove(ref position, playerHull, camera))
+        {
+            OnLadder = false;
+        }
+
+        if (wantsToJump && OnGround && !OnLadder)
         {
             if (!AutoBunnyHop)
             {
@@ -401,7 +429,11 @@ public partial class PlayerMovement : IPlayerController
         var airMoveDelta = Vector3.Zero;
         var airVelocityDelta = Vector3.Zero;
 
-        if (OnGround)
+        if (OnLadder)
+        {
+            // LadderMove set the whole velocity: no gravity, friction or air acceleration on a ladder
+        }
+        else if (OnGround)
         {
             // Ground friction+acceleration is integrated per-bump inside GroundMove,
             // coupled to the collision sweep, so nothing is accelerated here
@@ -439,16 +471,19 @@ public partial class PlayerMovement : IPlayerController
         // is nothing to step off, so the constant-velocity slide runs on the precomputed delta
         var moveStart = position;
 
-        position = OnGround
-            ? GroundMove(position, wishdir, wishspeed, deltaTime, DuckSpeedModifierActive, isWalking, playerHull)
-            : TryPlayerMove(position, airVelocityDelta, deltaTime, playerHull, wishdir, wishspeed);
-
-        if (OnGround)
+        if (OnLadder)
         {
+            position = TryPlayerMove(position, Vector3.Zero, deltaTime, playerHull, Vector3.Zero, 0f);
+        }
+        else if (OnGround)
+        {
+            HasWalkMovedSinceLastJump = true;
+            position = GroundMove(position, wishdir, wishspeed, deltaTime, DuckSpeedModifierActive, isWalking, playerHull);
             StayOnGround(ref position, playerHull);
         }
         else
         {
+            position = TryPlayerMove(position, airVelocityDelta, deltaTime, playerHull, wishdir, wishspeed);
             RewindToGroundBandEntry(ref position, moveStart, airMoveDelta, playerHull);
         }
 
@@ -470,7 +505,7 @@ public partial class PlayerMovement : IPlayerController
         var horizontalSpeed = new Vector2(Velocity.X, Velocity.Y).Length();
         Effects.Update(deltaTime, horizontalSpeed, StepSmoothingEnabled);
 
-        TracePositionSmooth = TracePosition - new Vector3(0, 0, Effects.StepOffset);
+        TracePositionSmooth = TracePosition - new Vector3(0, 0, Effects.StepOffset) + pushViewLag;
 
         BlendedEyeHeight = ViewHeightStanding + (ViewHeightDucked - ViewHeightStanding) * CrouchBlend;
         EyePosition = Position + Vector3.UnitZ * BlendedEyeHeight;
@@ -535,8 +570,15 @@ public partial class PlayerMovement : IPlayerController
 
         var speed = MathF.Sqrt(speedSqr);
 
-        if (speed < StepSoundVelWalk || !OnGround)
+        if (speed < StepSoundVelWalk || !(OnGround || OnLadder))
         {
+            return;
+        }
+
+        if (OnLadder)
+        {
+            StepSoundTime = LadderStepSoundTime;
+            PlaySound(LadderStepSoundEvent, position, halfExtents, LadderStepVolume);
             return;
         }
 
@@ -602,13 +644,6 @@ public partial class PlayerMovement : IPlayerController
         {
             LastValidPosition = position;
             HasValidPosition = true;
-            return;
-        }
-
-        // A hull a pusher has stepped onto is not stuck, it is mid-correction: the reserved push is
-        // walking it out, and restoring an older spot would fight that walk and compound the overlap
-        if (pendingPush != Vector3.Zero)
-        {
             return;
         }
 
@@ -774,7 +809,7 @@ public partial class PlayerMovement : IPlayerController
         }
 
         // NON_JUMP_VELOCITY guard, on the Z velocity a plain projection would have produced (see SlopeClipNormalZ)
-        OnGround = grounded && Velocity.Z * SlopeClipNormalZ < NonJumpVelocity;
+        OnGround = grounded && Velocity.Z * SlopeClipNormalZ < NonJumpVelocity && !(OnLadder && Velocity.Z > 0.02f);
 
         // Only a walkable main-probe hit assigns the ground entity: a quadrant-rescued grounding
         // stands on a steep sliver, and riding that would drag the player along an entity they left
@@ -805,7 +840,7 @@ public partial class PlayerMovement : IPlayerController
         }
 
         return entity.Collider?.TraceRay(
-            position, position - new Vector3(0, 0, halfExtents.Z + GroundProbeDistance)) is { Hit: true };
+            position, position - new Vector3(0, 0, halfExtents.Z + GroundProbeDistance), Rubikon.Cs2PlayerCollisionFilter) is { Hit: true };
     }
 
     /// <summary>
@@ -941,12 +976,14 @@ public partial class PlayerMovement : IPlayerController
         return false;
     }
 
+    // Overlap probes shrink the hull by this, so a hull resting its SurfaceEpsilon gap away is not inside
+    private const float StuckProbeShrink = SurfaceEpsilon / 2f;
+
     /// <summary>
     /// Check whether the hull overlaps solid geometry at the given position.
     /// </summary>
     private bool IsStuck(Vector3 position, Vector3 halfExtents)
     {
-        const float StuckProbeShrink = SurfaceEpsilon / 2f;
         var probe = TraceBBox(position, position + new Vector3(0, 0, 1f), halfExtents - new Vector3(StuckProbeShrink), detectStartSolid: true);
         return probe.StartSolid;
     }
@@ -998,6 +1035,15 @@ public partial class PlayerMovement : IPlayerController
                 // in full, whatever surfaces were met earlier in the frame
                 Velocity += velocityDelta;
                 return position + delta;
+            }
+
+            NoteImpact(result);
+
+            // Geometry a ground move would have stepped onto must not stop a jump either
+            if (!OnLadder && result.HitNormal.Z < WalkableSlope && TryAirStep(position, delta, halfExtents, out var stepped))
+            {
+                Velocity += velocityDelta;
+                return stepped;
             }
 
             // Advance to the hit point (already margin-adjusted by TraceBBox)
@@ -1091,6 +1137,47 @@ public partial class PlayerMovement : IPlayerController
         Velocity += velocityDelta;
 
         return position;
+    }
+
+    /// <summary>
+    /// Airborne counterpart of the stepped branch in <see cref="StepSweep"/>: lifts the move by up
+    /// to <see cref="AirStepSize"/>, and takes it only if the lifted sweep clears the whole of
+    /// <paramref name="delta"/> and settling back down by the same lift lands on walkable ground
+    /// or on nothing at all. The landing never sits below where the unobstructed move would have ended.
+    /// </summary>
+    private bool TryAirStep(Vector3 start, Vector3 delta, Vector3 halfExtents, out Vector3 landed)
+    {
+        landed = start;
+
+        var stepUpEnd = start + new Vector3(0, 0, AirStepSize);
+        var upTrace = TraceBBox(start, stepUpEnd, halfExtents);
+        var raised = upTrace.Hit ? upTrace.HitPosition : stepUpEnd;
+        var lift = raised.Z - start.Z;
+
+        if (lift <= SurfaceEpsilon || TraceBBox(raised, raised + delta, halfExtents).Hit)
+        {
+            return false;
+        }
+
+        var raisedEnd = raised + delta;
+        var downTrace = TraceBBox(raisedEnd, raisedEnd - new Vector3(0, 0, lift), halfExtents);
+
+        // Nothing below means the move's own end height is already clear of the step, as when a
+        // jump rising past the edge only clips its corner
+        if (!downTrace.Hit)
+        {
+            landed = start + delta;
+            return true;
+        }
+
+        if (!IsWalkableGroundHit(downTrace) || downTrace.IsMinimalDistance)
+        {
+            return false;
+        }
+
+        landed = downTrace.HitPosition;
+        Effects.OnStep(landed.Z - (start.Z + delta.Z));
+        return true;
     }
 
     /// <summary>
@@ -1467,6 +1554,8 @@ public partial class PlayerMovement : IPlayerController
             return (start + delta, 1f, Vector3.UnitZ, false);
         }
 
+        NoteImpact(direct);
+
         // Direct branch: stop at the wall
         var directPosition = direct.HitPosition;
         var directLateral = LateralProgress(start, directPosition, delta);
@@ -1478,9 +1567,14 @@ public partial class PlayerMovement : IPlayerController
 
         var steppedSweep = TraceBBox(steppedStart, steppedStart + delta, halfExtents);
 
+        if (steppedSweep.Hit)
+        {
+            NoteImpact(steppedSweep);
+        }
+
         // Blocked at once by a wall the direct sweep missed: it's a wall we're sliding along, so
         // report it without moving and let the caller retry the step along it
-        if (steppedSweep.Hit && steppedSweep.IsMinimalDistance && direct.HitNormal.Z < WalkableSlope
+        if (steppedSweep.Hit && steppedSweep.IsMinimalDistance
             && !ContainsPlane([direct.HitNormal], steppedSweep.HitNormal))
         {
             return (start, 0f, steppedSweep.HitNormal, true);
@@ -1634,6 +1728,7 @@ public partial class PlayerMovement : IPlayerController
     {
         OnGround = false;
         Jumped = true;
+        HasWalkMovedSinceLastJump = false;
 
         // Jump impulse scales by stamina as in CS: drained stamina makes successive jumps lower
         JumpImpulse = JumpImpulseValue * Stamina;
@@ -1645,7 +1740,7 @@ public partial class PlayerMovement : IPlayerController
     }
 
     /// <summary>
-    /// Gets the entity the player stands on - a brush entity, or the worldspawn on the map itself -
+    /// Gets the entity the player stands on - a brush entity, or the world entity on the map itself -
     /// and null in the air. The engine's <c>m_hGroundEntity</c>, taken from the ground probe every frame.
     /// </summary>
     public Entities.BaseEntity? GroundEntity { get; private set; }
@@ -1656,91 +1751,203 @@ public partial class PlayerMovement : IPlayerController
     /// </summary>
     public Vector3 RideVelocity => GroundEntity?.GetSurfaceVelocity(TracePosition) ?? Vector3.Zero;
 
-    /// <summary>
-    /// Shoves the player by a pusher's tick displacement, stopped early by the static world. Runs on
-    /// the entity tick. A ride carry is reserved and walked off as real motion spread over the
-    /// following interval, so riders move with the pusher's rendered sweep instead of stepping at the
-    /// tick rate; a depenetrating shove lands immediately, so the hull never dwells inside the pusher.
-    /// </summary>
-    public Vector3 Push(Vector3 delta, bool immediate = false)
+    /// <inheritdoc/>
+    public void Push(Vector3 delta)
     {
         if (delta == Vector3.Zero)
         {
-            return Vector3.Zero;
+            return;
         }
 
-        // Validated from where the already-reserved pushes will have left the hull
-        var start = TracePosition + pendingPush;
-        var target = start + delta;
+        TracePosition += delta;
 
-        // Clamped by the static world alone: entities are what is doing the pushing. Zero-distance
-        // hits are the tracer echoing surface noise at a resting gap, not a wall (see IsMinimalDistance).
-        var wall = Physics?.TraceAABB(start, target, HullHalfExtents, Rubikon.PlayerCollisionName);
+        // The view stays where it was drawn and catches up by the next tick, as the pusher is drawn
+        // moving there over the same interval
+        pushViewLag -= delta;
+        pushViewLagTimeLeft = Entities.EntitySystem.TickInterval;
+    }
 
-        if (wall is { Hit: true, IsValid: true, IsMinimalDistance: false, HitPosition: var stopped })
+    // How far the view still trails the hull the entity tick pushed, and how much of the tick interval
+    // remains to close it
+    private Vector3 pushViewLag;
+    private float pushViewLagTimeLeft;
+
+    /// <inheritdoc/>
+    public Vector3 HullCenter => TracePosition;
+
+    /// <inheritdoc/>
+    public Rubikon.TraceResult TraceHull(Vector3 startCenter, Vector3 endCenter) => TraceBBox(startCenter, endCenter, HullHalfExtents);
+
+    /// <inheritdoc/>
+    public bool IsHullStuck(Vector3 center)
+    {
+        // In place, unlike IsStuck, whose sweep lets a hull shallowly inside an entity count as free
+        // because it could step out
+        var probe = HullHalfExtents - new Vector3(StuckProbeShrink);
+
+        return TraceBBoxRaw(center, center + Vector3.UnitZ, probe, detectStartSolid: true).StartSolid
+            || Input.EntitySystem?.OverlapsSolidEntity(center, probe) == true;
+    }
+
+    /// <summary>
+    /// Closes a slice of the view's lag behind a push, at the constant rate that finishes it by the
+    /// next tick.
+    /// </summary>
+    private void DecayPushViewLag(float deltaTime)
+    {
+        if (pushViewLagTimeLeft <= deltaTime)
         {
-            target = stopped;
+            pushViewLag = Vector3.Zero;
+            pushViewLagTimeLeft = 0f;
+            return;
         }
 
-        var applied = target - start;
+        pushViewLag -= pushViewLag * (deltaTime / pushViewLagTimeLeft);
+        pushViewLagTimeLeft -= deltaTime;
+    }
 
-        if (immediate)
+    private bool LadderMove(ref Vector3 position, Vector3 halfExtents, Camera camera)
+    {
+        if (Physics == null)
         {
-            TracePosition += applied;
-            TracePositionSmooth += applied;
+            return false;
+        }
+
+        // View basis with pitch, unlike ground movement: on a ladder the player goes where they look
+        var basis = EntityTransformHelper.EulerAnglesToRotationMatrixRadians(new Vector3(camera.Pitch, camera.Yaw, 0f));
+        var forward = new Vector3(basis.M11, basis.M12, basis.M13);
+        var left = new Vector3(basis.M21, basis.M22, basis.M23);
+
+        var forwardMove = (Input.Holding(TrackedKeys.W) ? 1f : 0f) - (Input.Holding(TrackedKeys.S) ? 1f : 0f);
+        var leftMove = (Input.Holding(TrackedKeys.A) ? 1f : 0f) - (Input.Holding(TrackedKeys.D) ? 1f : 0f);
+
+        // Already on a ladder, keep pressing into it; otherwise look for one where the player is heading
+        Vector3 wishdir;
+        if (OnLadder)
+        {
+            wishdir = -LadderNormal;
         }
         else
         {
-            pendingPush += applied;
-            pendingPushTimeLeft = Entities.EntitySystem.TickInterval;
+            if (forwardMove == 0f && leftMove == 0f)
+            {
+                return false;
+            }
+
+            wishdir = Vector3.Normalize((leftMove * left) + (forwardMove * forward));
         }
 
-        return applied;
+        var distance = OnLadder ? 10f : 2f;
+        var pm = Physics.TraceAABB(position, position + (wishdir * distance), halfExtents, Rubikon.LadderCollisionName);
+
+        if (!IsLadderTrace(pm))
+        {
+            // Not pressing into a ladder: grab one just walked off the top of
+            if (!HasWalkMovedSinceLastJump || OnLadder || OnGround)
+            {
+                return false;
+            }
+
+            if (!(Velocity.Z <= 0f) || !(Velocity.Z > -50f) || !(MathF.Abs(Velocity.X) > 0f) || !(MathF.Abs(Velocity.Y) > 0f))
+            {
+                return false;
+            }
+
+            var start = position + new Vector3(0f, 0f, -6f);
+            var back = position - (Vector3.Normalize(Velocity) * 24f);
+
+            pm = Physics.TraceAABB(start, back, halfExtents, Rubikon.LadderCollisionName, detectStartSolid: true);
+
+            if (!IsLadderTrace(pm) || pm.StartSolid)
+            {
+                return false;
+            }
+
+            OnLadder = true;
+            LadderNormal = pm.HitNormal;
+            Velocity = Vector3.Zero;
+
+            // Snap back onto the ladder if there's room
+            var solid = TraceBBox(start, back, halfExtents, detectStartSolid: true);
+            var snapped = solid.Hit ? solid.HitPosition : back;
+
+            if (!solid.StartSolid && !IsStuck(snapped, halfExtents))
+            {
+                position = snapped;
+            }
+        }
+
+        if (!OnLadder)
+        {
+            LadderJumpBlockRemaining = LadderJumpBlockTime;
+        }
+
+        OnLadder = true;
+        LadderNormal = pm.HitNormal;
+        SlopeClipNormalZ = 1f;
+
+        var onFloor = OnGround || IsWalkableGroundHit(TraceBBox(position, position - Vector3.UnitZ, halfExtents));
+
+        var climbSpeed = HoldingCtrl || HoldingShift ? DuckSpeedModifier * MaxClimbSpeed : MaxClimbSpeed;
+        var forwardSpeed = forwardMove * climbSpeed;
+        var leftSpeed = leftMove * climbSpeed;
+
+        var jump = Input.Holding(TrackedKeys.Space) || Input.Pressed(TrackedKeys.Space)
+            || Input.Holding(TrackedKeys.MouseWheelDown) || Input.Holding(TrackedKeys.MouseWheelUp);
+
+        if (jump)
+        {
+            if (LadderJumpBlockRemaining <= 0f)
+            {
+                OnLadder = false;
+                Velocity = pm.HitNormal * LadderJumpSpeed;
+            }
+        }
+        else if (forwardSpeed == 0f && leftSpeed == 0f)
+        {
+            Velocity = Vector3.Zero;
+        }
+        else
+        {
+            var n = pm.HitNormal;
+            var velocity = (forwardSpeed * forward) + (leftSpeed * left);
+
+            // Horizontal tangent of the ladder face
+            var perp = Vector3.Normalize(new Vector3(-n.Y, n.X, 0f));
+
+            // Split the wish into the part pressing into the face and the part along it
+            var normal = Vector3.Dot(n, velocity);
+            var cross = n * normal;
+            var lateral = velocity - cross;
+
+            // Up the face, in its plane
+            var tmp = Vector3.Cross(n, perp);
+
+            var tmpDist = Vector3.Dot(tmp, lateral);
+            var perpDist = Vector3.Dot(perp, lateral);
+
+            // A wish mostly sideways across the face is damped
+            var angleVec = Vector3.Normalize((perp * perpDist) + cross);
+            if (LadderAngle > Vector3.Dot(n, angleVec))
+            {
+                lateral = (perp * LadderDampen * perpDist) + (tmp * tmpDist);
+            }
+
+            // Pressing into the face climbs it
+            Velocity = (lateral - (tmp * normal)) * LadderScaleSpeed;
+
+            if (onFloor && normal > 0f)
+            {
+                // On the ground and moving away from the ladder
+                Velocity += n * MaxClimbSpeed;
+            }
+        }
+
+        return true;
     }
 
-    // Displacement the entity tick reserved but the frames have not walked yet, and how much of its
-    // interval remains
-    private Vector3 pendingPush;
-    private float pendingPushTimeLeft;
-
-    /// <inheritdoc/>
-    public Vector3 PendingPush => pendingPush;
-
-    /// <summary>
-    /// Walks off a slice of the reserved push, at the constant rate that finishes it by the next tick.
-    /// The slice is swept against the static world only: an entity is what is doing the pushing.
-    /// </summary>
-    private void ApplyPendingPush(ref Vector3 position, float deltaTime)
-    {
-        if (pendingPush == Vector3.Zero || pendingPushTimeLeft <= 0f)
-        {
-            pendingPush = Vector3.Zero;
-            pendingPushTimeLeft = 0f;
-            return;
-        }
-
-        var dt = MathF.Min(deltaTime, pendingPushTimeLeft);
-        var step = pendingPush * (dt / pendingPushTimeLeft);
-
-        pendingPush -= step;
-        pendingPushTimeLeft -= dt;
-
-        var target = position + step;
-
-        // Same zero-distance echo guard as the reservation's own clamp
-        var wall = Physics?.TraceAABB(position, target, HullHalfExtents, Rubikon.PlayerCollisionName);
-
-        if (wall is { Hit: true, IsValid: true, IsMinimalDistance: false, HitPosition: var stopped })
-        {
-            // A wall took the rest of the push; what remains is not owed
-            position = stopped;
-            pendingPush = Vector3.Zero;
-            pendingPushTimeLeft = 0f;
-            return;
-        }
-
-        position = target;
-    }
+    private static bool IsLadderTrace(in Rubikon.TraceResult trace)
+        => trace.Hit && trace.HitNormal.Z != 1f;
 
     /// <summary>
     /// Calculate desired movement direction and speed from input
@@ -2158,7 +2365,7 @@ public partial class PlayerMovement : IPlayerController
         var perpendicularSlack = (raw.Distance * approach) - SurfaceEpsilon;
 
         // Within this the hull counts as already flush: a resting contact, credited no travel
-        var positionScale = MathF.Max(MathF.Abs(from.X), MathF.Max(MathF.Abs(from.Y), MathF.Abs(from.Z)));
+        var positionScale = Vector3.Abs(from).MaxComponent();
         var flushTolerance = MathF.Min(SurfaceEpsilon / 16f, FlushContactTolerance * MathF.Max(1f, positionScale));
 
         var allowed = MathF.Abs(perpendicularSlack) <= flushTolerance ? 0f : perpendicularSlack / approach;
@@ -2201,6 +2408,8 @@ public partial class PlayerMovement : IPlayerController
         return raw;
     }
 
+    private void NoteImpact(in Rubikon.TraceResult result) => Input.EntitySystem?.NotePlayerImpact(result);
+
     private Rubikon.TraceResult TraceBBoxRaw(Vector3 from, Vector3 to, Vector3 halfExtents, bool detectStartSolid)
     {
         var result = Physics != null
@@ -2218,7 +2427,7 @@ public partial class PlayerMovement : IPlayerController
             result.MinimizeWith(TraceStaticPlane(from, to, halfExtents, normal, plane.W, detectStartSolid));
         }
 
-        // The static world is the worldspawn, as the engine reports it, so standing on the map gives a
+        // The static world is the world entity, as the engine reports it, so standing on the map gives a
         // ground entity like standing on anything else
         if (result.Hit)
         {

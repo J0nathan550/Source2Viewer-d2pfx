@@ -43,6 +43,9 @@ public abstract class BaseModelEntity : BaseEntity
     /// </summary>
     public ModelSceneNode? ModelNode { get; private set; }
 
+    /// <summary>Gets the model this entity loaded, or <see langword="null"/> when it names none or it failed to load.</summary>
+    protected Model? LoadedModel { get; private set; }
+
     /// <summary>
     /// Initializes a model entity from its keyvalues.
     /// </summary>
@@ -74,16 +77,28 @@ public abstract class BaseModelEntity : BaseEntity
         if (fileLoader.LoadFileCompiled(modelName)?.DataBlock is not Model model)
         {
             EntitySystem.Logger.LogWarning("{Classname} '{TargetName}' failed to load model \"{Model}\"", Classname, TargetName, modelName);
+
+            // Shown in place of the missing model, the way the engine does, so the gap is visible
+            if (fileLoader.LoadFile("models/dev/error.vmdl_c")?.DataBlock is Model errorModel)
+            {
+                return new ModelSceneNode(Scene, errorModel, Data?.GetStringProperty("skin"))
+                {
+                    Name = "error",
+                };
+            }
+
             return base.CreateRootNode();
         }
+
+        LoadedModel = model;
 
         var modelNode = new ModelSceneNode(Scene, model, Data?.GetStringProperty("skin"))
         {
             Name = modelName,
-            Tint = Data?.GetRenderTint() ?? Vector4.One,
+            TintAlpha = Data?.GetRenderTint() ?? Vector4.One,
         };
 
-        // Model-referenced particles spawn regardless of meshes, as the plain loader path does
+        // Model-referenced particles spawn regardless of meshes
         var particleNodes = ParticleSceneNode.CreateModelParticles(Scene, model, modelNode);
 
         foreach (var particleNode in particleNodes)
@@ -131,8 +146,11 @@ public abstract class BaseModelEntity : BaseEntity
 
         if (EntityCollider.LoadPhysics(model, fileLoader) is { } physics)
         {
-            Collider = new EntityCollider(physics);
-            UpdateColliderTransform();
+            if (BuildsCollider)
+            {
+                Collider = new EntityCollider(physics);
+                UpdateColliderTransform();
+            }
 
             // Owned outright rather than hung off the model: a brush compiled for collision alone has no
             // model node to hang them from, and its hulls are then the only thing there is to show.
@@ -147,6 +165,12 @@ public abstract class BaseModelEntity : BaseEntity
 
         return ModelNode ?? base.CreateRootNode();
     }
+
+    /// <summary>
+    /// Gets whether the model's physics becomes a <see cref="BaseEntity.Collider"/>. Its hulls are drawn
+    /// either way. Read while the entity is constructed, so an override must not depend on its own state.
+    /// </summary>
+    protected virtual bool BuildsCollider => true;
 
     /// <summary>Tints the model with <c>"R G B"</c> in 0-255.</summary>
     [EntityInput("Color")]
@@ -163,7 +187,7 @@ public abstract class BaseModelEntity : BaseEntity
             return;
         }
 
-        node.Tint = new Vector4(Vector3.Clamp(color / 255f, Vector3.Zero, Vector3.One), node.Tint.W);
+        node.Tint = Vector3.Clamp(color / 255f, Vector3.Zero, Vector3.One);
     }
 
     /// <summary>Sets the model's alpha from 0-255.</summary>
@@ -183,6 +207,6 @@ public abstract class BaseModelEntity : BaseEntity
             return;
         }
 
-        node.Tint = node.Tint with { W = MathUtils.Saturate(alpha / 255f) };
+        node.Alpha = MathUtils.Saturate(alpha / 255f);
     }
 }

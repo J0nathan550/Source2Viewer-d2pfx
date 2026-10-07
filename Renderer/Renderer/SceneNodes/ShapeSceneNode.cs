@@ -48,8 +48,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private ShapeSceneNode(Scene scene) : base(scene)
         {
-            shader = Scene.RendererContext.ShaderLoader.LoadShader("basic_shape", scene.RenderAttributes);
-            shader = shader.WithCombo("D_BAKED_LIGHTING_FROM_PROBE", scene.LightingInfo.HasValidLightProbes ? (byte)1 : (byte)0);
+            shader = Scene.RendererContext.ShaderLoader.LoadShader("basic_shape", scene.LightingInfo.CreateShaderArguments());
         }
 
         internal ShapeSceneNode(Scene scene, List<SimpleVertexNormal> verts, List<int> inds) : this(scene)
@@ -96,7 +95,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             var inds = new List<int>(HemisphereTriangles * 6 * 2);
             AddSphere(verts, inds, center, radius, color);
 
-            LocalBoundingBox = new AABB(new Vector3(radius), new Vector3(-radius));
+            LocalBoundingBox = new AABB(center, radius);
 
             Init(verts, inds);
         }
@@ -348,8 +347,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             var renderShader = context.ReplacementShader ?? shader;
             renderShader.Use();
-            renderShader.SetUniform3x4("transform", Transform);
-            renderShader.SetBoneAnimationData(false);
 
             renderShader.SetUniform("g_bNormalShaded", Shaded);
             renderShader.SetUniform("g_bTriplanarMapping", ToolTexture != null);
@@ -378,7 +375,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 renderState.Apply(in lineState);
 
                 renderShader.SetUniform("g_bNormalShaded", false);
-                GL.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, 0);
+                GL.DrawElementsInstancedBaseInstance(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, 0, 1, Id);
 
                 // Triangles
                 var fillState = state;

@@ -375,6 +375,7 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
                     nameof(CCompressedStaticVector3) => new CCompressedStaticVector3(),
                     nameof(CCompressedStaticQuaternion) => new CCompressedStaticQuaternion(),
                     nameof(CCompressedStaticFloat) => new CCompressedStaticFloat(),
+                    nameof(CCompressedStaticBool) => new CCompressedStaticBool(),
 
                     nameof(CCompressedFullVector3) => new CCompressedFullVector3(),
                     nameof(CCompressedDeltaVector3) => new CCompressedDeltaVector3(),
@@ -382,6 +383,7 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
                     nameof(CCompressedAnimQuaternion) => new CCompressedAnimQuaternion(),
                     nameof(CCompressedFullQuaternion) => new CCompressedFullQuaternion(),
                     nameof(CCompressedFullFloat) => new CCompressedFullFloat(),
+                    nameof(CCompressedFullBool) => new CCompressedFullBool(),
                     _ => null,
                 };
 
@@ -581,6 +583,15 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
         public override bool HasMovementData()
         {
             return Movements.Length > 0;
+        }
+
+        /// <summary>
+        /// Determines whether any movement segment actually moves. Compiled animations often carry
+        /// segments that are all zero, which behave the same as having no movement at all.
+        /// </summary>
+        public bool HasNonZeroMovementData()
+        {
+            return Array.Exists(Movements, static movement => !movement.IsZero);
         }
 
         /// <inheritdoc/>

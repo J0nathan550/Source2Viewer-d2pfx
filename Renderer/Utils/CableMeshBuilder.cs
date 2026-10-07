@@ -10,14 +10,14 @@ namespace ValveResourceFormat.Renderer.Utils
     /// tessellated into a tube by <see cref="Particles.Renderers.RenderCables"/> via
     /// <see cref="CableMeshBuilder.BuildTubeMesh"/>.
     /// </summary>
-    readonly struct RopeSample(Vector3 position, float radius, Vector3 color, float u, bool pinned)
+    readonly struct RopeSample(Vector3 position, float radius, Vector3 color, float v, bool pinned)
     {
         /// <summary>Initial, origin-relative spline position (no sag).</summary>
         public readonly Vector3 Position = position;
         public readonly float Radius = radius;
         public readonly Vector3 Color = color;
-        /// <summary>Texture coordinate along the length of the cable.</summary>
-        public readonly float U = u;
+        /// <summary>Texture coordinate along the length of the cable; U runs around it.</summary>
+        public readonly float V = v;
         /// <summary>True when this sample sits on a pinned path node (force_scale 0, immovable).</summary>
         public readonly bool Pinned = pinned;
     }
@@ -125,7 +125,7 @@ namespace ValveResourceFormat.Renderer.Utils
                 // The cap was reached before the whole spline was sampled. Pin the last sample so it holds its
                 // spline position, and leave the far terminal node off.
                 var lastSample = samples[^1];
-                samples[^1] = new RopeSample(lastSample.Position, lastSample.Radius, lastSample.Color, lastSample.U, true);
+                samples[^1] = new RopeSample(lastSample.Position, lastSample.Radius, lastSample.Color, lastSample.V, true);
             }
             else
             {
@@ -150,19 +150,20 @@ namespace ValveResourceFormat.Renderer.Utils
 
         /// <summary>
         /// Tessellates the round tube through <paramref name="positions"/> (index-aligned with
-        /// <paramref name="samples"/> for per-point radius/colour/U) into exactly-sized caller buffers:
+        /// <paramref name="samples"/> for per-point radius/colour/V) into exactly-sized caller buffers:
         /// <c>ringCount * (sides + 1)</c> vertices and <c>(ringCount - 1) * sides * 6</c> indices, with
-        /// <paramref name="sides"/> from <see cref="SideCount"/>. Returns false for degenerate input.
+        /// <paramref name="sides"/> from <see cref="SideCount"/>. Texture U runs around the tube, offset by
+        /// <paramref name="colorMapOffset"/>.X, and V along it, offset by .Y. Returns false for degenerate input.
         /// </summary>
         internal static bool BuildTubeMesh(ReadOnlySpan<Vector3> positions, ReadOnlySpan<RopeSample> samples,
-            int sides, float circumferenceRepeats, Span<CableVertex> vertices, Span<uint> indices)
+            int sides, float circumferenceRepeats, Vector2 colorMapOffset, Span<CableVertex> vertices, Span<uint> indices)
         {
             if (positions.Length < 2 || positions.Length != samples.Length)
             {
                 return false;
             }
 
-            BuildTubeGeometry(positions, samples, circumferenceRepeats, sides, vertices, indices);
+            BuildTubeGeometry(positions, samples, circumferenceRepeats, colorMapOffset, sides, vertices, indices);
             return true;
         }
 
@@ -213,14 +214,14 @@ namespace ValveResourceFormat.Renderer.Utils
         }
 
         private static void BuildTubeGeometry(ReadOnlySpan<Vector3> positions, ReadOnlySpan<RopeSample> samples,
-            float circumferenceRepeats, int sides, Span<CableVertex> vertices, Span<uint> indices)
+            float circumferenceRepeats, Vector2 colorMapOffset, int sides, Span<CableVertex> vertices, Span<uint> indices)
         {
             var ringCount = positions.Length;
             var previousNormal = Vector3.Zero;
 
             // Emit a duplicate seam vertex per ring (sides + 1): the extra vertex sits at the j == 0 position
-            // but carries v == CircumferenceRepeats, so the closing quad interpolates the texture forward to
-            // the full repeat instead of wrapping v back to 0.
+            // but carries u == CircumferenceRepeats, so the closing quad interpolates the texture forward to
+            // the full repeat instead of wrapping u back to 0.
             var vertsPerRing = sides + 1;
             var vertexCursor = 0;
 
@@ -238,8 +239,8 @@ namespace ValveResourceFormat.Renderer.Utils
                     var angle = MathF.Tau * j / sides;
                     var radial = (normal * MathF.Cos(angle)) + (bitangent * MathF.Sin(angle));
                     var pos = center + (radial * sample.Radius);
-                    var v = j / (float)sides * circumferenceRepeats;
-                    vertices[vertexCursor++] = new CableVertex(pos, Normalize(radial), new Vector2(sample.U, v), color);
+                    var uv = colorMapOffset + new Vector2(j / (float)sides * circumferenceRepeats, sample.V);
+                    vertices[vertexCursor++] = new CableVertex(pos, Normalize(radial), uv, color);
                 }
             }
 
@@ -257,6 +258,44 @@ namespace ValveResourceFormat.Renderer.Utils
                     AddQuad(indices, ref indexCursor, a + (uint)j, a + (uint)jn, b + (uint)jn, b + (uint)j);
                 }
             }
+        }
+
+        /// <summary>
+        /// Evaluates a uniform Catmull-Rom spline between <paramref name="p1"/> (t = 0) and <paramref name="p2"/> (t = 1).
+        /// </summary>
+        internal static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        {
+            var t2 = t * t;
+            var t3 = t2 * t;
+
+            return 0.5f * ((2f * p1)
+                + ((-p0 + p2) * t)
+                + (((2f * p0) - (5f * p1) + (4f * p2) - p3) * t2)
+                + ((-p0 + (3f * p1) - (3f * p2) + p3) * t3));
+        }
+
+        /// <inheritdoc cref="CatmullRom(Vector3, Vector3, Vector3, Vector3, float)"/>
+        internal static float CatmullRom(float p0, float p1, float p2, float p3, float t)
+        {
+            var t2 = t * t;
+            var t3 = t2 * t;
+
+            return 0.5f * ((2f * p1)
+                + ((-p0 + p2) * t)
+                + (((2f * p0) - (5f * p1) + (4f * p2) - p3) * t2)
+                + ((-p0 + (3f * p1) - (3f * p2) + p3) * t3));
+        }
+
+        /// <summary>
+        /// The derivative of <see cref="CatmullRom(Vector3, Vector3, Vector3, Vector3, float)"/> with respect to <paramref name="t"/>.
+        /// </summary>
+        internal static Vector3 CatmullRomTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        {
+            var t2 = t * t;
+
+            return 0.5f * ((-p0 + p2)
+                + (((4f * p0) - (10f * p1) + (8f * p2) - (2f * p3)) * t)
+                + (((-3f * p0) + (9f * p1) - (9f * p2) + (3f * p3)) * t2));
         }
 
         private static void AddQuad(Span<uint> indices, ref int cursor, uint a, uint b, uint c, uint d)

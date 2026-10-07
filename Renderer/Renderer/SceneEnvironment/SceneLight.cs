@@ -107,15 +107,31 @@ public class SceneLight(Scene scene) : SceneNode(scene)
     /// <summary>Gets or sets the normalized direction the light faces.</summary>
     public Vector3 Direction { get; set; }
 
+    /// <summary>
+    /// Places the light, setting <see cref="SceneNode.Transform"/>, <see cref="Position"/> and
+    /// <see cref="Direction"/> from one transform so a parent transform applies to all three.
+    /// </summary>
+    /// <param name="transform">The light's world transform; its first row is the direction it faces.</param>
+    public void PlaceAt(in Matrix4x4 transform)
+    {
+        Transform = transform;
+        Position = transform.Translation;
+        Direction = MathUtils.SafeNormalize(transform.GetRow(0).AsVector3());
+    }
+
     /// <summary>Gets or sets the sRGB color of the light.</summary>
     public Vector3 Color { get; set; } = Vector3.One;
 
     /// <summary>Gets or sets the brightness (intensity) of the light.</summary>
     public float Brightness { get; set; } = 1.0f;
 
-    /// <summary>Gets or sets a linear intensity measured at <see cref="LegacyBrightnessDistance"/>, which is
-    /// used in place of converting <see cref="Brightness"/>. <see cref="float.NaN"/> when unset.</summary>
-    public float BrightnessLegacy { get; set; } = float.NaN;
+    /// <summary>Gets or sets the linear intensity a barn, rect or omni2 light reaches <see cref="LinearBrightnessDistance"/>
+    /// units in front of its luminaire, which is what their faces are lit with.</summary>
+    public float LinearBrightness { get; set; } = 1.0f;
+
+    /// <summary>Gets or sets the color temperature in Kelvin that <see cref="Color"/> comes from, or <see langword="null"/>
+    /// when the light uses its color as is.</summary>
+    public float? ColorTemperature { get; set; }
 
     /// <summary>Gets or sets the additional brightness scale multiplier.</summary>
     public float BrightnessScale { get; set; } = 1.0f;
@@ -162,8 +178,21 @@ public class SceneLight(Scene scene) : SceneNode(scene)
     /// <summary>Gets or sets the luminaire anisotropy for capsule-shaped area lights.</summary>
     public float LuminaireAnisotropy { get; set; }
 
-    /// <summary>Gets or sets the luminaire shape index (-1 = point, 0 = sphere, 1 = capsule, 2 = rect).</summary>
+    /// <summary>Gets or sets the luminaire shape index. Barn lights: 0 = point, 1 = disk, 2 = rectangle.
+    /// Omni2 lights: -1 or 3 = point, 0 = sphere, 1 = tube, 2 = tube with end caps.</summary>
     public int LuminaireShape { get; set; } = -1;
+
+    /// <summary>Gets or sets the fraction of the screen below which the light starts fading out, zero to never fade.</summary>
+    public float FadeSizeStart { get; set; }
+
+    /// <summary>Gets or sets the fraction of the screen at which the light has faded out.</summary>
+    public float FadeSizeEnd { get; set; }
+
+    /// <summary>Gets or sets the fraction of the screen below which the light's shadows start fading out, zero to never fade.</summary>
+    public float ShadowFadeSizeStart { get; set; }
+
+    /// <summary>Gets or sets the fraction of the screen at which the light's shadows have faded out.</summary>
+    public float ShadowFadeSizeEnd { get; set; }
 
     /// <summary>Gets or sets the minimum roughness clamped for specular highlight calculations.</summary>
     public float MinRoughness { get; set; } = 0.04f;
@@ -237,8 +266,16 @@ public class SceneLight(Scene scene) : SceneNode(scene)
     /// <summary>
     /// Returns whether this light will produce energy based on its properties.
     /// </summary>
-    public bool IsVisible => BarnFaces.Length > 0 && BrightnessScale > 0f && Color != Vector3.Zero
-        && (float.IsNaN(BrightnessLegacy) ? Brightness : BrightnessLegacy) > 0f;
+    public bool IsVisible => BarnFaces.Length > 0 && BrightnessScale > 0f && Color != Vector3.Zero && LinearBrightness > 0f;
+
+    /// <summary>
+    /// Returns whether this is a barn, rect or omni2 light, which takes its brightness as an exposure value and
+    /// is lit through <see cref="BarnFaces"/> when it renders in real time.
+    /// </summary>
+    public bool IsLight2 => Entity is EntityType.Omni2 or EntityType.Barn or EntityType.Rect;
+
+    /// <summary>Whether the faces are built around the light like an omni2 light, rather than as one barn frustum.</summary>
+    internal bool UsesOmni2Faces => Entity is EntityType.Omni2 or EntityType.Rect;
 
     /// <summary>
     /// Returns whether the given entity classname is a recognized light type, and which <see cref="EntityType"/> it maps to.
@@ -297,14 +334,18 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             RenderTransmissive = entity.GetInt32Property("rendertransmissive", 1) != 0,
         };
 
-        var isNewLightType = type is EntityType.Omni2 or EntityType.Barn or EntityType.Rect;
-
-        if (isNewLightType && scene.LightingInfo.UsesLegacyBarnBrightness)
+        if (light.IsLight2)
         {
-            light.BrightnessLegacy = entity.GetFloatProperty("brightness_legacy", float.NaN);
-        }
+            // The engine only reads the exposure value, the other brightness units are converted from it by the tools
+            light.LinearBrightness = float.Exp2(entity.GetFloatProperty("brightness"));
 
-        if (!isNewLightType)
+            if (entity.GetInt32Property("colormode") != 0)
+            {
+                light.ColorTemperature = entity.GetFloatProperty("colortemperature", 6600f);
+                light.Color = ColorSpace.ColorTemperatureToSrgb(light.ColorTemperature.Value);
+            }
+        }
+        else
         {
             light.AttenuationLinear = entity.GetFloatProperty("attenuation1");
             light.AttenuationQuadratic = entity.GetFloatProperty("attenuation2");
@@ -315,7 +356,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             }
         }
 
-        var defaultDirectLight = isNewLightType
+        var defaultDirectLight = light.IsLight2
             ? DirectLightType.Dynamic
             : DirectLightType.Static;
 
@@ -351,7 +392,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             light.LuminaireShape = entity.GetInt32Property("luminaire_shape");
             light.LuminaireAnisotropy = entity.GetFloatProperty("luminaire_anisotropy");
             light.SizeParams = entity.GetVector3Property("size_params");
-            light.CookieTexturePath = entity.GetStringProperty("lightcookie");
+            light.CookieTexturePath = entity.GetStringProperty("lightcookie") is { Length: > 0 } cookie ? cookie : null;
             light.MinRoughness = entity.GetFloatProperty("minroughness", 0.04f);
 
             light.Shear = entity.GetVector2Property("shear");
@@ -359,12 +400,12 @@ public class SceneLight(Scene scene) : SceneNode(scene)
 
         if (type is EntityType.Rect)
         {
+            // Rasterized like an omni2 point light (no luminaire shape) lighting the hemisphere in front of it,
+            // the rectangle or disc only matters to path tracing and to the shaders that shade area lights
+            light.SpotOuterAngle = 90f;
             light.SizeParams = entity.GetVector3Property("size_params");
-            light.MinRoughness = entity.GetFloatProperty("minroughness", 0.04f);
             light.Shape = entity.GetFloatProperty("shape"); // 0 = rectangle, 1 = disc
-            light.SoftX = 0f;
-            light.SoftY = 0f;
-            light.SkirtNear = 0f;
+            light.MinRoughness = entity.GetFloatProperty("minroughness", 0.04f);
         }
 
         if (type is EntityType.Omni2)
@@ -372,14 +413,19 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             light.SpotInnerAngle = entity.GetFloatProperty("inner_angle");
             light.SpotOuterAngle = entity.GetFloatProperty("outer_angle", 180f);
             light.SizeParams = entity.GetVector3Property("size_params");
-            light.CookieTexturePath = entity.GetStringProperty("lightcookie");
+            light.CookieTexturePath = entity.GetStringProperty("lightcookie") is { Length: > 0 } cookie ? cookie : null;
             light.MinRoughness = entity.GetFloatProperty("minroughness", 0.04f);
             light.LuminaireShape = entity.GetInt32Property("shape");
             light.LuminaireSize = entity.GetFloatProperty("luminaire_size");
         }
 
-        if (isNewLightType)
+        if (light.IsLight2)
         {
+            light.FadeSizeStart = entity.GetFloatProperty("fade_size_start", 0.05f);
+            light.FadeSizeEnd = entity.GetFloatProperty("fade_size_end", 0.025f);
+            light.ShadowFadeSizeStart = entity.GetFloatProperty("shadowfade_size_start", 0.1f);
+            light.ShadowFadeSizeEnd = entity.GetFloatProperty("shadowfade_size_end", 0.05f);
+
             light.PrecomputedFieldsValid = entity.GetInt32Property("precomputedfieldsvalid") != 0;
             if (light.PrecomputedFieldsValid)
             {
@@ -407,8 +453,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             }
         }
 
-        light.Position = entity.GetVector3Property("origin");
-        light.Direction = EntityTransformHelper.EulerAnglesToForwardDirection(entity.GetVector3Property("angles"));
+        // The caller places the light with PlaceAt, the keyvalues are in the entity's local space
         return light;
     }
 
@@ -467,7 +512,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
 
     internal static bool IsRealTimeLight(SceneLight light)
     {
-        if (light.Entity is not (EntityType.Barn or EntityType.Omni2 or EntityType.Rect))
+        if (!light.IsLight2)
         {
             return false;
         }
@@ -495,7 +540,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             return;
         }
 
-        if (Entity is EntityType.Barn or EntityType.Rect)
+        if (Entity == EntityType.Barn)
         {
             if (BarnFaces is not { Length: 1 })
             {
@@ -504,7 +549,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
 
             BarnFaces[0] = ComputeBarnLightFace(this, cookiePaths);
         }
-        else if (Entity == EntityType.Omni2)
+        else if (UsesOmni2Faces)
         {
             ComputeOmni2Faces(this, cookiePaths);
         }
@@ -516,7 +561,7 @@ public class SceneLight(Scene scene) : SceneNode(scene)
     /// <param name="size">Target resolution in texels along the longer axis.</param>
     public (int W, int H) GetShadowFaceDimensions(int size)
     {
-        if (Entity == EntityType.Omni2)
+        if (UsesOmni2Faces)
         {
             return (size, size);
         }
@@ -527,25 +572,37 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             : ((int)MathF.Round(size * aspect), size);
     }
 
-    /// <summary>Distance, in world units, that <c>brightness_legacy</c> is measured at.</summary>
-    private const float LegacyBrightnessDistance = 100f;
+    /// <summary>
+    /// The superellipse exponent a barn or rect light's shape value maps to, from a rectangle at zero to an ellipse at one.
+    /// Any rounding at all starts at an eighth, and values past one stay an ellipse.
+    /// </summary>
+    internal static float GetShapeExponent(float shape) => shape > 0f ? MathF.Min(shape, 1f) * 0.875f + 0.125f : 0f;
 
-    /// <summary>Linear intensity for the shader, rescaled to the reference distance whose square is <paramref name="referenceDistSq"/> (zero for a light with no falloff).</summary>
-    private static float ComputeIntensity(SceneLight light, float referenceDistSq, float divisor)
+    /// <summary>Distance, in world units, in front of the luminaire at which a light reaches its <see cref="LinearBrightness"/>.</summary>
+    private const float LinearBrightnessDistance = 100f;
+
+    // Mirrored by the BARN_LIGHT_FLAG_ constants in lighting.barn.slang
+    private const uint RectLuminaireFlag = 0x1000u;
+    private const uint DiscLuminaireFlag = 0x2000u;
+
+    /// <summary>
+    /// Linear intensity for the shader, which attenuates it by <paramref name="falloffDistSq"/> over the squared distance from
+    /// the light position (zero for a light with no falloff). The luminaire is <paramref name="luminaireDistance"/> in front of that position.
+    /// </summary>
+    private static float ComputeIntensity(SceneLight light, float falloffDistSq, float luminaireDistance)
     {
-        if (float.IsNaN(light.BrightnessLegacy))
+        var intensity = light.LinearBrightness * light.BrightnessScale;
+
+        if (falloffDistSq <= 0f)
         {
-            return divisor > 0.000001f ? light.Brightness * light.BrightnessScale / divisor : 0f;
+            return intensity;
         }
 
-        var intensity = light.BrightnessLegacy * light.BrightnessScale;
-
-        return referenceDistSq > 0f
-            ? intensity * (LegacyBrightnessDistance * LegacyBrightnessDistance / referenceDistSq)
-            : intensity;
+        var referenceDistance = luminaireDistance + LinearBrightnessDistance;
+        return intensity * referenceDistance * referenceDistance / falloffDistSq;
     }
 
-    private static (Matrix4x4 WorldToFrustum, Vector4 Position, float SkirtNear, float SkirtFar, float Divisor)
+    private static (Matrix4x4 WorldToFrustum, Vector4 Position, float SkirtNear, float SkirtFar)
         ComputeOrthographicBarnGeometry(SceneLight light, Vector3 forwardDir, Vector3 upDir, Vector3 rightDir)
     {
         var eyePosition = light.Transform.Translation;
@@ -567,16 +624,14 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         var skirtNear = light.SkirtNear > 0 ? 1f / light.SkirtNear : 0f;
         var skirtFar = light.FallOff > 0 ? 1f / light.FallOff : 0f;
 
-        var divisor = light.SizeParams.X * light.SizeParams.Y / (MathF.PI * 10f);
-
         var projectionDir = Vector3.Normalize(
             light.Range * forwardDir + light.Shear.X * rightDir + light.Shear.Y * upDir);
         var position = new Vector4(-projectionDir, 0f);
 
-        return (worldToFrustum, position, skirtNear, skirtFar, divisor);
+        return (worldToFrustum, position, skirtNear, skirtFar);
     }
 
-    private static (Matrix4x4 WorldToFrustum, Vector4 Position, float SkirtNear, float SkirtFar, float Divisor)
+    private static (Matrix4x4 WorldToFrustum, Vector4 Position, float SkirtNear, float SkirtFar)
         ComputePerspectiveBarnGeometry(SceneLight light, Vector3 forwardDir, Vector3 upDir, Vector3 rightDir)
     {
         var nearPlane = 1f / light.SizeParams.Z;
@@ -596,10 +651,6 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             eyePosition + forwardDir, upDir);
 
         var worldToFrustum = lightView * lightProj;
-        if (!Matrix4x4.Invert(worldToFrustum, out var frustumToWorld))
-        {
-            frustumToWorld = Matrix4x4.Identity;
-        }
 
         var skirtNear = 0f;
         if (light.SkirtNear > 0)
@@ -616,12 +667,9 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         }
 
         var eyeToOriginDistSq = centerX * centerX + centerY * centerY + nearPlane * nearPlane;
-        var solidAngle = ComputeFrustumSolidAngle(frustumToWorld, eyePosition);
-        var divisor = solidAngle * eyeToOriginDistSq / (4f * MathF.PI * 10f);
-
         var position = new Vector4(eyePosition, eyeToOriginDistSq);
 
-        return (worldToFrustum, position, skirtNear, skirtFar, divisor);
+        return (worldToFrustum, position, skirtNear, skirtFar);
     }
 
     private static BarnFaceData ComputeBarnLightFace(SceneLight light, Dictionary<string, int> cookiePaths)
@@ -631,11 +679,11 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         var upDir = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, noTranslation));
         var rightDir = Vector3.Normalize(Vector3.Cross(upDir, forwardDir));
 
-        var (worldToFrustum, barnLightPosition, skirtNear, skirtFar, divisor) = light.SizeParams.Z <= 0
+        var (worldToFrustum, barnLightPosition, skirtNear, skirtFar) = light.SizeParams.Z <= 0
             ? ComputeOrthographicBarnGeometry(light, forwardDir, upDir, rightDir)
             : ComputePerspectiveBarnGeometry(light, forwardDir, upDir, rightDir);
 
-        var colorIntensity = ComputeIntensity(light, barnLightPosition.W, divisor);
+        var colorIntensity = ComputeIntensity(light, barnLightPosition.W, MathF.Sqrt(barnLightPosition.W));
         var linearColor = ColorSpace.SrgbGammaToLinear(light.Color) * colorIntensity;
 
         var cookieW = 0f;
@@ -647,14 +695,12 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         }
         else
         {
-            cookieParams = new Vector4(1f - light.SoftX, 1f - light.SoftY, light.Shape, 0f);
+            cookieParams = new Vector4(1f - light.SoftX, 1f - light.SoftY, GetShapeExponent(light.Shape), 0f);
         }
 
         var orientationQ = Quaternion.CreateFromRotationMatrix(light.Transform);
 
-        var (illuminationFromWorld, obbToWorld) = ShouldEnableOBB(light)
-            ? ComputeObbMatrices(light.PrecomputedObbOrigin, light.PrecomputedObbExtent, light.PrecomputedObbAngles)
-            : default;
+        var (illuminationFromWorld, obbToWorld) = GetLightObb(light);
 
         return new BarnFaceData
         {
@@ -697,7 +743,10 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         var sideRange = angleRad < MathF.PI / 2f
             ? MathF.Max(light.Range - heightOffset, 0f) * MathF.Sin(angleRad) + heightOffset
             : light.Range;
-        var faceCount = GetOmni2FaceCount(light.SpotOuterAngle, heightOffset);
+        // Only a light with shadows is split into faces to render them from, without shadows a single
+        // box around everything the light can reach is enough
+        var singleBox = light.CastShadows != 1;
+        var faceCount = singleBox ? 1 : GetOmni2FaceCount(angleRad, heightOffset > 0f);
 
         if (light.BarnFaces is not { Length: var currentLen } || currentLen != faceCount)
         {
@@ -707,12 +756,21 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         var origin = light.Transform.Translation;
         var nearPlane = 1f;
         var orientationQ = Quaternion.CreateFromRotationMatrix(light.Transform);
-        var linearColor = ComputeOmni2Color(light);
+        var linearColor = light.ComputeOmni2Color();
 
         // custom point light hack
         const uint LitInsideNearPlaneFlag = 0x8000u;
         const float ApexCullNearPlane = 0.001f;
         var faceFlags = light.LuminaireShape == -1 ? 0xFFFF0000u | LitInsideNearPlaneFlag : 0xFFFF0000u;
+
+        // For the shaders that shade a rect light as the rectangle or disc it is
+        var luminaireHalfSize = Vector2.Zero;
+        var luminaireFlags = 0u;
+        if (light.Entity == EntityType.Rect)
+        {
+            luminaireHalfSize = new Vector2(light.SizeParams.X, light.SizeParams.Y);
+            luminaireFlags = light.Shape == 1f ? DiscLuminaireFlag : RectLuminaireFlag;
+        }
 
         var cookieW = 0f;
         var cookieParams = new Vector4(1f, 1f, 0f, 0f);
@@ -731,16 +789,9 @@ public class SceneLight(Scene scene) : SceneNode(scene)
             _ => 0f
         };
 
-        BarnFaceData MakeFace(Vector3 faceForward, Vector3 faceUp, float range, int faceIndex)
+        BarnFaceData CreateFace(Matrix4x4 worldToFrustum, Matrix4x4 worldToCullFrustum,
+            OpenTK.Mathematics.Matrix3x4 illuminationFromWorld, Matrix4x4 obbToWorld, uint flags)
         {
-            var lightView = Matrix4x4.CreateLookAtLeftHanded(origin, origin + faceForward, faceUp);
-            var lightProj = Matrix4x4.CreatePerspectiveLeftHanded(2f * nearPlane, 2f * nearPlane, nearPlane, nearPlane + range);
-            var worldToFrustum = lightView * lightProj;
-            var cullProj = (faceFlags & LitInsideNearPlaneFlag) != 0u
-                ? Matrix4x4.CreatePerspectiveLeftHanded(2f * ApexCullNearPlane, 2f * ApexCullNearPlane, ApexCullNearPlane, nearPlane + range)
-                : lightProj;
-            var (illuminationFromWorld, obbToWorld) = GetOmni2FaceOBB(light, faceIndex);
-
             return new BarnFaceData
             {
                 GpuData = new BarnLightConstants
@@ -751,18 +802,44 @@ public class SceneLight(Scene scene) : SceneNode(scene)
                     BarnLightColor_flCookie = new Vector4(linearColor, cookieW),
                     BarnLightOrientationQ = new Vector4(orientationQ.X, orientationQ.Y, orientationQ.Z, orientationQ.W),
                     BarnLightAngleFade = new Vector3(angleBias, angleScale, angleFadeZ),
+                    BarnLightLuminaireHalfWidth = luminaireHalfSize.X,
                     BarnLightShadowOffsetScale = Vector4.Zero,
                     BarnLightCookieParameters = cookieParams,
                     BarnLightBakedShadowMask = light.BakedShadowMask,
                     BarnLightMinRoughness = MathF.Max(0.04f, light.MinRoughness),
                     BarnLightShadowScale = 0f,
-                    PathTraceIndex_BarnLightFlags = faceFlags,
-                    BarnIlluminationFromWorld = illuminationFromWorld
+                    PathTraceIndex_BarnLightFlags = flags | luminaireFlags,
+                    BarnLightLuminaireHalfHeight = luminaireHalfSize.Y,
+                    BarnIlluminationFromWorld = illuminationFromWorld,
                 },
                 WorldToFrustum = worldToFrustum,
-                FrustumToWorld = InvertFrustum(lightView * cullProj),
+                FrustumToWorld = InvertFrustum(worldToCullFrustum),
                 ObbToWorld = obbToWorld,
             };
+        }
+
+        if (singleBox)
+        {
+            // Reaches behind the light when the cone opens past a hemisphere
+            var back = angleRad > MathF.PI / 2f ? -MathF.Cos(angleRad) * light.Range : 0f;
+            var boxView = Matrix4x4.CreateLookAtLeftHanded(origin, origin + forward, up);
+            var boxProj = Matrix4x4.CreateOrthographicOffCenterLeftHanded(-sideRange, sideRange, -sideRange, sideRange, -back, light.Range);
+            var (boxIllumination, boxObbToWorld) = GetLightObb(light);
+
+            light.BarnFaces[0] = CreateFace(boxView * boxProj, boxView * boxProj, boxIllumination, boxObbToWorld, 0xFFFF0000u);
+            return;
+        }
+
+        BarnFaceData MakeFace(Vector3 faceForward, Vector3 faceUp, float range, int faceIndex)
+        {
+            var lightView = Matrix4x4.CreateLookAtLeftHanded(origin, origin + faceForward, faceUp);
+            var lightProj = Matrix4x4.CreatePerspectiveLeftHanded(2f * nearPlane, 2f * nearPlane, nearPlane, nearPlane + range);
+            var cullProj = (faceFlags & LitInsideNearPlaneFlag) != 0u
+                ? Matrix4x4.CreatePerspectiveLeftHanded(2f * ApexCullNearPlane, 2f * ApexCullNearPlane, ApexCullNearPlane, nearPlane + range)
+                : lightProj;
+            var (illuminationFromWorld, obbToWorld) = GetOmni2FaceOBB(light, faceIndex);
+
+            return CreateFace(lightView * lightProj, lightView * cullProj, illuminationFromWorld, obbToWorld, faceFlags);
         }
 
         light.BarnFaces[0] = MakeFace(forward, up, light.Range, 0);
@@ -793,12 +870,30 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         return MathF.Min(MathF.Tau * (1f - avgCos), 4f * MathF.PI);
     }
 
-    private static Vector3 ComputeOmni2Color(SceneLight light)
+    /// <summary>
+    /// How much of the light, and of its shadows, is left after fading out with the fraction of the screen its bounds cover.
+    /// </summary>
+    /// <param name="cameraPosition">Position of the camera the light is seen from.</param>
+    /// <param name="tanHalfHorizontalFov">Tangent of half the camera's horizontal field of view.</param>
+    internal (float Light, float Shadow) ComputeScreenSizeFades(Vector3 cameraPosition, float tanHalfHorizontalFov)
     {
-        var divisor = light.ComputeConeSolidAngle() / (4f * MathF.PI * 10f);
-        var colorIntensity = ComputeIntensity(light, 1f, divisor);
-        return ColorSpace.SrgbGammaToLinear(light.Color) * colorIntensity;
+        var bounds = PrecomputedFieldsValid ? PrecomputedBounds : new AABB(Position, Range);
+        var diagonal = Vector3.Distance(bounds.Min, bounds.Max);
+        var distanceSq = Vector3.DistanceSquared(cameraPosition, bounds.Center);
+
+        // Covers the whole screen with the camera close enough to be inside the bounds
+        var screenSize = diagonal * diagonal > distanceSq
+            ? 1f
+            : MathUtils.Saturate(diagonal / (MathF.Sqrt(distanceSq) * tanHalfHorizontalFov));
+
+        float Fade(float start, float end) => 1f - MathUtils.Saturate((start - screenSize) / MathF.Max(1e-4f, start - end));
+
+        return (Fade(FadeSizeStart, FadeSizeEnd), Fade(ShadowFadeSizeStart, ShadowFadeSizeEnd));
     }
+
+    /// <summary>Linear color an omni2 or rect light is lit with, which is also the radiance its visible geometry starts from.</summary>
+    internal Vector3 ComputeOmni2Color()
+        => ColorSpace.SrgbGammaToLinear(Color) * ComputeIntensity(this, 1f, 0f);
 
     private static (float Offset, float Rate) ComputeDistanceFade(float range, float skirt)
     {
@@ -854,45 +949,6 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         3 => new Vector4(0, 0, 0, 1),
         _ => Vector4.Zero
     };
-
-    private static float SphericalTriangleArea(Vector3 p1, Vector3 p2, Vector3 p3)
-    {
-        var a = MathUtils.AngleBetween(p2, p3);
-        var b = MathUtils.AngleBetween(p1, p3);
-        var c = MathUtils.AngleBetween(p1, p2);
-
-        if (a == 0f || b == 0f || c == 0f)
-        {
-            return 0f;
-        }
-
-        var s = (a + b + c) * 0.5f;
-        var sinS = MathF.Sin(s);
-        var sinSMinusA = MathF.Sin(s - a);
-        var sinSMinusB = MathF.Sin(s - b);
-        var sinSMinusC = MathF.Sin(s - c);
-
-        var t1 = MathF.Sqrt(MathF.Max(0f, sinSMinusC * sinSMinusA / (sinS * sinSMinusB)));
-        var t2 = MathF.Sqrt(MathF.Max(0f, sinSMinusA * sinSMinusB / (sinSMinusC * sinS)));
-        var t3 = MathF.Sqrt(MathF.Max(0f, sinSMinusB * sinSMinusC / (sinSMinusA * sinS)));
-
-        return 2f * (MathF.Atan(t1) + MathF.Atan(t2) + MathF.Atan(t3)) - MathF.PI;
-    }
-
-    private static float ComputeFrustumSolidAngle(Matrix4x4 frustumToWorld, Vector3 viewPos)
-    {
-        var a = ProjectNDCToWorld(frustumToWorld, -1, -1, 0);
-        var b = ProjectNDCToWorld(frustumToWorld, 1, -1, 0);
-        var c = ProjectNDCToWorld(frustumToWorld, 1, 1, 0);
-        var d = ProjectNDCToWorld(frustumToWorld, -1, 1, 0);
-
-        var dirA = Vector3.Normalize(a - viewPos);
-        var dirB = Vector3.Normalize(b - viewPos);
-        var dirC = Vector3.Normalize(c - viewPos);
-        var dirD = Vector3.Normalize(d - viewPos);
-
-        return SphericalTriangleArea(dirA, dirB, dirC) + SphericalTriangleArea(dirA, dirC, dirD);
-    }
 
     /// <summary>
     /// Both matrices of an illumination OBB: the one the shader rejects fragments with, and its inverse,
@@ -956,11 +1012,10 @@ public class SceneLight(Scene scene) : SceneNode(scene)
         return default;
     }
 
-    private static Vector3 ProjectNDCToWorld(Matrix4x4 frustumToWorld, float x, float y, float z)
-    {
-        var v = Vector4.Transform(new Vector4(x, y, z, 1f), frustumToWorld);
-        return v.AsVector3() / v.W;
-    }
+    private static (OpenTK.Mathematics.Matrix3x4 IlluminationFromWorld, Matrix4x4 ObbToWorld) GetLightObb(SceneLight light)
+        => ShouldEnableOBB(light)
+            ? ComputeObbMatrices(light.PrecomputedObbOrigin, light.PrecomputedObbExtent, light.PrecomputedObbAngles)
+            : default;
 
     private static bool ShouldEnableOBB(SceneLight light)
     {
@@ -973,11 +1028,9 @@ public class SceneLight(Scene scene) : SceneNode(scene)
                || light.CastShadows > 0;
     }
 
-    private static int GetOmni2FaceCount(float outerAngleDeg, float heightOffset)
+    private static int GetOmni2FaceCount(float angleRad, bool hasHeightOffset)
     {
-        var angleRad = float.DegreesToRadians(Math.Clamp(outerAngleDeg, 1f, 180f));
-
-        if (heightOffset > 0f)
+        if (hasHeightOffset)
         {
             angleRad = MathF.Max(MathF.PI / 2f, angleRad);
         }

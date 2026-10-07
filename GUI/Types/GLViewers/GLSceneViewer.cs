@@ -29,7 +29,6 @@ namespace GUI.Types.GLViewers
         protected QuadOverdraw? QuadOverdrawRenderer { get; set; }
 
         public Scene Scene { get; }
-        public Scene? SkyboxScene => Renderer.SkyboxScene;
         public VrfGuiContext GuiContext;
 
         /// <summary>Optional sound event player, created by viewers that play scene audio.</summary>
@@ -73,8 +72,6 @@ namespace GUI.Types.GLViewers
         private PerfDisplay perfDisplay;
         private ComboBox? perfDisplayComboBox;
 
-        /// <summary>Set by escape to release the mouse in walk mode, cleared by clicking back into the viewport.</summary>
-        private bool mouseReleased;
         private bool roundStarted;
 
         private readonly List<RenderModes.RenderMode> renderModes = new(RenderModes.Items.Count);
@@ -161,9 +158,10 @@ namespace GUI.Types.GLViewers
                 UiControl.AddCheckBox("Show Dynamic Octree", showDynamicOctree, (v) => showDynamicOctree = v);
                 UiControl.AddCheckBox("Show Tool Materials", Scene.ShowToolsMaterials, (v) =>
                 {
-                    Scene.ShowToolsMaterials = v;
-
-                    SkyboxScene?.ShowToolsMaterials = v;
+                    foreach (var scene in Renderer.Scenes)
+                    {
+                        scene.ShowToolsMaterials = v;
+                    }
                 });
 
                 if (this is GLWorldViewer)
@@ -176,7 +174,7 @@ namespace GUI.Types.GLViewers
                     }
                 }
 
-                if (Scene.PhysicsWorld != null)
+                if (!Renderer.EntitySystem.PhysicsWorld.IsEmpty)
                 {
                     UiControl.AddCheckBox("Debug Physics Traces", showPhysicsTraces, v => showPhysicsTraces = v);
                 }
@@ -228,13 +226,12 @@ namespace GUI.Types.GLViewers
 
         public virtual void PostSceneLoad()
         {
-            Scene.Initialize();
-            if (Scene.PhysicsWorld != null)
+            foreach (var scene in Renderer.Scenes)
             {
-                Input.PhysicsWorld = Scene.PhysicsWorld;
+                scene.Initialize();
             }
 
-            SkyboxScene?.Initialize();
+            Input.PhysicsWorld = Renderer.EntitySystem.PhysicsWorld;
 
             if (Scene.FogInfo.CubeFogActive)
             {
@@ -327,7 +324,7 @@ namespace GUI.Types.GLViewers
                 return;
             }
 
-            if (!MouseDragged)
+            if (!MouseDragged || GrabbedMouse)
             {
                 Picker?.RequestNextFrame(InitialMousePosition.X, InitialMousePosition.Y, PickingIntent.Select);
             }
@@ -336,8 +333,6 @@ namespace GUI.Types.GLViewers
         protected override void OnMouseDown(object? sender, MouseEventArgs e)
         {
             base.OnMouseDown(sender, e);
-
-            mouseReleased = false;
 
             if (Input.WalkMode)
             {
@@ -402,6 +397,9 @@ namespace GUI.Types.GLViewers
             GuiContext.ClearCache();
             GuiContext.GLPostLoadAction?.Invoke(this);
             GuiContext.GLPostLoadAction = null;
+
+            ReportLoadingStatus("Compiling shaders…");
+            Scene.RendererContext.ShaderLoader.LinkLoadedShaders();
         }
 
         /// <summary>
@@ -480,8 +478,8 @@ namespace GUI.Types.GLViewers
                 return;
             }
 
-            soundPlayer.LoadSoundEvents();
-            soundPlayer.LoadSoundscapes();
+            // TODO: load soundevents once per game not per sub context
+            soundPlayer.LoadAsync(Scene.RendererContext.CancellationToken);
 
             // todo: collision filter 'default' and 'blocksound'
             // const float OcclusionEndMargin = 48f;
@@ -563,13 +561,13 @@ namespace GUI.Types.GLViewers
                     if (!roundStarted)
                     {
                         roundStarted = true;
-                        Scene.EntitySystem.StartRound();
+                        Renderer.EntitySystem.StartRound();
                     }
                 }
 
-                // Walk mode aims with the mouse, so it holds the cursor. Leaving walk mode, pausing,
-                // or pressing escape hands it back.
-                var wantsMouseLook = Input.WalkMode && !Paused && !mouseReleased;
+                // Walk mode and mouse look aim with the mouse, so they hold the cursor. Leaving both,
+                // pausing, escape, or the viewport losing focus hands it back.
+                var wantsMouseLook = (Input.WalkMode || Input.MouseLook) && !Paused && !MouseReleased;
 
                 // Taking the cursor needs it over the viewport, but keeping it does not, or a fast
                 // look that outran the pointer would drop the grab on its way past the edge.
@@ -615,7 +613,6 @@ namespace GUI.Types.GLViewers
 
         protected void DrawWorldSpaceText(string text, float size, Vector3 position, Color32 color, Scene.RenderContext renderContext)
         {
-            Scene.WantsSceneDepth = true;
             TextRenderer.AddTextBillboard(position, new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
             {
                 Scale = size,
@@ -632,6 +629,12 @@ namespace GUI.Types.GLViewers
             Debug.Assert(GLDefaultFramebuffer != null);
 
             Renderer.PostprocessRender(MainFramebuffer, GLDefaultFramebuffer);
+
+            // Over the final image, so the selection keeps its colors whatever the exposure
+            if (SelectedNodeRenderer != null && Renderer.ResolvedSceneDepth != null)
+            {
+                SelectedNodeRenderer.Render(Renderer.ResolvedSceneDepth);
+            }
         }
 
         protected override void OnBufferSwapped(double blockedMs, double framePeriodMs)
@@ -680,7 +683,7 @@ namespace GUI.Types.GLViewers
             // this frame's position and last frame's facing
             UpdateSoundPlayer();
 
-            Renderer.ForceResolveSceneDepth = ShowBaseGrid;
+            Renderer.ForceResolveSceneDepth = ShowBaseGrid || SelectedNodeRenderer.HasSelectedNodes;
 
             var quadOverdrawThisFrame = false;
 
@@ -727,8 +730,6 @@ namespace GUI.Types.GLViewers
 
             using (new GLDebugGroup("Lines Render"))
             {
-                SelectedNodeRenderer.Render();
-
                 if (showStaticOctree && Scene.StaticOctree.DebugRenderer != null)
                 {
                     Scene.StaticOctree.DebugRenderer.Render();
@@ -744,10 +745,10 @@ namespace GUI.Types.GLViewers
                     Scene.OcclusionDebug.Render();
                 }
 
-                if (showPhysicsTraces && Scene.PhysicsWorld != null)
+                if (showPhysicsTraces && !Renderer.EntitySystem.PhysicsWorld.IsEmpty)
                 {
                     physicsTraceRenderer ??= new PhysicsTraceDebugRenderer(Scene.RendererContext);
-                    physicsTraceRenderer.Render(Scene.PhysicsWorld, Input, Renderer.Camera);
+                    physicsTraceRenderer.Render(Renderer.EntitySystem.PhysicsWorld, Input, Renderer.Camera);
                 }
 
                 if (ShowBaseGrid && baseGrid != null)
@@ -847,15 +848,17 @@ namespace GUI.Types.GLViewers
                 }
 
                 AddLine(
-                    cluster <= 1 ? "No PVS at this position" : $"PVS cluster {cluster}",
-                    cluster <= 1 ? new Color32(255, 0, 0) : Color32.White
+                    cluster < 0 ? "No PVS at this position" : $"PVS cluster {cluster}",
+                    cluster < 0 ? new Color32(255, 0, 0) : Color32.White
                 );
 
-                if (!Scene.CurrentFramePvs.IsEmpty)
+                var pvs = Renderer.MainViewState?.Pvs ?? default;
+
+                if (!pvs.IsEmpty)
                 {
                     var visCount = 0;
 
-                    foreach (var b in Scene.CurrentFramePvs.Span)
+                    foreach (var b in pvs.Span)
                     {
                         visCount += BitOperations.PopCount(b);
                     }
@@ -866,7 +869,7 @@ namespace GUI.Types.GLViewers
 
             if (perfDisplay == PerfDisplay.Stats)
             {
-                Renderer.PerfStats.DisplayStats(TextRenderer, Renderer.Camera, Scene, SkyboxScene);
+                Renderer.PerfStats.DisplayStats(TextRenderer, Renderer.Camera, [.. Renderer.Scenes], Renderer.MainViewState?.LightBinner);
             }
             else if (perfDisplay == PerfDisplay.Timings)
             {
@@ -1023,8 +1026,10 @@ namespace GUI.Types.GLViewers
 
         protected void SetEnabledLayers(HashSet<string> layers)
         {
-            Scene.SetEnabledLayers(layers);
-            SkyboxScene?.SetEnabledLayers(layers);
+            foreach (var scene in Renderer.Scenes)
+            {
+                scene.SetEnabledLayers(layers);
+            }
         }
 
         private void SetRenderMode(string renderMode)
@@ -1036,24 +1041,18 @@ namespace GUI.Types.GLViewers
 
             Renderer.Postprocess.Enabled = Renderer.ViewBuffer.Data.RenderMode == 0;
 
-            Scene.EnableCompaction = renderMode != "Meshlets";
-            SkyboxScene?.EnableCompaction = Scene.EnableCompaction;
+            foreach (var scene in Renderer.Scenes)
+            {
+                scene.EnableCompaction = renderMode != "Meshlets";
+            }
 
             Picker.SetRenderMode(renderMode);
             QuadOverdrawRenderer?.SetRenderMode(renderMode);
             SelectedNodeRenderer.SetRenderMode(renderMode);
 
-            foreach (var node in Scene.AllNodes)
+            foreach (var node in Renderer.Scenes.SelectMany(static scene => scene.AllNodes))
             {
                 node.SetRenderMode(renderMode);
-            }
-
-            if (SkyboxScene != null)
-            {
-                foreach (var node in SkyboxScene.AllNodes)
-                {
-                    node.SetRenderMode(renderMode);
-                }
             }
         }
 
@@ -1070,7 +1069,10 @@ namespace GUI.Types.GLViewers
             if (keyData == Keys.Escape)
             {
                 SelectedNodeRenderer.SelectNode(null);
-                mouseReleased = true;
+                if (Input.WalkMode)
+                {
+                    MouseReleased = true;
+                }
             }
 
             if (keyData == Keys.Tab && perfDisplayComboBox != null)
@@ -1092,17 +1094,9 @@ namespace GUI.Types.GLViewers
                 SetAvailableRenderModes(true);
             }
 
-            foreach (var node in Scene.AllNodes)
+            foreach (var node in Renderer.Scenes.SelectMany(static scene => scene.AllNodes))
             {
                 node.UpdateVertexArrayObjects();
-            }
-
-            if (SkyboxScene != null)
-            {
-                foreach (var node in SkyboxScene.AllNodes)
-                {
-                    node.UpdateVertexArrayObjects();
-                }
             }
 
             GLControl?.Invalidate();

@@ -26,13 +26,6 @@ internal static class EntityIOGraphBuilder
     /// <summary>Wires and sockets linking a point_template to the entities it spawns.</summary>
     public const GraphHue TemplateSpawnHue = GraphHue.Purple;
 
-    // Prefab-instanced entities carry a "[PR#]" targetname prefix, hide it for display.
-    private static string StripTargetnamePrefix(string value)
-    {
-        const string Prefix = "[PR#]";
-        return value.StartsWith(Prefix, StringComparison.Ordinal) ? value[Prefix.Length..] : value;
-    }
-
     private static GraphHue ClassHue(string classname) => EntityClassHues.For(classname);
 
     private static string? FormatConnectionLabel(Connection connection)
@@ -56,6 +49,11 @@ internal static class EntityIOGraphBuilder
         if (!string.IsNullOrEmpty(connection.OverrideParam) && connection.OverrideParam != "(null)")
         {
             parts.Add($"({connection.OverrideParam})");
+        }
+
+        if (connection.ParamMap is { Count: > 0 })
+        {
+            parts.Add("(mapped params)");
         }
 
         return parts.Count > 0 ? string.Join(" ", parts) : null;
@@ -157,9 +155,11 @@ internal static class EntityIOGraphBuilder
                         members = [entity];
                     }
 
+                    var title = EntityLump.ApplyNameFixup(name, string.Empty, string.Empty);
+
                     node = document.AddNode(new GraphNode
                     {
-                        Title = members.Count > 1 ? $"{StripTargetnamePrefix(name)}  ×{members.Count}" : StripTargetnamePrefix(name),
+                        Title = members.Count > 1 ? $"{title}  ×{members.Count}" : title,
                         Subtitle = classname,
                         Category = ClassHue(classname),
                         Tag = entity,
@@ -198,7 +198,7 @@ internal static class EntityIOGraphBuilder
 
                 node = document.AddNode(new GraphNode
                 {
-                    Title = StripTargetnamePrefix(targetName),
+                    Title = EntityLump.ApplyNameFixup(targetName, string.Empty, string.Empty),
                     Subtitle = unresolved ? "unresolved target" : "special target",
                     Category = unresolved ? UnresolvedTargetHue : SpecialTargetHue,
                 });

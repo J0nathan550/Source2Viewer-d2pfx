@@ -846,6 +846,9 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var entries = new StringBuilder();
                 var end = 0;
 
+                // A model doc takes a single ClothParams node, so the merged model keeps this one's
+                var hasClothParams = ClothParamsRegex().IsMatch(vmdl);
+
                 foreach (var (start, objectEnd) in objects.Where(range => range.Start > softbody.Start && range.End < softbody.End).OrderBy(static range => range.Start))
                 {
                     // Only the soft body's own children, not what they contain
@@ -854,8 +857,14 @@ namespace GUI.Types.Exporter.CharacterAssets
                         continue;
                     }
 
-                    entries.Append('\n').Append(Rename(otherVmdl[GetLineStart(otherVmdl, start)..objectEnd])).Append(',');
                     end = objectEnd;
+
+                    if (hasClothParams && ObjectHeaderRegex().Match(otherVmdl, start) is { Success: true } header && header.Groups["class"].Value == "ClothParams")
+                    {
+                        continue;
+                    }
+
+                    entries.Append('\n').Append(Rename(otherVmdl[GetLineStart(otherVmdl, start)..objectEnd])).Append(',');
                 }
 
                 return Validate(vmdl.Insert(ownChildren.Index + ownChildren.Length, entries.ToString()));
@@ -1771,6 +1780,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"_class\s*=\s*""Softbody""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex SoftbodyChildrenRegex();
+
+        [GeneratedRegex(@"_class\s*=\s*""ClothParams""", RegexOptions.CultureInvariant)]
+        private static partial Regex ClothParamsRegex();
 
         [GeneratedRegex(@"(?<prefix>_class\s*=\s*""ClothNode""\s*name\s*=\s*"")(?<name>[^""]*)""", RegexOptions.CultureInvariant)]
         private static partial Regex ClothNodeNameRegex();

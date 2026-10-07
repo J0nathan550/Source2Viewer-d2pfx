@@ -33,14 +33,13 @@ namespace ValveResourceFormat.IO
         /// <summary>
         /// Gets or sets the progress reporter for export operations.
         /// </summary>
-        public required IProgress<string> ProgressReporter { get; set; }
+        public IProgress<string>? ProgressReporter { get; set; }
 
         /// <summary>
         /// Gets the file loader for loading referenced resources.
         /// </summary>
         public IFileLoader FileLoader { get; }
         private readonly ShaderDataProvider shaderDataProvider;
-        private readonly BasicShaderDataProvider shaderDataProviderFallback = new();
 
         /// <summary>
         /// Gets or sets a value indicating whether to export animations.
@@ -172,6 +171,7 @@ namespace ValveResourceFormat.IO
                 LightmapUvScale = Vector2.One;
                 MaterialInputSignatures.Clear();
                 ScaledLightmapUvAccessors.Clear();
+                OverlayOffsetPositionAccessors.Clear();
                 PhysicsToExport.Clear();
                 TextureExportingTasks.Clear();
                 ExportedTextures.Clear();

@@ -119,7 +119,7 @@ partial class ModelExtract
             "CitadelUnitStatusSettings_t",
             "CitadelModelDamageNumberSettings_t",
             "CitadelModelParticleSettings_t",
-            "CitadelTaggedSoundSettings_t",
+            "TaggedSoundSettings_t",
             "CitadelModelSceneData_t",
             "CitadelMuzzleSettings_t",
             "CitadelTeamRelativeParticleSettings_t",
@@ -189,13 +189,17 @@ partial class ModelExtract
         foreach (var genericDataClass in genericDataClassesList)
         {
             var dataKey = genericDataClass.ListKey;
-            if (keyvalues.ContainsKey(dataKey))
+            if (keyvalues.GetArray(dataKey) is { } genericDataList)
             {
-                var genericDataList = keyvalues.GetArray(dataKey);
-                foreach (var genericData in genericDataList!)
+                foreach (var genericData in genericDataList)
                 {
                     AddGenericGameData(lists.GameData, genericDataClass.Class, genericData);
                 }
+            }
+            else if (keyvalues.GetSubCollection(dataKey) is { } singleGenericData)
+            {
+                // Some models author this as a single KV object instead of a one-element list.
+                AddGenericGameData(lists.GameData, genericDataClass.Class, singleGenericData);
             }
         }
 

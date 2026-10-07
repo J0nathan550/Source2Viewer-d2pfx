@@ -29,9 +29,9 @@ namespace ValveResourceFormat.Renderer.Particles
 
         /// <summary>
         /// The passes this system draws in, unioned over its renderers and its children's. Fixed once
-        /// the system is built.
+        /// the system is built, unless its material is overridden.
         /// </summary>
-        public CustomRenderPasses Passes { get; }
+        public CustomRenderPasses Passes { get; private set; }
 
         /// <summary>
         /// Whether this system, or any system nested under it, soft-fades against the scene.
@@ -87,6 +87,7 @@ namespace ValveResourceFormat.Renderer.Particles
 
             Passes = CollectPasses();
             WantsSceneDepth = renderers.Any(static r => r.WantsSceneDepth) || childRenderers.Any(static c => c.WantsSceneDepth);
+            CanRenderReplacement = renderers.Any(static r => r.CanRenderReplacement) || childRenderers.Any(static c => c.CanRenderReplacement);
         }
 
         private void SetupRenderers(IReadOnlyList<KVObject> rendererData, Scene scene)
@@ -253,11 +254,7 @@ namespace ValveResourceFormat.Renderer.Particles
 
             foreach (var renderer in renderers)
             {
-                var inPass = !renderer.OnlyRenderInEffectsBloomPass && (depthPass
-                    ? renderer.CanRenderDepth
-                    : renderer.Pass == pass && renderer.OnlyRenderInEffectsWaterPass == waterEffectsLayer);
-
-                if (!inPass || renderer.GetOperatorRunStrength(Simulation.RenderState) <= 0.0f)
+                if (!InPass(renderer, pass, waterEffectsLayer) || renderer.GetOperatorRunStrength(Simulation.RenderState) <= 0.0f)
                 {
                     continue;
                 }
@@ -277,6 +274,60 @@ namespace ValveResourceFormat.Renderer.Particles
             if (rendered)
             {
                 PerfStats.Active.Count(Counter.ParticleSystem);
+            }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="renderer"/> draws in <paramref name="pass"/>. The outline pass owns
+        /// no renderer of its own, so everything the system has draws in it.
+        /// </summary>
+        private static bool InPass(ParticleFunctionRenderer renderer, RenderPass pass, bool waterEffectsLayer)
+        {
+            if (renderer.OnlyRenderInEffectsBloomPass)
+            {
+                return false;
+            }
+
+            return pass switch
+            {
+                RenderPass.DepthOnly => renderer.CanRenderDepth,
+                RenderPass.Outline => !renderer.OnlyRenderInEffectsWaterPass,
+                _ => renderer.Pass == pass && renderer.OnlyRenderInEffectsWaterPass == waterEffectsLayer,
+            };
+        }
+
+        /// <inheritdoc cref="ParticleFunctionRenderer.CanRenderReplacement"/>
+        public bool CanRenderReplacement { get; }
+
+        /// <summary>
+        /// Draws the renderers belonging to <paramref name="pass"/> with a pass replacement shader.
+        /// </summary>
+        public void RenderReplacement(Shader replacement, uint objectId, RenderPass pass, Camera camera)
+        {
+            foreach (var childRenderer in childRenderers)
+            {
+                if (!childRenderer.CanRenderReplacement || !childRenderer.Simulation.ShouldRunAsChildOf(Simulation.RenderState))
+                {
+                    continue;
+                }
+
+                childRenderer.RenderReplacement(replacement, objectId, pass, camera);
+            }
+
+            if (!IsWithinDrawDistance(camera) || Simulation.Particles.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var renderer in renderers)
+            {
+                if (!renderer.CanRenderReplacement || !InPass(renderer, pass, false)
+                    || renderer.GetOperatorRunStrength(Simulation.RenderState) <= 0.0f)
+                {
+                    continue;
+                }
+
+                renderer.RenderReplacement(replacement, objectId);
             }
         }
 
@@ -354,6 +405,25 @@ namespace ValveResourceFormat.Renderer.Particles
             {
                 childRenderer.SetTextureOverride(texture);
             }
+        }
+
+        /// <summary>
+        /// Replaces the material every renderer in this system and its children draws with, and collects
+        /// the passes again since the material decides them.
+        /// </summary>
+        public void SetMaterialOverride(RenderMaterial material)
+        {
+            foreach (var renderer in renderers)
+            {
+                renderer.SetMaterialOverride(material);
+            }
+
+            foreach (var childRenderer in childRenderers)
+            {
+                childRenderer.SetMaterialOverride(material);
+            }
+
+            Passes = CollectPasses();
         }
 
         // todo: set this when viewer checkbox is toggled

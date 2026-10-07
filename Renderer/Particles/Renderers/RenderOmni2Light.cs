@@ -47,7 +47,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             range = parse.NumberProvider("m_flRange", range);
             innerConeAngle = parse.NumberProvider("m_flInnerConeAngle", innerConeAngle);
             outerConeAngle = parse.NumberProvider("m_flOuterConeAngle", outerConeAngle);
-            cookiePath = parse.Data.GetStringProperty("m_hLightCookie");
+            cookiePath = parse.Data.GetStringProperty("m_hLightCookie") is { Length: > 0 } cookie ? cookie : null;
             sphericalCookie = parse.Boolean("m_bSphericalCookie", sphericalCookie);
 
             light = CreateLight();
@@ -118,8 +118,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             var lightRange = MathF.Max(0f, range.NextNumber(ref particle, systemState));
             var skirtValue = skirt.NextNumber(ref particle, systemState);
 
+            // Lumens spread over the cone, as the intensity the faces are lit with 100 units away
             light.Color = color;
-            light.Brightness = MathF.Max(0f, brightness);
+            light.LinearBrightness = MathF.Max(0f, brightness) * 4f * MathF.PI * 10f / (light.ComputeConeSolidAngle() * 100f * 100f);
             light.BrightnessScale = MathF.Max(0f, 1 - particle.NormalizedAge);
             light.Range = lightRange;
             light.FallOff = skirtValue;

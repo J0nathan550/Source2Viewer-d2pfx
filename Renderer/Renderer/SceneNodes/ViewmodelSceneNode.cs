@@ -357,7 +357,7 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
     }
 
-    private static Vector3? TraceKnifeSwing(Rubikon? physics, Vector3 from, Vector3 forward, float range)
+    private static Vector3? TraceKnifeSwing(PhysicsWorld? physics, Vector3 from, Vector3 forward, float range)
     {
         if (physics == null)
         {
@@ -365,7 +365,7 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
 
         var to = from + forward * range;
-        var trace = physics.TraceRay(from, to);
+        var trace = physics.TraceRay(from, to, Rubikon.DefaultGeometry);
 
         if (trace.Hit)
         {
@@ -571,7 +571,7 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
 
         var (origin, velocity) = CalculateThrow(input, throwStrength);
-        projectile.Launch(origin, velocity, Scene.EntitySystem.Player);
+        projectile.Launch(origin, velocity, entitySystem.Player);
 
         lastThrown = projectile;
     }
@@ -616,7 +616,7 @@ public class ViewmodelSceneNode : ModelSceneNode
 
         if (input.PhysicsWorld is { } physics)
         {
-            var trace = CS2Projectile.SweepHull(physics, Scene.EntitySystem, origin, reach);
+            var trace = CS2Projectile.SweepHull(physics, entitySystem, origin, reach);
 
             if (trace is { Hit: true, IsValid: true })
             {
@@ -649,9 +649,9 @@ public class ViewmodelSceneNode : ModelSceneNode
             return projectiles.Find(projectile => projectile.Kind == kind);
         }
 
-        var created = new CS2Projectile(Scene.EntitySystem, resources.Model, kind, resources.Effect, resources.FlightEffect);
+        var created = new CS2Projectile(entitySystem, Scene, resources.Model, kind, resources.Effect, resources.FlightEffect);
 
-        Scene.EntitySystem.AddEntity(created);
+        entitySystem.AddEntity(created);
         projectiles.Add(created);
 
         return created;
@@ -726,9 +726,14 @@ public class ViewmodelSceneNode : ModelSceneNode
     private const string MolotovHeldEffect = "particles/weapons/cs_weapon_fx/weapon_molotov_held.vpcf";
     private const string MolotovFlameAttachment = "molotov_particle";
 
-    internal ViewmodelSceneNode(Scene scene, Model model)
+    /// <summary>The world the weapons this viewmodel holds spawn their projectiles into.</summary>
+    private readonly EntitySystem entitySystem;
+
+    internal ViewmodelSceneNode(Scene scene, EntitySystem entitySystem, Model model)
         : base(scene, model, isWorldPreview: true)
     {
+        this.entitySystem = entitySystem;
+
         LoadItemAnimations();
 
         SetState(AnimationState.Idle);
@@ -926,9 +931,10 @@ public class ViewmodelSceneNode : ModelSceneNode
     /// <summary>
     /// Try to load the CS2 viewmodel, returning null if the necessary resources are not found.
     /// </summary>
-    /// <param name="scene"></param>
-    /// <returns></returns>
-    public static ViewmodelSceneNode? TryLoadCs2Viewmodel(Scene scene)
+    /// <param name="scene">The scene the viewmodel is drawn in.</param>
+    /// <param name="entitySystem">The world its weapons spawn projectiles into.</param>
+    /// <returns>The loaded viewmodel, or <see langword="null"/> when its resources are missing.</returns>
+    public static ViewmodelSceneNode? TryLoadCs2Viewmodel(Scene scene, EntitySystem entitySystem)
     {
         var loader = scene.RendererContext.FileLoader;
 
@@ -955,7 +961,7 @@ public class ViewmodelSceneNode : ModelSceneNode
             models.Add(model);
         }
 
-        var viewmodel = new ViewmodelSceneNode(scene, models[0]);
+        var viewmodel = new ViewmodelSceneNode(scene, entitySystem, models[0]);
         foreach (var item in models[2..])
         {
             viewmodel.AddItem(item);
@@ -1464,7 +1470,7 @@ public class ViewmodelSceneNode : ModelSceneNode
                 material.IntParams["g_bFirstpersonLegsDistortion"] = distortionValue;
             }
 
-            Legs.Update(context);
+            Legs.UpdateHierarchy(context);
         }
 
         attackCooldown = MathF.Max(0f, attackCooldown - context.Timestep);
@@ -1503,7 +1509,7 @@ public class ViewmodelSceneNode : ModelSceneNode
 
         static void UpdateItem(ModelSceneNode item, Scene.UpdateContext context, AABB bounds)
         {
-            item.Update(context);
+            item.UpdateHierarchy(context);
             item.LocalBoundingBox = bounds;
         }
 

@@ -1,6 +1,7 @@
 using System.Linq;
 using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics.Softbody;
 using ValveResourceFormat.Serialization.KeyValues;
 
 namespace ValveResourceFormat.ResourceTypes
@@ -60,6 +61,29 @@ namespace ValveResourceFormat.ResourceTypes
             => collisionAttributes ??= Data.GetArray("m_collisionAttributes");
 
         /// <summary>
+        /// Gets the embedded cloth (soft body) model (<c>m_pFeModel</c>), or null when the aggregate has none.
+        /// </summary>
+        public FeModel? FeModel
+        {
+            get
+            {
+                if (feModelParsed)
+                {
+                    return feModel;
+                }
+
+                if (Data.GetSubCollection("m_pFeModel") is { } feModelData
+                    && new FeModel(feModelData) is { CtrlName.Length: > 0 } parsed)
+                {
+                    feModel = parsed;
+                }
+
+                feModelParsed = true;
+                return feModel;
+            }
+        }
+
+        /// <summary>
         /// Gets what a shape with these collision attributes interacts as. Older assets carry the tags
         /// under <c>m_PhysicsTagStrings</c>.
         /// </summary>
@@ -85,6 +109,8 @@ namespace ValveResourceFormat.ResourceTypes
         private Joint[]? joints;
         private uint[]? surfacePropertyHashes;
         private IReadOnlyList<KVObject>? collisionAttributes;
+        private FeModel? feModel;
+        private bool feModelParsed;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="PhysAggregateData"/> class.

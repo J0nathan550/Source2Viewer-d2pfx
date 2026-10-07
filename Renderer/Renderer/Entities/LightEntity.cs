@@ -1,13 +1,16 @@
 using ValveResourceFormat.Renderer.SceneEnvironment;
+using ValveResourceFormat.Renderer.SceneNodes;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Serialization.KeyValues;
+using ValveResourceFormat.Utils;
 
 namespace ValveResourceFormat.Renderer.Entities;
 
 /// <summary>
 /// The light entities. Owns the <see cref="SceneLight"/> and steers it live: the real-time set (barn,
 /// rect, omni2) re-bins every frame so changes are plain property writes, while the slot-stored set
-/// (omni, spot, ortho, environment) re-stores the lighting uniforms on change. Light styles, color
-/// temperature and volumetric fog are not simulated.
+/// (omni, spot, ortho, environment) re-stores the lighting uniforms on change. Light styles and
+/// volumetric fog are not simulated.
 /// </summary>
 public sealed class LightEntity : BaseEntity
 {
@@ -16,6 +19,9 @@ public sealed class LightEntity : BaseEntity
 
     private SceneLight? light;
     private float brightnessScale = 1f;
+
+    /// <summary>Gets the light the entity casts, or <see langword="null"/> for a light class that is not rendered.</summary>
+    internal SceneLight? Light => light;
     private bool slotStored;
 
     /// <summary>Initializes a light entity from its keyvalues.</summary>
@@ -23,10 +29,9 @@ public sealed class LightEntity : BaseEntity
     {
     }
 
-    // NoShadows like the loader gives light icons, so a light's own icon cannot shadow the light
+    // NoShadows so a light's own icon cannot shadow the light
     /// <inheritdoc/>
-    protected override SceneNode? CreateRootNode()
-        => World.EditorEntityNode.Create(Scene, KeyValues, Classname, Transform, ObjectTypeFlags.NoShadows);
+    protected override SceneNode? CreateRootNode() => CreateEditorNode(ObjectTypeFlags.NoShadows);
 
     /// <inheritdoc/>
     public override void Spawn()
@@ -50,8 +55,16 @@ public sealed class LightEntity : BaseEntity
         // leave its old slot data lit
         light.Enabled = true;
 
-        // The light-store sweep after entity load picks the node up from the scene like a loader one
+        light.PlaceAt(Transform);
+
+        // The light-store sweep after entity load picks the node up from the scene
         AddNode(light);
+
+        // Rect and omni2 lights can draw their luminaire as geometry
+        if (light.UsesOmni2Faces && KeyValues.GetBooleanProperty("showlight"))
+        {
+            AddNode(new LuminaireSceneNode(Scene, light));
+        }
 
         Apply();
     }
@@ -63,8 +76,7 @@ public sealed class LightEntity : BaseEntity
 
         if (light != null)
         {
-            light.Position = Origin;
-            light.Direction = EntityTransformHelper.EulerAnglesToForwardDirection(Angles);
+            light.PlaceAt(Transform);
             Changed();
         }
     }
@@ -109,11 +121,25 @@ public sealed class LightEntity : BaseEntity
     [EntityInput("SetBrightness")]
     private void InputSetBrightness(EntityInputData data)
     {
-        if (light != null)
+        if (light == null)
+        {
+            return;
+        }
+
+        // Barn, rect and omni2 lights take an exposure value, which can be negative. The lumens a baked
+        // light is stored with scale along with it.
+        if (light.IsLight2)
+        {
+            var linearBrightness = float.Exp2(data.Float(MathF.Log2(light.LinearBrightness)));
+            light.Brightness *= linearBrightness / light.LinearBrightness;
+            light.LinearBrightness = linearBrightness;
+        }
+        else
         {
             light.Brightness = MathF.Max(data.Float(light.Brightness), 0f);
-            Changed();
         }
+
+        Changed();
     }
 
     [EntityInput("SetBrightnessScale")]
@@ -128,10 +154,22 @@ public sealed class LightEntity : BaseEntity
     [EntityInput("SetColor")]
     private void InputSetColor(EntityInputData data)
     {
-        if (light != null && data.Parameter is { } parameter
+        // A light in color temperature mode keeps its color
+        if (light is { ColorTemperature: null } && data.Parameter is { } parameter
             && EntityTransformHelper.TryParseVector3(parameter, out var color))
         {
             light.Color = Vector3.Clamp(color / 255f, Vector3.Zero, Vector3.One);
+            Changed();
+        }
+    }
+
+    [EntityInput("SetColorTemperature")]
+    private void InputSetColorTemperature(EntityInputData data)
+    {
+        if (light is { ColorTemperature: { } colorTemperature })
+        {
+            light.ColorTemperature = data.Float(colorTemperature);
+            light.Color = ColorSpace.ColorTemperatureToSrgb(light.ColorTemperature.Value);
             Changed();
         }
     }

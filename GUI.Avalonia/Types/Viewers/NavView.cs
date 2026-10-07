@@ -56,9 +56,9 @@ namespace GUI.Types.Viewers
             tabControl.Items.Add(new TabItem { Header = "NAV INFO", Content = new DeferredContent(() => CodeTextBox.Create(navMeshFile.ToString(), HighlightLanguage.None)) });
 
             AddKVTab(tabControl, "NAV CUSTOM DATA", navMeshFile.CustomData);
-            AddKVTab(tabControl, "NAV UNKNOWN KV3 1", navMeshFile.KV3Unknown1);
-            AddKVTab(tabControl, "NAV UNKNOWN KV3 2", navMeshFile.KV3Unknown2);
-            AddKVTab(tabControl, "NAV UNKNOWN KV3 3", navMeshFile.KV3Unknown3);
+            AddKVTab(tabControl, "NAV MOVABLE MESH SETTINGS", navMeshFile.MovableMeshSettings);
+            AddKVTab(tabControl, "NAV GAME DATA", navMeshFile.GameData);
+            AddKVTab(tabControl, "NAV EXTRA GEN PARAMS", navMeshFile.ExtraGenerationParams);
 
             tabControl.SelectedIndex = 0;
             return tabControl;

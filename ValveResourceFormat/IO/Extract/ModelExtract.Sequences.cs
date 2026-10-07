@@ -732,7 +732,7 @@ partial class ModelExtract
                     }
                 }
 
-                if (animation.Anim.HasMovementData())
+                if (ShouldExtractMotion(animation.Anim))
                 {
                     var flags = animation.Anim.Movements[0].MotionFlags;
                     var extractMotion = MakeNode("ExtractMotion",
@@ -744,7 +744,7 @@ partial class ModelExtract
                         ("extract_rz", flags.HasFlag(ModelAnimationMotionFlags.RZ)),
                         ("linear", flags.HasFlag(ModelAnimationMotionFlags.Linear)),
                         ("quadratic", false),
-                        ("motion_type", "uniform")
+                        ("motion_type", animation.Anim.Movements.Length == 1 ? "single" : "uniform")
                     );
 
                     childrenKV.Add(extractMotion);

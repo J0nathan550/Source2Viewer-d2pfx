@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.Serialization.KeyValues;
 using static ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Mesh;
@@ -52,6 +53,20 @@ public class Rubikon
         Hull.Plane[] Planes
     );
 
+    /// <summary>Compound collision data: child shapes under the compound's own tree, whose leaves hold child shape ids.</summary>
+    public record PhysicsCompoundData(
+        string[] InteractAs,
+        string[] InteractExclude,
+        Compound.TreeNode[] Tree,
+        int HullBaseIndex,
+        int MeshBaseIndex,
+        PhysicsHullData[] Hulls,
+        PhysicsMeshData[] Meshes
+    );
+
+    /// <summary>Gets the compound collision shapes, queried before the root shapes.</summary>
+    public PhysicsCompoundData[] Compounds { get; }
+
     /// <summary>Gets the triangle mesh collision shapes available for tracing.</summary>
     public PhysicsMeshData[] Meshes { get; }
 
@@ -69,6 +84,7 @@ public class Rubikon
     {
         if (physicsData.Parts.Length == 0)
         {
+            Compounds = [];
             Meshes = [];
             Hulls = [];
             HullIndices = [];
@@ -84,13 +100,7 @@ public class Rubikon
 
         foreach (var mesh in worldMeshes)
         {
-            var vertexPositions = mesh.Shape.GetVertices();
-            var triangles = mesh.Shape.GetTriangles();
-            var physicsTree = mesh.Shape.ParseNodes();
-
-            var (interactAs, interactExclude) = GetInteractStrings(physicsData.CollisionAttributes[mesh.CollisionAttributeIndex]);
-
-            Meshes[meshIndex++] = new PhysicsMeshData(interactAs, interactExclude, [.. vertexPositions], [.. triangles], [.. physicsTree]);
+            Meshes[meshIndex++] = CreateMeshData(mesh.Shape, physicsData.CollisionAttributes[mesh.CollisionAttributeIndex]);
         }
 
         // we want to run player clip traces first because the mesh is much simpler
@@ -100,27 +110,50 @@ public class Rubikon
         var hullIndex = 0;
         foreach (var hullDesc in physicsData.Parts[0].Shape.Hulls)
         {
-            var hull = hullDesc.Shape;
-            var vertexPositions = hull.GetVertexPositions();
-            var halfEdges = hull.GetEdges();
-            var faceEdgeIndices = hull.GetFaces();
-            var planes = hull.GetPlanes();
-
-            var (interactAs, interactExclude) = GetInteractStrings(physicsData.CollisionAttributes[hullDesc.CollisionAttributeIndex]);
-
-            Hulls[hullIndex++] = new PhysicsHullData(
-                interactAs, interactExclude,
-                hull.Min, hull.Max,
-                [.. vertexPositions],
-                [.. halfEdges],
-                [.. MemoryMarshal.Cast<Hull.Face, byte>(faceEdgeIndices)],
-                [.. planes]
-            );
+            Hulls[hullIndex++] = CreateHullData(hullDesc.Shape, physicsData.CollisionAttributes[hullDesc.CollisionAttributeIndex]);
         }
 
         // Build BVH for hulls
         HullIndices = [.. Enumerable.Range(0, Hulls.Length)];
         HullTree = BuildHullBVH();
+
+        Compounds = [.. physicsData.Parts[0].Shape.Compounds.Select(compound => CreateCompoundData(compound, physicsData.CollisionAttributes[compound.CollisionAttributeIndex]))];
+    }
+
+    private static PhysicsMeshData CreateMeshData(ResourceTypes.RubikonPhysics.Shapes.Mesh mesh, KVObject collisionAttributes)
+    {
+        var (interactAs, interactExclude) = GetInteractStrings(collisionAttributes);
+
+        return new PhysicsMeshData(interactAs, interactExclude, [.. mesh.GetVertices()], [.. mesh.GetTriangles()], [.. mesh.ParseNodes()]);
+    }
+
+    private static PhysicsHullData CreateHullData(Hull hull, KVObject collisionAttributes)
+    {
+        var (interactAs, interactExclude) = GetInteractStrings(collisionAttributes);
+
+        return new PhysicsHullData(
+            interactAs, interactExclude,
+            hull.Min, hull.Max,
+            [.. hull.GetVertexPositions()],
+            [.. hull.GetEdges()],
+            [.. MemoryMarshal.Cast<Hull.Face, byte>(hull.GetFaces())],
+            [.. hull.GetPlanes()]
+        );
+    }
+
+    private static PhysicsCompoundData CreateCompoundData(CompoundDescriptor descriptor, KVObject collisionAttributes)
+    {
+        var compound = descriptor.Shape;
+        var (interactAs, interactExclude) = GetInteractStrings(collisionAttributes);
+
+        return new PhysicsCompoundData(
+            interactAs, interactExclude,
+            compound.GetTreeNodes(),
+            compound.HullBaseIndex,
+            compound.MeshBaseIndex,
+            [.. compound.Hulls.Select(hull => CreateHullData(hull, collisionAttributes))],
+            [.. compound.Meshes.Select(mesh => CreateMeshData(mesh, collisionAttributes))]
+        );
     }
 
     /// <summary>
@@ -174,7 +207,7 @@ public class Rubikon
 
         /// <summary>
         /// Gets or sets the entity this hit belongs to, for sweeps that fold brush entities in: the
-        /// entity whose collider was struck, or the worldspawn for static world geometry, as the engine
+        /// entity whose collider was struck, or the world entity for static world geometry, as the engine
         /// reports it. Null when the sweep did not carry entity identity at all.
         /// </summary>
         public Entities.BaseEntity? HitEntity { get; set; }
@@ -237,7 +270,7 @@ public class Rubikon
         }
     }
 
-    private static bool IsInvalidRay(Vector3 from, Vector3 to)
+    internal static bool IsInvalidRay(Vector3 from, Vector3 to)
     {
         return Vector3.DistanceSquared(from, to) < Epsilon * Epsilon;
     }
@@ -245,8 +278,9 @@ public class Rubikon
     /// <summary>Traces a ray against all physics shapes and returns the closest hit.</summary>
     /// <param name="from">Ray start position.</param>
     /// <param name="to">Ray end position.</param>
+    /// <param name="collisionName">Collision interaction name used to filter shapes.</param>
     /// <returns>The closest <see cref="TraceResult"/>, or an empty result if nothing was hit.</returns>
-    public TraceResult TraceRay(Vector3 from, Vector3 to)
+    public TraceResult TraceRay(Vector3 from, Vector3 to, string collisionName)
     {
         TraceResult closestHit = new();
 
@@ -257,10 +291,23 @@ public class Rubikon
         }
 
         RayTraceContext ray = new(from, to);
+        var filter = CollisionFilter.Named(collisionName);
+
+        foreach (var compound in Compounds)
+        {
+            if (!filter.Collides(compound.InteractAs, compound.InteractExclude))
+            {
+                continue;
+            }
+
+            var query = new CompoundRayQuery(ray, compound) { ClosestHit = closestHit };
+            TraverseCompound(compound.Tree, ref query);
+            closestHit = query.ClosestHit;
+        }
 
         foreach (var mesh in Meshes)
         {
-            if (mesh.InteractAs.Length > 0 && !ContainsString(mesh.InteractAs, "passbullets"))
+            if (!filter.Collides(mesh.InteractAs, mesh.InteractExclude))
             {
                 continue;
             }
@@ -270,7 +317,7 @@ public class Rubikon
 
         if (HullTree.Length > 0)
         {
-            var query = new RayHullsQuery(ray, Hulls, HullIndices) { ClosestHit = closestHit };
+            var query = new RayHullsQuery(ray, filter, Hulls, HullIndices) { ClosestHit = closestHit };
             TraverseBvh(HullTree, ref query);
             closestHit = query.ClosestHit;
         }
@@ -365,10 +412,28 @@ public class Rubikon
         var options = (detectStartSolid ? TraceOptions.DetectStartSolid : TraceOptions.None)
             | (computeContactPoint ? TraceOptions.ComputeContactPoint : TraceOptions.None);
         var trace = new AABBTraceContext(from, to, halfExtents, options);
+        var filter = CollisionFilter.Named(collisionName);
+
+        foreach (var compound in Compounds)
+        {
+            if (!filter.Collides(compound.InteractAs, compound.InteractExclude))
+            {
+                continue;
+            }
+
+            var query = new CompoundSweepQuery(trace, compound) { ClosestHit = closestHit };
+            TraverseCompound(compound.Tree, ref query);
+            closestHit = query.ClosestHit;
+
+            if (closestHit.StopsScanning(trace.DetectStartSolid))
+            {
+                return closestHit;
+            }
+        }
 
         foreach (var mesh in Meshes)
         {
-            if (SkipsCollision(collisionName, mesh.InteractAs, mesh.InteractExclude))
+            if (!filter.Collides(mesh.InteractAs, mesh.InteractExclude))
             {
                 continue;
             }
@@ -382,7 +447,7 @@ public class Rubikon
 
         if (HullTree.Length > 0)
         {
-            AABBTraceHullBVH(trace, collisionName, ref closestHit);
+            AABBTraceHullBVH(trace, filter, ref closestHit);
         }
 
         return closestHit;
@@ -397,14 +462,21 @@ public class Rubikon
     /// <returns><see langword="true"/> if any physics triangle overlaps the box.</returns>
     public bool IntersectsAABB(Vector3 center, Vector3 halfExtents, string collisionName)
     {
-        if (CheckMeshOverlap(center, halfExtents, collisionName))
+        var filter = CollisionFilter.Named(collisionName);
+
+        if (CheckCompoundOverlap(center, halfExtents, filter, CompoundOverlap.Surface))
+        {
+            return true;
+        }
+
+        if (CheckMeshOverlap(center, halfExtents, filter))
         {
             return true;
         }
 
         if (HullTree.Length > 0)
         {
-            var hullQuery = new OverlapHullsQuery(center, halfExtents, collisionName, Hulls, HullIndices);
+            var hullQuery = new OverlapHullsQuery(center, halfExtents, filter, Hulls, HullIndices);
             TraverseBvh(HullTree, ref hullQuery);
 
             if (hullQuery.Overlaps)
@@ -430,9 +502,16 @@ public class Rubikon
     /// <returns><see langword="true"/> if the box is inside or touching one of the hulls.</returns>
     public bool IntersectsOrContainsAABB(Vector3 center, Vector3 halfExtents, string collisionName)
     {
+        var filter = CollisionFilter.Named(collisionName);
+
+        if (CheckCompoundOverlap(center, halfExtents, filter, CompoundOverlap.Volume))
+        {
+            return true;
+        }
+
         if (HullTree.Length > 0)
         {
-            var hullQuery = new VolumeOverlapHullsQuery(center, halfExtents, collisionName, Hulls, HullIndices);
+            var hullQuery = new VolumeOverlapHullsQuery(center, halfExtents, filter, Hulls, HullIndices);
             TraverseBvh(HullTree, ref hullQuery);
 
             if (hullQuery.Overlaps)
@@ -442,14 +521,14 @@ public class Rubikon
         }
 
         // A triangle mesh is a surface and encloses nothing, so contact is the only overlap it can report
-        return CheckMeshOverlap(center, halfExtents, collisionName);
+        return CheckMeshOverlap(center, halfExtents, filter);
     }
 
-    private bool CheckMeshOverlap(Vector3 center, Vector3 halfExtents, string collisionName)
+    private bool CheckMeshOverlap(Vector3 center, Vector3 halfExtents, CollisionFilter filter)
     {
         foreach (var mesh in Meshes)
         {
-            if (SkipsCollision(collisionName, mesh.InteractAs, mesh.InteractExclude))
+            if (!filter.Collides(mesh.InteractAs, mesh.InteractExclude))
             {
                 continue;
             }
@@ -494,6 +573,11 @@ public class Rubikon
     /// <returns><see langword="true"/> when the point is inside a hull.</returns>
     public bool ContainsPoint(Vector3 point)
     {
+        if (CheckCompoundOverlap(point, Vector3.Zero, CollisionFilter.Everything, CompoundOverlap.HullVolumeOnly))
+        {
+            return true;
+        }
+
         foreach (var hull in Hulls)
         {
             if (point.X < hull.Min.X || point.Y < hull.Min.Y || point.Z < hull.Min.Z
@@ -529,13 +613,14 @@ public class Rubikon
 
     private static void TraverseBvh<TQuery>(Node[] nodes, ref TQuery query) where TQuery : struct, IBvhQuery
     {
-        Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
+        Span<int> stack = stackalloc int[STACK_SIZE];
         var stackCount = 0;
-        stack[stackCount++] = (nodes[0], 0);
+        stack[stackCount++] = 0;
 
         while (stackCount > 0)
         {
-            var (node, index) = stack[--stackCount];
+            var index = stack[--stackCount];
+            ref readonly var node = ref nodes[index];
 
             if (!query.IntersectsNode(in node))
             {
@@ -552,8 +637,8 @@ public class Rubikon
                     : (rightChild, leftChild);
 
                 // Push far node first so near node is processed first (stack is LIFO)
-                stack[stackCount++] = (nodes[farId], farId);
-                stack[stackCount++] = (nodes[nearId], nearId);
+                stack[stackCount++] = farId;
+                stack[stackCount++] = nearId;
                 continue;
             }
 
@@ -593,7 +678,7 @@ public class Rubikon
     }
 
     /// <summary>The <see cref="OverlapHullsQuery"/> for solid volumes: a box inside a hull counts.</summary>
-    private struct VolumeOverlapHullsQuery(Vector3 center, Vector3 halfExtents, string collisionName, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
+    private struct VolumeOverlapHullsQuery(Vector3 center, Vector3 halfExtents, CollisionFilter filter, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
     {
         public bool Overlaps;
 
@@ -607,7 +692,7 @@ public class Rubikon
             {
                 var hull = hulls[hullIndices[i]];
 
-                if (SkipsCollision(collisionName, hull.InteractAs, hull.InteractExclude))
+                if (!filter.Collides(hull.InteractAs, hull.InteractExclude))
                 {
                     continue;
                 }
@@ -628,7 +713,7 @@ public class Rubikon
         }
     }
 
-    private struct OverlapHullsQuery(Vector3 center, Vector3 halfExtents, string collisionName, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
+    private struct OverlapHullsQuery(Vector3 center, Vector3 halfExtents, CollisionFilter filter, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
     {
         public bool Overlaps;
 
@@ -642,25 +727,15 @@ public class Rubikon
             {
                 var hull = hulls[hullIndices[i]];
 
-                if (SkipsCollision(collisionName, hull.InteractAs, hull.InteractExclude))
+                if (!filter.Collides(hull.InteractAs, hull.InteractExclude))
                 {
                     continue;
                 }
 
-                if (!BoxIntersectsAABB(center, halfExtents, hull.Min, hull.Max))
+                if (HullSurfaceOverlapsBox(hull, center, halfExtents))
                 {
-                    continue;
-                }
-
-                var triangles = new HullTriangleEnumerator(hull);
-
-                while (triangles.MoveNext(out var v0, out var v1, out var v2))
-                {
-                    if (TriangleOverlaps(center, halfExtents, v0, v1, v2))
-                    {
-                        Overlaps = true;
-                        return true;
-                    }
+                    Overlaps = true;
+                    return true;
                 }
             }
 
@@ -668,54 +743,240 @@ public class Rubikon
         }
     }
 
-    /// <summary>
-    /// Generates the 13 SAT axes for a box-triangle test: the triangle face normal (0), the
-    /// 9 cross products of triangle edges with the box axes (1-9), and the 3 box axes (10-12).
-    /// Returns <see langword="false"/> for axes that constrain nothing and should be skipped.
-    /// </summary>
-    /// <param name="axis">Axis index from 0 to 12.</param>
-    /// <param name="triangle">The three triangle vertices.</param>
-    /// <param name="skipDegenerateFace">Whether to also skip the face axis of a zero-area triangle
-    /// (its edge and box axes still apply).</param>
-    /// <param name="axisVector">The generated, unnormalized axis.</param>
-    private static bool TryGetSatAxis(int axis, ReadOnlySpan<Vector3> triangle, bool skipDegenerateFace, out Vector3 axisVector)
+    private static bool HullSurfaceOverlapsBox(PhysicsHullData hull, Vector3 center, Vector3 halfExtents)
     {
-        if (axis == 0)
+        if (!BoxIntersectsAABB(center, halfExtents, hull.Min, hull.Max))
         {
-            axisVector = MathUtils.TriangleCross(triangle[0], triangle[1], triangle[2]);
+            return false;
+        }
 
-            if (skipDegenerateFace && axisVector.LengthSquared() < Epsilon * Epsilon)
+        var triangles = new HullTriangleEnumerator(hull);
+
+        while (triangles.MoveNext(out var v0, out var v1, out var v2))
+        {
+            if (TriangleOverlaps(center, halfExtents, v0, v1, v2))
             {
-                return false;
+                return true;
             }
         }
-        else if (axis < 10)
+
+        return false;
+    }
+
+    /// <summary>A query over a compound tree, see <see cref="TraverseCompound"/>.</summary>
+    private interface ICompoundQuery
+    {
+        /// <summary>Whether the query reaches a node's bounds; <see langword="false"/> culls the subtree.</summary>
+        bool IntersectsNode(Vector3 min, Vector3 max);
+
+        /// <summary>Whether to descend into the first child before the second one for a node split on this axis.</summary>
+        bool FirstChildFirst(int splitAxis);
+
+        /// <summary>Visits a leaf's child shape; returns <see langword="true"/> to stop the traversal.</summary>
+        bool VisitChild(int childId);
+    }
+
+    // Pre-order with subtree node counts: the first child follows its parent, the second child follows the first child's subtree
+    private static void TraverseCompound<TQuery>(Compound.TreeNode[] tree, ref TQuery query) where TQuery : struct, ICompoundQuery
+    {
+        if (tree.Length == 0)
         {
-            var localAxisIndex = axis - 1;
+            return;
+        }
 
-            var triangleEdgeIndex = localAxisIndex / 3;
-            var boxAxisIndex = localAxisIndex % 3;
+        Span<int> stack = stackalloc int[STACK_SIZE];
+        var stackCount = 0;
+        stack[stackCount++] = 0;
 
-            var edge = triangle[(triangleEdgeIndex + 1) % 3] - triangle[triangleEdgeIndex];
+        while (stackCount > 0)
+        {
+            var index = stack[--stackCount];
+            var node = tree[index];
 
-            axisVector = edge;
-            axisVector[boxAxisIndex] = 0;
-            axisVector[(boxAxisIndex + 1) % 3] = -edge[(boxAxisIndex + 2) % 3];
-            axisVector[(boxAxisIndex + 2) % 3] = edge[(boxAxisIndex + 1) % 3];
-
-            if (Math.Abs(axisVector[(boxAxisIndex + 1) % 3]) < Epsilon && Math.Abs(axisVector[(boxAxisIndex + 2) % 3]) < Epsilon)
+            if (!query.IntersectsNode(node.Min, node.Max))
             {
-                return false;
+                continue;
+            }
+
+            if (node.Type != NodeType.Leaf)
+            {
+                var first = index + 1;
+                var second = first + (tree[first].Type == NodeType.Leaf ? 1 : (int)tree[first].SubtreeEndOrCompoundId);
+
+                var (nearId, farId) = query.FirstChildFirst((int)node.Type)
+                    ? (first, second)
+                    : (second, first);
+
+                // Push far node first so near node is processed first (stack is LIFO)
+                stack[stackCount++] = farId;
+                stack[stackCount++] = nearId;
+                continue;
+            }
+
+            if (query.VisitChild((int)node.SubtreeEndOrCompoundId))
+            {
+                return;
             }
         }
-        else
+    }
+
+    private struct CompoundSweepQuery(AABBTraceContext trace, PhysicsCompoundData compound) : ICompoundQuery
+    {
+        public TraceResult ClosestHit;
+
+        public readonly bool IntersectsNode(Vector3 min, Vector3 max)
+            => RayIntersectsAABB(trace.Ray, min - trace.HalfExtents, max + trace.HalfExtents, out var entryDistance) && entryDistance <= ClosestHit.Distance;
+
+        public readonly bool FirstChildFirst(int splitAxis) => trace.Direction[splitAxis] >= 0;
+
+        public bool VisitChild(int childId)
         {
-            var localAxisIndex = axis - 10;
-            axisVector = Vector3.Zero;
-            axisVector[localAxisIndex] = 1;
+            if (childId >= compound.MeshBaseIndex)
+            {
+                AABBTraceMesh(trace, compound.Meshes[childId - compound.MeshBaseIndex], ref ClosestHit);
+            }
+            else if (childId >= compound.HullBaseIndex)
+            {
+                AABBTraceHull(trace, compound.Hulls[childId - compound.HullBaseIndex], ref ClosestHit);
+            }
+
+            return ClosestHit.StopsScanning(trace.DetectStartSolid);
+        }
+    }
+
+    private struct CompoundRayQuery(RayTraceContext ray, PhysicsCompoundData compound) : ICompoundQuery
+    {
+        public TraceResult ClosestHit;
+
+        public readonly bool IntersectsNode(Vector3 min, Vector3 max)
+            => RayIntersectsAABB(ray, min, max, out var entryDistance) && entryDistance <= ClosestHit.Distance;
+
+        public readonly bool FirstChildFirst(int splitAxis) => ray.Direction[splitAxis] >= 0;
+
+        public bool VisitChild(int childId)
+        {
+            if (childId >= compound.MeshBaseIndex)
+            {
+                RayIntersectsWithMesh(ray, compound.Meshes[childId - compound.MeshBaseIndex], ref ClosestHit);
+            }
+            else if (childId >= compound.HullBaseIndex)
+            {
+                RayIntersectsWithHull(ray, compound.Hulls[childId - compound.HullBaseIndex], ref ClosestHit);
+            }
+
+            return false;
+        }
+    }
+
+    private enum CompoundOverlap
+    {
+        Surface,
+        Volume,
+        HullVolumeOnly,
+    }
+
+    private bool CheckCompoundOverlap(Vector3 center, Vector3 halfExtents, CollisionFilter filter, CompoundOverlap mode)
+    {
+        foreach (var compound in Compounds)
+        {
+            if (!filter.Collides(compound.InteractAs, compound.InteractExclude))
+            {
+                continue;
+            }
+
+            var query = new CompoundOverlapQuery(center, halfExtents, compound, mode);
+            TraverseCompound(compound.Tree, ref query);
+
+            if (query.Overlaps)
+            {
+                return true;
+            }
         }
 
-        return true;
+        return false;
+    }
+
+    private struct CompoundOverlapQuery(Vector3 center, Vector3 halfExtents, PhysicsCompoundData compound, CompoundOverlap mode) : ICompoundQuery
+    {
+        public bool Overlaps;
+
+        public readonly bool IntersectsNode(Vector3 min, Vector3 max) => BoxIntersectsAABB(center, halfExtents, min, max);
+
+        public readonly bool FirstChildFirst(int splitAxis) => true;
+
+        public bool VisitChild(int childId)
+        {
+            if (childId >= compound.MeshBaseIndex)
+            {
+                if (mode != CompoundOverlap.HullVolumeOnly)
+                {
+                    var mesh = compound.Meshes[childId - compound.MeshBaseIndex];
+                    var meshQuery = new OverlapMeshQuery(center, halfExtents, mesh);
+                    TraverseBvh(mesh.PhysicsTree, ref meshQuery);
+                    Overlaps = meshQuery.Overlaps;
+                }
+            }
+            else if (childId >= compound.HullBaseIndex)
+            {
+                var hull = compound.Hulls[childId - compound.HullBaseIndex];
+                Overlaps = mode == CompoundOverlap.Surface
+                    ? HullSurfaceOverlapsBox(hull, center, halfExtents)
+                    : BoxIntersectsAABB(center, halfExtents, hull.Min, hull.Max) && !HullSeparatesBox(hull, center, halfExtents);
+            }
+
+            return Overlaps;
+        }
+    }
+
+    /// <summary>
+    /// Generates the 13 SAT axes for a box-triangle test, in order: the triangle face normal, the
+    /// 9 cross products of triangle edges with the box axes, and the 3 box axes. Axes that constrain
+    /// nothing are left out.
+    /// </summary>
+    /// <param name="v0">The first triangle vertex.</param>
+    /// <param name="v1">The second triangle vertex.</param>
+    /// <param name="v2">The third triangle vertex.</param>
+    /// <param name="skipDegenerateFace">Whether to also leave out the face axis of a zero-area triangle
+    /// (its edge and box axes still apply).</param>
+    /// <param name="axes">Receives the generated, unnormalized axes; at least 13 long.</param>
+    /// <returns>The number of axes written.</returns>
+    private static int GetSatAxes(Vector3 v0, Vector3 v1, Vector3 v2, bool skipDegenerateFace, Span<Vector3> axes)
+    {
+        var count = 0;
+        var face = MathUtils.TriangleCross(v0, v1, v2);
+
+        if (!(skipDegenerateFace && face.LengthSquared() < Epsilon * Epsilon))
+        {
+            axes[count++] = face;
+        }
+
+        AddEdgeAxes(v1 - v0, axes, ref count);
+        AddEdgeAxes(v2 - v1, axes, ref count);
+        AddEdgeAxes(v0 - v2, axes, ref count);
+
+        axes[count++] = Vector3.UnitX;
+        axes[count++] = Vector3.UnitY;
+        axes[count++] = Vector3.UnitZ;
+
+        return count;
+
+        static void AddEdgeAxes(Vector3 edge, Span<Vector3> axes, ref int count)
+        {
+            if (!(MathF.Abs(edge.Z) < Epsilon && MathF.Abs(edge.Y) < Epsilon))
+            {
+                axes[count++] = new Vector3(0f, -edge.Z, edge.Y);
+            }
+
+            if (!(MathF.Abs(edge.X) < Epsilon && MathF.Abs(edge.Z) < Epsilon))
+            {
+                axes[count++] = new Vector3(edge.Z, 0f, -edge.X);
+            }
+
+            if (!(MathF.Abs(edge.Y) < Epsilon && MathF.Abs(edge.X) < Epsilon))
+            {
+                axes[count++] = new Vector3(-edge.Y, edge.X, 0f);
+            }
+        }
     }
 
     /// <summary>
@@ -725,14 +986,11 @@ public class Rubikon
     private static bool TriangleOverlaps(Vector3 center, Vector3 halfExtents, Vector3 v0, Vector3 v1, Vector3 v2)
     {
         ReadOnlySpan<Vector3> triangle = [v0, v1, v2];
+        Span<Vector3> axes = stackalloc Vector3[13];
+        var axisCount = GetSatAxes(v0, v1, v2, skipDegenerateFace: true, axes);
 
-        for (var axis = 0; axis < 13; axis++)
+        foreach (var axisVector in axes[..axisCount])
         {
-            if (!TryGetSatAxis(axis, triangle, skipDegenerateFace: true, out var axisVector))
-            {
-                continue;
-            }
-
             // The separation test is scale-invariant: boxExtent and the projections both scale
             // with the axis length, so the axis does not need to be normalized
             var boxExtent = Vector3.Dot(Vector3.Abs(axisVector), halfExtents);
@@ -806,16 +1064,42 @@ public class Rubikon
             && center.Z >= min.Z - halfExtents.Z && center.Z <= max.Z + halfExtents.Z;
     }
 
-    /// <summary>
-    /// Solid untagged geometry that closely resembles the render mesh.
-    /// </summary>
-    public const string DefaultGeometry = "default";
+    // Solid untagged geometry that closely resembles the render mesh
+    internal const string DefaultGeometry = "default";
 
-    /// <summary>Collision name for thrown grenades.</summary>
-    public const string GrenadeCollisionName = "grenade";
+    internal const string GrenadeCollisionName = "grenade";
 
-    /// <summary>Collision name for the player.</summary>
-    public const string PlayerCollisionName = "player";
+    internal const string LadderCollisionName = "ladder";
+
+    internal const string Cs2PlayerCollisionFilter = "player";
+
+    /// <summary>Which shapes a query collides with, decided from each shape's interaction tags.</summary>
+    private readonly struct CollisionFilter
+    {
+        private enum Kind
+        {
+            Named,
+            Everything,
+        }
+
+        private readonly Kind kind;
+        private readonly string collisionName;
+
+        private CollisionFilter(Kind kind, string collisionName)
+        {
+            this.kind = kind;
+            this.collisionName = collisionName;
+        }
+
+        /// <summary>Filtered by a collision interaction name such as <see cref="Cs2PlayerCollisionFilter"/>.</summary>
+        public static CollisionFilter Named(string collisionName) => new(Kind.Named, collisionName);
+
+        /// <summary>No filtering.</summary>
+        public static CollisionFilter Everything => new(Kind.Everything, string.Empty);
+
+        public bool Collides(string[] interactAs, string[] interactExclude)
+            => kind == Kind.Everything || !SkipsCollision(collisionName, interactAs, interactExclude);
+    }
 
     private static bool SkipsCollision(string collisionName, string[] interactAs, string[] interactExclude)
     {
@@ -829,6 +1113,11 @@ public class Rubikon
             return true;
         }
 
+        if (collisionName == LadderCollisionName)
+        {
+            return !ContainsString(interactAs, LadderCollisionName);
+        }
+
         // Untagged geometry stops everything; a tagged shape only stops what its tags name.
         if (interactAs.Length == 0)
         {
@@ -837,7 +1126,7 @@ public class Rubikon
 
         return collisionName switch
         {
-            PlayerCollisionName => !ContainsString(interactAs, "playerclip")
+            Cs2PlayerCollisionFilter => !ContainsString(interactAs, "playerclip")
                 && !ContainsString(interactAs, "passbullets")
                 && !ContainsString(interactAs, "window"),
 
@@ -862,7 +1151,7 @@ public class Rubikon
         return false;
     }
 
-    private static void RayIntersectsWithHull(RayTraceContext ray, PhysicsHullData hull, ref TraceResult closestHit)
+    private static void RayIntersectsWithHull(in RayTraceContext ray, PhysicsHullData hull, ref TraceResult closestHit)
     {
         // Skip hulls that cannot contain a hit closer than the best one found so far
         if (!RayIntersectsAABB(ray, hull.Min, hull.Max, out var entryDistance) || entryDistance > closestHit.Distance)
@@ -881,7 +1170,7 @@ public class Rubikon
         }
     }
 
-    private static void AABBTraceHull(AABBTraceContext trace, PhysicsHullData hull, ref TraceResult closestHit)
+    private static void AABBTraceHull(in AABBTraceContext trace, PhysicsHullData hull, ref TraceResult closestHit)
     {
         // Expand hull AABB by trace half extents for conservative culling, and skip
         // hulls that cannot contain a hit closer than the best one found so far
@@ -903,14 +1192,14 @@ public class Rubikon
         }
     }
 
-    private void AABBTraceHullBVH(AABBTraceContext trace, string collisionName, ref TraceResult closestHit)
+    private void AABBTraceHullBVH(AABBTraceContext trace, CollisionFilter filter, ref TraceResult closestHit)
     {
-        var query = new SweepHullsQuery(trace, collisionName, Hulls, HullIndices) { ClosestHit = closestHit };
+        var query = new SweepHullsQuery(trace, filter, Hulls, HullIndices) { ClosestHit = closestHit };
         TraverseBvh(HullTree, ref query);
         closestHit = query.ClosestHit;
     }
 
-    private struct SweepHullsQuery(AABBTraceContext trace, string collisionName, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
+    private struct SweepHullsQuery(AABBTraceContext trace, CollisionFilter filter, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
     {
         public TraceResult ClosestHit;
 
@@ -928,7 +1217,7 @@ public class Rubikon
             {
                 var hull = hulls[hullIndices[i]];
 
-                if (SkipsCollision(collisionName, hull.InteractAs, hull.InteractExclude))
+                if (!filter.Collides(hull.InteractAs, hull.InteractExclude))
                 {
                     continue;
                 }
@@ -945,7 +1234,7 @@ public class Rubikon
         }
     }
 
-    private struct RayHullsQuery(RayTraceContext ray, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
+    private struct RayHullsQuery(RayTraceContext ray, CollisionFilter filter, PhysicsHullData[] hulls, int[] hullIndices) : IBvhQuery
     {
         public TraceResult ClosestHit;
 
@@ -962,7 +1251,7 @@ public class Rubikon
             {
                 var hull = hulls[hullIndices[i]];
 
-                if (ContainsString(hull.InteractAs, "playerclip"))
+                if (!filter.Collides(hull.InteractAs, hull.InteractExclude))
                 {
                     continue;
                 }
@@ -1016,7 +1305,7 @@ public class Rubikon
         }
     }
 
-    private static bool RayIntersectsAABB(RayTraceContext ray, Vector3 min, Vector3 max, out float entryDistance)
+    private static bool RayIntersectsAABB(in RayTraceContext ray, Vector3 min, Vector3 max, out float entryDistance)
     {
         // Calculate intersection with AABB using slab method
         var t1 = (min - ray.Origin) * ray.InvDirection;
@@ -1035,7 +1324,7 @@ public class Rubikon
         return intersects;
     }
 
-    private static bool RayIntersectsTriangle(RayTraceContext ray, Vector3 v0, Vector3 v1, Vector3 v2, out (float Distance, Vector3 Normal) intersection)
+    private static bool RayIntersectsTriangle(in RayTraceContext ray, Vector3 v0, Vector3 v1, Vector3 v2, out (float Distance, Vector3 Normal) intersection)
     {
         // Möller-Trumbore ray-triangle intersection algorithm
         var edge1 = v1 - v0;
@@ -1122,8 +1411,16 @@ public class Rubikon
         }
     }
 
-    private static void AABBTraceTriangle13AxisSat(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
+    private static void AABBTraceTriangle13AxisSat(in AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
     {
+        var halfSweep = trace.Direction * (MathF.Min(trace.Length, closestHit.Distance) * 0.5f);
+        var sweptHalfExtents = Vector3.Abs(halfSweep) + trace.HalfExtents + new Vector3(SurfaceEpsilon);
+
+        if (!BoxIntersectsAABB(trace.Origin + halfSweep, sweptHalfExtents, Vector3.Min(Vector3.Min(v0, v1), v2), Vector3.Max(Vector3.Max(v0, v1), v2)))
+        {
+            return;
+        }
+
         //Needs to exist from the start, as it gets updated while running through the axis.
         var hitNormal = Vector3.Zero;
 
@@ -1131,14 +1428,12 @@ public class Rubikon
 
         float enter = float.NegativeInfinity, exit = float.PositiveInfinity;
 
-        for (var axis = 0; axis < 13; axis++)
-        {
-            if (!TryGetSatAxis(axis, triangle, skipDegenerateFace: false, out var axisVector))
-            {
-                continue;
-            }
+        Span<Vector3> axes = stackalloc Vector3[13];
+        var axisCount = GetSatAxes(v0, v1, v2, skipDegenerateFace: false, axes);
 
-            axisVector = Vector3.Normalize(axisVector);
+        foreach (var generatedAxis in axes[..axisCount])
+        {
+            var axisVector = Vector3.Normalize(generatedAxis);
             axisVector = Vector3.Dot(trace.Direction, axisVector) > 0 ? axisVector : -axisVector;
             // cosTheta >= 0 because axisVector was flipped toward the ray above.
             // The sweep advances the box projection by cosTheta * Length over the trace.

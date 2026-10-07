@@ -1093,7 +1093,9 @@ namespace GUI.Forms
 
             try
             {
+#pragma warning disable CA2000 // The viewer owns the renderer context and disposes it
                 viewer = new GLCharacterPreviewViewer(guiContext, guiContext.CreateRendererContext());
+#pragma warning restore CA2000
                 viewer.SetModels(GetPreviewModels(), frameCamera: true);
                 heroChangedSincePreview = false;
 

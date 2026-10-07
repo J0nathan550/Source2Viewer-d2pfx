@@ -17,12 +17,6 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets the axis-aligned bounding box of the mesh in local space.</summary>
         public AABB BoundingBox { get; }
 
-        /// <summary>Gets or sets the tint color multiplier applied to the entire mesh.</summary>
-        public Vector4 Tint { get; set; } = Vector4.One;
-
-        /// <summary>Gets or sets the alpha component of <see cref="Tint"/>.</summary>
-        public float Alpha { get => Tint.W; set => Tint = Tint with { W = value }; }
-
         private readonly RendererContext renderContext;
 
         /// <summary>Gets the list of meshlets for GPU-driven indirect culling.</summary>
@@ -129,7 +123,18 @@ namespace ValveResourceFormat.Renderer
         {
             IsSkinningActive = active;
 
-            FlexStateManager?.ResetControllers();
+            if (FlexStateManager is { } flexStateManager)
+            {
+                flexStateManager.ResetControllers();
+
+                var composite = flexStateManager.MorphComposite;
+
+                if (composite.IsPlaced)
+                {
+                    composite.Clear();
+                    renderContext.MorphAtlas.Queue(composite);
+                }
+            }
         }
 
         /// <summary>Recompiles all draw call materials with a modified shader static combo value.</summary>
@@ -167,13 +172,25 @@ namespace ValveResourceFormat.Renderer
 
                 if (materialTable.TryGetValue(materialName, out var replacementName))
                 {
-                    // Recycle non-material-derived shader arguments
-                    var staticParams = materialData.GetShaderArguments();
-                    var dynamicParams = new Dictionary<string, byte>(material.Shader.Parameters.Except(staticParams));
-
-                    drawCall.SetNewMaterial(renderContext.MaterialLoader.GetMaterial(replacementName, dynamicParams));
+                    ReplaceMaterial(drawCall, replacementName);
                 }
             }
+        }
+
+        /// <summary>Replaces the material of a single draw call.</summary>
+        /// <param name="drawCall">One of <see cref="DrawCalls"/>.</param>
+        /// <param name="replacementName">Name of the replacement material.</param>
+        public void ReplaceMaterial(DrawCall drawCall, string replacementName)
+        {
+            ArgumentNullException.ThrowIfNull(drawCall);
+
+            var material = drawCall.Material;
+
+            // Recycle non-material-derived shader arguments
+            var staticParams = material.Material.GetShaderArguments();
+            var dynamicParams = new Dictionary<string, byte>(material.Shader.Parameters.Except(staticParams));
+
+            drawCall.SetNewMaterial(renderContext.MaterialLoader.GetMaterial(replacementName, dynamicParams));
         }
 
         /// <summary>Replaces all draw call materials with a single material resource for use in the material viewer.</summary>
@@ -254,6 +271,8 @@ namespace ValveResourceFormat.Renderer
             // we are not sure when there can be more than one scene object here.
 
             var vertexOffset = 0;
+            var drawCallIndex = 0;
+
             foreach (var sceneObject in sceneObjects)
             {
                 var i = 0;
@@ -264,6 +283,7 @@ namespace ValveResourceFormat.Renderer
 
                 foreach (var objectDrawCall in objectDrawCalls)
                 {
+                    var index = drawCallIndex++;
                     var materialName = Mesh.GetMaterialName(objectDrawCall);
 
                     if (materialName == null && Mesh.IsOccluder(objectDrawCall))
@@ -276,7 +296,10 @@ namespace ValveResourceFormat.Renderer
                         materialName = replacementName;
                     }
 
-                    var shaderArguments = new Dictionary<string, byte>(scene.RenderAttributes);
+                    var shaderArguments = scene.LightingInfo.CreateShaderArguments(
+                        hasLightmapUvs: Mesh.HasBakedLightingFromLightMap(objectDrawCall),
+                        hasVertexLighting: Mesh.HasBakedLightingFromVertexStream(objectDrawCall)
+                    );
 
                     if (Skinning != MeshSkinning.None)
                     {
@@ -310,22 +333,9 @@ namespace ValveResourceFormat.Renderer
                         shaderArguments.Add("D_COMPRESSED_NORMALS_AND_TANGENTS", compressedVersion);
                     }
 
-                    if (Mesh.HasBakedLightingFromLightMap(objectDrawCall) && scene.LightingInfo.HasValidLightmaps)
-                    {
-                        shaderArguments.Add("D_BAKED_LIGHTING_FROM_LIGHTMAP", 1);
-                    }
-                    else if (Mesh.HasBakedLightingFromVertexStream(objectDrawCall))
-                    {
-                        shaderArguments.Add("D_BAKED_LIGHTING_FROM_VERTEX_STREAM", 1);
-                    }
-                    else if (scene.LightingInfo.HasValidLightProbes)
-                    {
-                        shaderArguments.Add("D_BAKED_LIGHTING_FROM_PROBE", 1);
-                    }
-
                     var material = renderContext.MaterialLoader.GetMaterial(materialName, shaderArguments);
 
-                    var drawCall = CreateDrawCall(objectDrawCall, material, vbib, gpuVbib);
+                    var drawCall = CreateDrawCall(objectDrawCall, index, material, vbib, gpuVbib);
                     if (i < objectDrawBounds.Count)
                     {
                         drawCall.DrawBounds = new AABB(
@@ -377,7 +387,7 @@ namespace ValveResourceFormat.Renderer
             }
         }
 
-        private DrawCall CreateDrawCall(KVObject objectDrawCall, RenderMaterial material, VBIB vbib, GPUMeshBuffers gpuVbib)
+        private DrawCall CreateDrawCall(KVObject objectDrawCall, int drawCallIndex, RenderMaterial material, VBIB vbib, GPUMeshBuffers gpuVbib)
         {
             var vertexBuffers = objectDrawCall.GetArray("m_vertexBuffers");
 
@@ -386,7 +396,8 @@ namespace ValveResourceFormat.Renderer
                 Material = material,
                 MeshBuffers = renderContext.MeshBufferCache,
                 MeshName = Name,
-                VertexBuffers = new VertexDrawBuffer[vertexBuffers.Count]
+                VertexBuffers = new VertexDrawBuffer[vertexBuffers.Count],
+                Index = drawCallIndex,
             };
 
             var primitiveType = objectDrawCall.GetEnumValue<RenderPrimitiveType>("m_nPrimitiveType");
@@ -589,9 +600,6 @@ namespace ValveResourceFormat.Renderer
     /// </summary>
     public abstract class MeshCollectionNode : SceneNode
     {
-        /// <summary>Gets or sets the tint color applied to all meshes in this node.</summary>
-        public abstract Vector4 Tint { get; set; }
-
         /// <inheritdoc/>
         protected MeshCollectionNode(Scene scene) : base(scene)
         {
@@ -599,5 +607,7 @@ namespace ValveResourceFormat.Renderer
 
         /// <summary>Gets the list of renderable meshes owned by this node.</summary>
         public List<RenderableMesh> RenderableMeshes { get; protected init; } = [];
+
+        internal virtual List<RenderableMesh> AllRenderableMeshes => RenderableMeshes;
     }
 }

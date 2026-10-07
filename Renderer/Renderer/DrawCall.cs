@@ -33,6 +33,8 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the optional bounding box used for draw-level culling.</summary>
         public AABB? DrawBounds { get; set; }
 
+        internal uint InstanceBufferIndex { get; set; }
+
         /// <summary>Gets or sets the mesh identifier used for picking.</summary>
         public int MeshId { get; set; }
 
@@ -55,8 +57,24 @@ namespace ValveResourceFormat.Renderer
         /// draw and holds it.</summary>
         private int vao;
 
+        private VertexDrawBuffer[] vertexBuffers = [];
+
         /// <summary>Gets the vertex buffer bindings used by this draw call.</summary>
-        public required VertexDrawBuffer[] VertexBuffers { get; init; }
+        public required VertexDrawBuffer[] VertexBuffers
+        {
+            get => vertexBuffers;
+            init => vertexBuffers = value;
+        }
+
+        /// <summary> Add a new vertex buffer. The attributes may override existing ones.</summary>
+        public void AddVertexBuffer(VertexDrawBuffer buffer)
+        {
+            vertexBuffers = [buffer, .. vertexBuffers];
+            vao = 0;
+        }
+
+        /// <summary>Gets the index of this draw call among the draw calls of its mesh.</summary>
+        public int Index { get; init; }
 
         /// <summary>Gets or sets the data type of each element in the index buffer.</summary>
         public DrawElementsType IndexType { get; set; }

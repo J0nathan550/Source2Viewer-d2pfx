@@ -16,27 +16,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
     /// </summary>
     public partial class ModelSceneNode : MeshCollectionNode
     {
-        /// <inheritdoc/>
-        public override Vector4 Tint
-        {
-            get
-            {
-                if (meshRenderers.Count > 0)
-                {
-                    return meshRenderers[0].Tint;
-                }
-
-                return Vector4.One;
-            }
-            set
-            {
-                foreach (var renderer in meshRenderers)
-                {
-                    renderer.Tint = value;
-                }
-            }
-        }
-
         /// <summary>Gets the animation controller managing skeletal pose and flex data for this model.</summary>
         public AnimationController AnimationController { get; }
 
@@ -52,6 +31,8 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         public bool HasMeshes => meshRenderers.Count > 0;
 
         private readonly List<RenderableMesh> meshRenderers = [];
+
+        internal override List<RenderableMesh> AllRenderableMeshes => meshRenderers;
 
         private (string Name, string[] Materials) activeMaterialGroup;
         private Dictionary<string, string>? materialTable;
@@ -73,9 +54,19 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             lod = new ModelLodSelector(model.LodInfo);
             referenceMeshes = model.GetReferenceMeshNamesAndLoD().ToList();
 
-            AnimationController = new(model.Skeleton, model.FlexControllers);
             boneCount = model.Skeleton.Bones.Length;
             remappingTable = model.BoneRemapTable.Table;
+
+            if (skin != null)
+            {
+                SetMaterialGroup(skin);
+            }
+
+            Name = model.Name;
+
+            LoadMeshes(model);
+
+            AnimationController = new(model.Skeleton, model.FlexControllers);
 
             foreach (var skeletonName in model.NmSkeletonRefs)
             {
@@ -85,25 +76,18 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 }
             }
 
-            if (skin != null)
-            {
-                SetMaterialGroup(skin);
-            }
-
-            Name = model.Name;
-            Attachments = model.Attachments;
-
-            LoadMeshes(model);
             UpdateBoundingBox();
             LoadAnimations(model, embeddedAnimationsOnly: isWorldPreview);
 
             SetCharacterEyeRenderParams();
+
+            // Read after LoadMeshes, which fills them in from external meshes.
             Attachments = model.Attachments;
             AnimationController.BoneConstraints = new BoneConstraintSolver(model);
 
-            // GetAttachmentOrSelfTransform already falls back to this node's own world Transform for an empty/
+            // GetChildFrame already falls back to this node's own world Transform for an empty/
             // unmatched name - AnimationController.Transform is not it (see its doc comment), so route through here.
-            AnimationController.ResolvePosition = attachmentName => GetAttachmentOrSelfTransform(attachmentName).Translation;
+            AnimationController.ResolvePosition = attachmentName => GetChildFrame(attachmentName).Translation;
             AnimationController.AnimationLookup = animationName => Animations.GetValueOrDefault(animationName);
 
             ParticleSurface = new ModelParticleSurface(this, model, Scene.RendererContext.FileLoader);
@@ -194,6 +178,21 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <inheritdoc/>
+        public override void Delete()
+        {
+            foreach (var mesh in meshRenderers)
+            {
+                if (mesh.FlexStateManager is { } flexStateManager)
+                {
+                    Scene.RendererContext.MorphAtlas.Release(flexStateManager.MorphComposite);
+                    flexStateManager.MorphComposite.Delete();
+                }
+            }
+
+            base.Delete();
+        }
+
+        /// <inheritdoc/>
         public override void Update(Scene.UpdateContext context)
         {
             UpdateAutoLod(context.Camera);
@@ -210,8 +209,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             {
                 animationUpdated = AnimationController.Update(context.Timestep);
             }
-
-            UpdateAttachments(context);
 
             if (!animationUpdated)
             {
@@ -247,7 +244,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 if (renderableMesh.FlexStateManager.SetControllerValues(datas))
                 {
                     renderableMesh.FlexStateManager.UpdateComposite();
-                    renderableMesh.FlexStateManager.MorphComposite.Render();
+                    Scene.RendererContext.MorphAtlas.Queue(renderableMesh.FlexStateManager.MorphComposite);
                 }
             }
         }

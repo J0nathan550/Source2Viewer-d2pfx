@@ -81,6 +81,8 @@ namespace ValveResourceFormat.ResourceTypes
         /// </summary>
         public enum AudioFileType
         {
+            /// <summary>No audio data, such as containers that only reference other sounds.</summary>
+            None = -1,
             /// <summary>Advanced Audio Coding container.</summary>
             AAC = 0,
             /// <summary>Waveform Audio File Format container.</summary>
@@ -125,7 +127,7 @@ namespace ValveResourceFormat.ResourceTypes
         /// Gets the audio file type.
         /// </summary>
         /// <value>The file type.</value>
-        public AudioFileType SoundType { get; private set; }
+        public AudioFileType SoundType { get; private set; } = AudioFileType.None;
 
         /// <summary>
         /// Gets the samples per second.
@@ -196,6 +198,17 @@ namespace ValveResourceFormat.ResourceTypes
         /// <inheritdoc/>
         public override void Read(BinaryReader reader)
         {
+            // Version 5 sounds have an empty DATA block and store their info in CTRL
+            if (ReadFromCtrl())
+            {
+                return;
+            }
+
+            if (Size == 0)
+            {
+                return;
+            }
+
             reader.BaseStream.Position = Offset;
 
             if (Resource.Version > 4)
@@ -215,22 +228,31 @@ namespace ValveResourceFormat.ResourceTypes
             {
                 var bitpackedSoundInfo = reader.ReadUInt32();
                 var type = ExtractSub(bitpackedSoundInfo, 0, 2);
+                var bits = ExtractSub(bitpackedSoundInfo, 2, 5);
+                var waveFormat = (WaveAudioFormat)ExtractSub(bitpackedSoundInfo, 12, 2);
 
-                if (type > 2)
+                var soundFormat = (AudioFileType)type switch
                 {
-                    throw new InvalidDataException($"Unknown sound type in old vsnd version: {type}");
-                }
+                    AudioFileType.MP3 => AudioFormatV4.MP3,
+                    AudioFileType.WAV when waveFormat == WaveAudioFormat.ADPCM => AudioFormatV4.ADPCM,
+                    AudioFileType.WAV when bits == 8 => AudioFormatV4.PCM8,
+                    AudioFileType.WAV => AudioFormatV4.PCM16,
+                    AudioFileType.AAC => AudioFormatV4.PCM16, // The engine plays this type as 16-bit PCM
+                    _ => throw new InvalidDataException($"Unknown sound type in old vsnd version: {type}"),
+                };
 
-                SoundType = (AudioFileType)type;
-                Bits = ExtractSub(bitpackedSoundInfo, 2, 5);
+                SetSoundFormatBits(soundFormat);
                 Channels = ExtractSub(bitpackedSoundInfo, 7, 2);
-                SampleSize = ExtractSub(bitpackedSoundInfo, 9, 3);
-                AudioFormat = (WaveAudioFormat)ExtractSub(bitpackedSoundInfo, 12, 2);
-                SampleRate = ExtractSub(bitpackedSoundInfo, 14, 17);
+                SampleRate = ExtractSub(bitpackedSoundInfo, 14, 16);
             }
 
             LoopStart = reader.ReadInt32();
             SampleCount = reader.ReadUInt32();
+
+            if (Resource.Version < 3 && SoundType == AudioFileType.MP3)
+            {
+                LoopStart = -1;
+            }
             Duration = reader.ReadSingle();
 
             var sentencePosition = reader.BaseStream.Position;
@@ -246,30 +268,17 @@ namespace ValveResourceFormat.ResourceTypes
                 sentenceOffset = (uint)(sentencePosition + sentenceOffset);
             }
 
+            // An array the engine relocates but never reads
             if (Resource.Version >= 1)
             {
-                var d = reader.ReadUInt32();
-                if (d != 0)
-                {
-                    throw new UnexpectedMagicException("Unexpected", d, nameof(d));
-                }
-
-                var e = reader.ReadUInt32();
-                if (e != 0)
-                {
-                    throw new UnexpectedMagicException("Unexpected", e, nameof(e));
-                }
+                reader.ReadInt32(); // offset
+                reader.ReadInt32(); // count
             }
 
-            // v2 and v3 are the same?
-            // likely CAudioMorphData (m_morphData inside CAudioSentence)
+            // Pointer to CAudioMorphData, v3 adds no new fields
             if (Resource.Version >= 2)
             {
-                var f = reader.ReadUInt32();
-                if (f != 0)
-                {
-                    throw new UnexpectedMagicException("Unexpected", f, nameof(f));
-                }
+                reader.ReadInt32();
             }
 
             if (Resource.Version >= 4)
@@ -289,13 +298,8 @@ namespace ValveResourceFormat.ResourceTypes
             ReadPhonemeStream(reader, sentenceOffset);
         }
 
-        /// <summary>
-        /// Constructs sound data from the control block.
-        /// </summary>
-        public bool ConstructFromCtrl()
+        private bool ReadFromCtrl()
         {
-            Offset = Resource.FileSize;
-
             if (Resource.GetBlockByType(BlockType.CTRL) is not BinaryKV3 obj)
             {
                 return false;
@@ -566,7 +570,7 @@ namespace ValveResourceFormat.ResourceTypes
             Debug.Assert(buffer.Length == StreamingDataSize);
             Debug.Assert(Reader != null);
 
-            Reader.BaseStream.Position = Offset + Size;
+            Reader.BaseStream.Position = Resource.FileSize;
             Reader.BaseStream.ReadExactly(buffer);
         }
 
@@ -624,7 +628,7 @@ namespace ValveResourceFormat.ResourceTypes
             }
 
             Debug.Assert(Reader != null);
-            Reader.BaseStream.Position = Offset + Size;
+            Reader.BaseStream.Position = Resource.FileSize;
             Reader.BaseStream.CopyTo(stream);
             Debug.Assert(stream.Length == totalSize);
 
@@ -655,11 +659,20 @@ namespace ValveResourceFormat.ResourceTypes
             writer.WriteLine($"Format: {AudioFormat}");
             writer.WriteLine($"Channels: {Channels}");
 
-            var loopStart = TimeSpan.FromSeconds((double)LoopStart / SampleRate);
-            writer.WriteLine($"LoopStart: {LoopStart} ({loopStart})");
+            // Containers that only reference other sounds have a sample rate of zero
+            if (SampleRate > 0)
+            {
+                var loopStart = TimeSpan.FromSeconds((double)LoopStart / SampleRate);
+                writer.WriteLine($"LoopStart: {LoopStart} ({loopStart})");
 
-            var loopEnd = TimeSpan.FromSeconds((double)LoopEnd / SampleRate);
-            writer.WriteLine($"LoopEnd: {LoopEnd} ({loopEnd})");
+                var loopEnd = TimeSpan.FromSeconds((double)LoopEnd / SampleRate);
+                writer.WriteLine($"LoopEnd: {LoopEnd} ({loopEnd})");
+            }
+            else
+            {
+                writer.WriteLine($"LoopStart: {LoopStart}");
+                writer.WriteLine($"LoopEnd: {LoopEnd}");
+            }
 
             var duration = TimeSpan.FromSeconds(Duration);
             writer.WriteLine($"Duration: {duration} ({Duration})");

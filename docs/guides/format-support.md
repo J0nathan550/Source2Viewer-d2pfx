@@ -50,6 +50,7 @@ in the Dump column.
 | vcss     | Panorama Style             | text                          | yes     | `.css` (prettified minified text)                                                                            |
 | vdata    | Data                       | text (3D for CS2 bomb damage) | generic | KV3 text                                                                                                     |
 | vdpn     | Dota Patch Notes           | text                          | generic | KV3 text                                                                                                     |
+| vdsp     | DSP Presets                | text                          | generic | KV3 text                                                                                                     |
 | vdvn     | Dota Visual Novels         | text                          | generic | KV3 text                                                                                                     |
 | vents    | Entity Lump                | graph, text                   | yes     | entity dump; glTF/GLB; included in map exports                                                               |
 | vjs      | Panorama Script            | text                          | yes     | `.js` (byte-exact; see [Panorama](#choreo-captions-and-ui))                                                  |
@@ -86,13 +87,14 @@ in the Dump column.
 | vtex     | Texture                    | image                         | yes     | `.png` / `.exr` (stored JPEG/PNG/WebP passes through as-is); `.mks` for sprite sheets; `.vtex` config for 2D |
 | vts      | Panorama TypeScript        | text                          | yes     | `.js` (compiled JS, byte-exact)                                                                              |
 | vvis     | World Visibility           | 3D                            | yes     | -                                                                                                            |
+| vwenvmap | World Environment Maps     | text                          | generic | - (legacy, only in older map compiles)                                                                       |
 | vwnod    | World Node                 | 3D                            | yes     | handled via vmap/glTF export                                                                                 |
 | vwrld    | World                      | 3D                            | yes     | `.vmap` (Hammer); glTF/GLB                                                                                   |
+| vwrlt    | World Lighting             | text                          | generic | - (legacy, only in older map compiles)                                                                       |
 | vxml     | Panorama Layout            | text                          | yes     | `.xml` (structural decompile)                                                                                |
 | econitem | Economy Item               | text                          | generic | KV3 text                                                                                                     |
 | herolist | Dota Hero List             | text                          | yes     | plaintext KV1 (verbatim)                                                                                     |
 | item     | Artifact Item              | text                          | yes     | plaintext KV1 (verbatim)                                                                                     |
-| shader   | s&box Shader               | text                          | yes     | `.shader` source                                                                                             |
 | vdacdefs | DAC Game Defs Data         | text                          | generic | KV3 text (no ResourceType; unknown-file fallback)                                                            |
 
 ### Other Formats
@@ -104,8 +106,8 @@ in the Dump column.
 | SPIR-V `.spv`                      | Decompiled via SPIRV-Cross to HLSL (or GLSL), same as Vulkan vcs stages                                                                                                                                       |
 | dat (VCCD closed captions)         | Grid view; export to `.txt` KV1 (caption keys are lost, see [below](#choreo-captions-and-ui))                                                                                                                 |
 | bin (tools asset info)             | Text dump of the per-asset dependency and search data (an embedded KV3 segment in newer files is parsed but not dumped)                                                                                       |
-| vfont                              | Decrypted to the original TTF/OTF (CLI only)                                                                                                                                                                  |
-| uifont (CS:GO/CS2 UI font package) | Embedded fonts decrypted and extracted exactly (CLI only)                                                                                                                                                     |
+| vfont                              | Decrypted to the original TTF/OTF (CLI, and single-file export in the GUI)                                                                                                                                    |
+| uifont (CS:GO/CS2 UI font package) | Embedded fonts decrypted and extracted exactly (CLI, and single-file export in the GUI)                                                                                                                       |
 | vfe (flex scene file)              | Text view; export to a `.txt` dump                                                                                                                                                                            |
 | nav (navigation mesh)              | 3D view; export to `.glb`                                                                                                                                                                                     |
 | gnv (Dota grid navigation)         | Text info dump                                                                                                                                                                                                |
@@ -121,17 +123,22 @@ See the [exporting models guide](./exporting-models.md) for the workflow.
 
 Decompiling produces a `.vmdl` plus DMX files for meshes, physics shapes, and animations,
 loadable in ModelDoc. Reconstructed: render meshes with all vertex streams, skeleton,
-attachments, bodygroups, LOD groups, hitbox sets, material groups (skins), static collision
-shapes, physics joints and body properties, bone constraints, IK chains and control rigs,
-cloth simulated on bones, face flexes, breakable pieces, embedded sequences with events/layers/root motion, Animgraph 2
-clips and references, and a wide range of game data blocks (prop_data, particle attachments,
-and many more) passed through verbatim.
+attachments with their camera previews, bodygroups, LOD groups, hitbox sets, material groups
+(skins), static collision shapes, physics joints and body properties, bone constraints, IK
+chains and control rigs, face flexes, breakable pieces, cloth (chains, sheets, springs,
+collision shapes and effects rebuilt from the compiled `FeModel`), embedded sequences with
+events/layers/root motion, Animgraph 2 clips and references, and a wide range of game data
+blocks (prop_data, particle attachments, and many more) passed through verbatim.
+
+Cloth decompiling is experimental. Most cloth recompiles to the same simulation, but not all of
+it does, so please report models whose cloth comes back wrong. A model whose cloth cannot be
+rebuilt is decompiled without it, with a warning.
 
 What a recompiled model will be missing:
 
 | What                                      | Why                          | Details                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloth simulation                          | Partly not in compiled files | Cloth chains simulated on bones are rebuilt from the compiled `FeModel`. Node masses come out from the geometry rather than as authored, and joints aligned to the same node twice can take a different base node. Cloth simulated on a mesh's vertices is not rebuilt, so those parts will not simulate. [#653](https://github.com/ValveResourceFormat/ValveResourceFormat/issues/653) |
+| Exact cloth values                        | Partly not in compiled files | Some cloth values, such as painted masses and planarized collision shapes, are worked back from the compiled data and can come out slightly different. Models built by older compilers differ most.                                                                                                                                                                   |
 | Physics constraints and motors            | Not implemented              | `m_constraints2` constraints are not parsed, and joint motors are not exported.                                                                                                                                                                                                                                                                                       |
 | Stereo flex controls                      | Not in compiled files        | The compiler splits a stereo slider into independent left and right controllers, so it comes back as two sliders.                                                                                                                                                                                                                                                     |
 | Animations from external animation groups | Not implemented              | Only embedded sequences and Animgraph 2 clips get DMX files; sequences in referenced `vagrp` files are skipped. Animations from referenced include-models are not written either, but their `AnimIncludeModel` references are kept, so they come back if those models are decompiled too.                                                                             |
@@ -139,6 +146,7 @@ What a recompiled model will be missing:
 | Blend sequences (blend spaces)            | Not implemented              | Multi-reference blend sequences collapse to their first referenced animation.                                                                                                                                                                                                                                                                                         |
 | Vertical root motion                      | Intentional                  | The Z component of root motion is zeroed on export, matching how the engine applies movement to the visible body.                                                                                                                                                                                                                                                     |
 | Extra skin materials                      | Not implemented              | If a material group lists more materials than the default group, the extras are silently dropped.                                                                                                                                                                                                                                                                     |
+| Attachment camera preview look            | Not in compiled files        | The `preview_scale` and `background_color` of an `Attachment Camera Preview` only affect the editor, so they come back at their defaults. A camera on an attachment that the compiled model does not have is dropped.                                                                                                                                                 |
 
 ### glTF Export
 
@@ -173,7 +181,8 @@ Hammer. Reconstructed: all entities across every entity lump (including `point_t
 children, deduplicated) with full entity I/O connections, world render geometry welded back
 into editable per-material Hammer meshes (near-coplanar triangle pairs merged back into
 quads) with real
-per-face texture projection, static props with their placement properties, aggregate props
+per-face texture projection, static props with their original properties, material overrides and vertex
+paint/vertex lighting buffers, aggregate props
 split back into individual entities, world layers, overlays, and per-surface-property
 physics geometry for collision that has no matching render mesh.
 
@@ -208,6 +217,26 @@ entities) are skipped (trigger volumes do carry a physics model in compiled maps
 collision lands in the companion physics file), baked lighting (lightmaps, probes) is not
 exported, and a placed prop that names an animation via its entity properties exports only
 that one, while props naming none export their full animation set.
+
+The viewer culls a map with its world visibility (`vvis_c`) the way the game's engine does.
+Visibility data it leaves unused:
+
+| What                         | Details                                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Older region box tree layout | Found only in some Dota 2 scene maps, whose engine ignores it too; it is not parsed and those maps render without visibility culling. |
+| Two cluster octrees          | Visibility with two clusters or fewer culls nothing, as in the game.                                                                  |
+
+In the viewer, maps that a map places into itself load as spawn groups, each with its own
+lighting and visibility: the 3D sky a `skybox_reference` names, prefabs left for the game to
+load (`point_prefab` and classes flagged `ispointprefab`, such as the CS2 team intros), and the
+stages an `info_spawngroup_load_unload` loads and unloads when its entity I/O fires.
+
+| What                         | Details                                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Runtime spawn group physics  | A stage loaded through `info_spawngroup_load_unload` brings no world collision, so walking on it is not possible.    |
+| Runtime spawn group lights   | Realtime barn lights of a loaded stage are not drawn; its baked lighting and its sun are.                            |
+| Translucents across groups   | Each spawn group sorts its own translucent geometry, so translucents of two groups can overlap in the wrong order.  |
+| `sky_camera_volume`          | Not implemented; the 3D sky always comes from the `skybox_reference` and its `sky_camera`.                           |
 
 ## Materials (vmat)
 
@@ -256,14 +285,16 @@ per slice.
 | Mip chain                                  | Format limitation     | File extraction always uses the largest mip only; the texture viewer can save the mip, face, or slice it is currently showing, and per-mip access exists in the library API. HL:Alyx's per-mip roughness packing therefore has no single-file preserving export path. [#936](https://github.com/ValveResourceFormat/ValveResourceFormat/issues/936) |
 | `.vtex` config for cubemaps/arrays/volumes | Not implemented       | Only flat 2D textures get a reconstructed `.vtex` compile config; other shapes extract images only. [#856](https://github.com/ValveResourceFormat/ValveResourceFormat/issues/856)                                                                                                                                                                   |
 | Clamp/LOD flags in reconstructed `.vtex`   | Not implemented       | `SUGGEST_CLAMP*` and no-LOD flags are parsed but not written into the regenerated config.                                                                                                                                                                                                                                                           |
+| Zstd compressed mips                       | Not implemented       | Textures whose mips are Zstd compressed parse, but reading their pixels throws. None ship in CS2.                                                                                                                                                                                                                                                  |
+| `R32_UINT` in the renderer                 | Not implemented       | Integer textures decode for export, but are not uploaded to the GPU. None ship in current games.                                                                                                                                                                                                                                                    |
 | Transform detection without edit info      | Not implemented       | Which compile-time transform to reverse is detected from the resource's edit info block; files stripped of it export still-encoded pixels without warning.                                                                                                                                                                                          |
 
 ## Animation
 
 Legacy embedded sequences decode through all common per-bone compression types (unknown
-decoder types are skipped silently), and Animgraph 2 clips (`vnmclip`) decode fully:
-compressed poses, 3D root motion (position plus yaw; the root track's pitch and roll are
-dropped), float curves, events, and secondary skeleton tracks.
+decoder types are skipped with a logged error), and Animgraph 2 clips (`vnmclip`) decode
+fully: compressed poses, 3D root motion (position plus yaw; the root track's pitch and roll
+are dropped), float curves, events, and secondary skeleton tracks.
 Both feed viewer playback, glTF export, and DMX reconstruction, including retargeting of
 clips authored on a different skeleton.
 
@@ -289,10 +320,12 @@ glTF as visualization geometry. Decompiled `.vmdl` files carry all four; `.vmap`
 carry only hulls and meshes. Hitboxes fully round-trip into decompiled models.
 
 Joints (`m_joints`) and their bodies' mass, inertia, damping, drag, center of mass and tags
-export into decompiled models; joint motors do not. Cloth chains on bones from the `FeModel` block export into decompiled models; cloth on mesh vertices
-does not. Not parsed anywhere: constraints (`m_constraints2`), visible only in the raw text dump. Surface properties are resolved by name only; their physical values (friction,
-density, sounds) are not consumed or exported. Text-dumping the PHYS block of gigabyte-class
-maps can run out of memory; dump the block to a file via the CLI instead
+export into decompiled models; joint motors do not. Not parsed anywhere: constraints
+(`m_constraints2`), visible only in the raw text dump. The `FeModel` cloth/softbody block is
+decompiled into the model's cloth nodes (see [Models](#models-vmdl)). Surface properties are
+resolved by name only; their physical values (friction, density, sounds) are not consumed or
+exported. KeyValues blocks over 64 MiB, such as the PHYS block of gigabyte-class maps, are too
+large to show as text; the viewer offers **Save as text...** for them instead
 ([#840](https://github.com/ValveResourceFormat/ValveResourceFormat/issues/840)).
 
 ## Particles (vpcf)
@@ -303,7 +336,7 @@ VRF's upgraded in-memory version, so decompiled `.vpcf` files match the compiled
 subset of particle functions and lists any unsupported functions per system in red instead
 of failing. Effects that create their particles on a model spawn them on the posed mesh or
 hitboxes of the model they play on, such as a model's own effects in the model viewer, and
-at their control point when previewed on their own.
+at their control point when previewed on their own. Omni2 particle lights of the barn type are drawn as point lights.
 
 Particle snapshots (`vsnap`) preview and extract. Bone name streams survive, but skinning
 streams are written into the extracted `.vsnap` as empty streams: their values show in the
@@ -356,9 +389,7 @@ interpreted.
 - **Deadlock**: viewer shading is a work in progress; environment blend materials in
   particular do not render their texture layers correctly yet
   ([#1092](https://github.com/ValveResourceFormat/ValveResourceFormat/issues/1092)).
-- **s&box**: only the Vulkan shader container is supported, with `.shader` source
-  reconstruction; the older DXBC container is not read. Managed resources extract as
-  plaintext.
+- **s&box**: compiled shaders are not supported. Managed resources extract as plaintext.
 - **Source 1 leftovers**: `vfont` (VFONT1), `uifont` packages, VBKV, closed captions, and
   flex scene `.vfe` files are supported even where they appear in Source 1 games. Source 1
   `.nav` meshes are not supported

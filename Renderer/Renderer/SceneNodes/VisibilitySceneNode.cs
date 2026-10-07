@@ -1,7 +1,7 @@
+using System.IO.Hashing;
 using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ThirdParty;
 
 namespace ValveResourceFormat.Renderer.SceneNodes
 {
@@ -63,14 +63,14 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             var renderShader = context.ReplacementShader ?? shader;
             renderShader.Use();
-            renderShader.SetUniform3x4("transform", Transform);
-            renderShader.SetBoneAnimationData(false);
 
             using var _ = GraphicsContext.RenderState.Scope(depthWrite: false);
 
             VertexArray.Bind(vao, renderShader);
 
-            if (Scene.CurrentFramePvs.IsEmpty)
+            var pvs = context.View?.Pvs ?? default;
+
+            if (pvs.IsEmpty)
             {
                 GL.DrawArraysInstancedBaseInstance(PrimitiveType.Lines, 0, totalVertexCount, 1, Id);
             }
@@ -78,7 +78,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             {
                 foreach (var range in clusterDrawRanges)
                 {
-                    if (range.ClusterId < (uint)(Scene.CurrentFramePvs.Length * 8) && MathUtils.GetBit(Scene.CurrentFramePvs.Span, range.ClusterId))
+                    if (range.ClusterId < (uint)(pvs.Length * 8) && MathUtils.GetBit(pvs.Span, range.ClusterId))
                     {
                         GL.DrawArraysInstancedBaseInstance(PrimitiveType.Lines, range.Start, range.Count, 1, Id);
                     }
@@ -88,7 +88,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private static Color32 GetClusterColor(ushort clusterId)
         {
-            var h = MurmurHash2.Hash(clusterId, 0x3501A674);
+            var h = XxHash32.HashToUInt32(MemoryMarshal.AsBytes(new ReadOnlySpan<ushort>(in clusterId)));
 
             var r = (byte)(((h & 0x3FF) / 1023.0f * 0.6f + 0.2f) * 255);
             var g = (byte)((((h >> 10) & 0x3FF) / 1023.0f * 0.6f + 0.2f) * 255);

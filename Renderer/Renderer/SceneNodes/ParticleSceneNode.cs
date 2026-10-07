@@ -88,6 +88,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             Simulation = NodeSimulation.Parallel;
 
+            // Stop standard shaders from transforming the vertices again
+            AdditionalFlags |= SceneNodeFlags.PreTransformedVertices;
+
             if (preview)
             {
                 Preview = true;
@@ -347,6 +350,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private bool pendingRestart;
 
+        /// <summary>Stops emission and leaves the particles already alive to finish their lives.</summary>
+        public void StopEmission() => particleRenderer.Stop();
+
         /// <summary>
         /// Stops emission and plays the system's endcap, which is what the engine does when something
         /// tells a running effect to end.
@@ -372,6 +378,16 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         /// <inheritdoc cref="SetTextureOverride(string)"/>
         public void SetTextureOverride(RenderTexture texture) => particleRenderer.SetTextureOverride(texture);
+
+        /// <summary>
+        /// Replaces the material drawn by every renderer in this system and its children that draws with
+        /// one. Call before adding the node to the scene, as the material can change the passes it draws in.
+        /// </summary>
+        public void SetMaterialOverride(RenderMaterial material)
+        {
+            particleRenderer.SetMaterialOverride(material);
+            RenderPasses = particleRenderer.Passes;
+        }
 
         /// <summary>Gets the control point at the given index from the particle renderer.</summary>
         /// <param name="index">The index of the control point to retrieve.</param>
@@ -624,7 +640,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             {
                 foreach (var (index, node, attachment, offset) in modelControlPoints)
                 {
-                    SetControlPoint(index, Matrix4x4.CreateTranslation(offset) * node.GetAttachmentOrSelfTransform(attachment));
+                    SetControlPoint(index, Matrix4x4.CreateTranslation(offset) * node.GetChildFrame(attachment));
                 }
             }
 
@@ -778,8 +794,14 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <inheritdoc/>
         public override void Render(Scene.RenderContext context)
         {
-            if (!IsPlaying || context.ReplacementShader is not null)
+            if (!IsPlaying)
             {
+                return;
+            }
+
+            if (context.ReplacementShader is { } replacement)
+            {
+                RenderReplacement(context, replacement);
                 return;
             }
 
@@ -789,6 +811,26 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             }
 
             particleRenderer.Render(context.Camera, context.RenderPass, context.Layer == RenderLayer.WaterEffects);
+        }
+
+        /// <summary>Draws with a pass replacement shader, for picking and the selection outline.</summary>
+        private void RenderReplacement(Scene.RenderContext context, Shader replacement)
+        {
+            if (!particleRenderer.CanRenderReplacement
+                || context.Layer == RenderLayer.WaterEffects
+                || context.RenderPass is not (RenderPass.Opaque or RenderPass.Translucent or RenderPass.Outline))
+            {
+                return;
+            }
+
+            replacement.Use();
+
+            replacement.SetUniform1("meshId", 0u);
+
+            // A tube or a card can turn either face toward the camera.
+            using var _ = GraphicsContext.RenderState.Scope(cullMode: RsCullMode.None);
+
+            particleRenderer.RenderReplacement(replacement, Id, context.RenderPass, context.Camera);
         }
 
         /// <inheritdoc/>

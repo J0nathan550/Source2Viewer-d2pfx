@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using OpenTK.Graphics.OpenGL;
+using ValveResourceFormat.Renderer.Entities;
 using ValveResourceFormat.Renderer.PostProcess;
 using ValveResourceFormat.Renderer.SceneEnvironment;
 using ValveResourceFormat.Renderer.World;
@@ -12,7 +13,7 @@ namespace ValveResourceFormat.Renderer;
 /// <summary>
 /// Main renderer for Source 2 scenes with support for shadows, post-processing, and multiple render passes.
 /// </summary>
-public class Renderer
+public class Renderer : ISpawnGroupHost
 {
     /// <summary>
     /// Depth range for a single layer of the scene.
@@ -74,6 +75,11 @@ public class Renderer
     public Camera ViewmodelCamera { get; }
 
     /// <summary>
+    /// Camera the 3D sky is drawn through.
+    /// </summary>
+    public Camera SkyCamera { get; }
+
+    /// <summary>
     /// Per-frame rendering statistics, including CPU/GPU profiling timings
     /// </summary>
     public PerfStats PerfStats { get; }
@@ -81,16 +87,62 @@ public class Renderer
     /// <summary>
     /// The main scene to render.
     /// </summary>
-    public Scene Scene { get; set; }
+    public Scene Scene { get; }
 
     /// <summary>
-    /// Optional 3D skybox scene rendered behind the main scene.
+    /// The entity world the scenes are spawned into, ticked once a frame ahead of the scenes that draw it.
     /// </summary>
-    public Scene? SkyboxScene { get; set; }
+    public EntitySystem EntitySystem { get; }
 
-    /// <summary>
-    /// Optional 2D skybox rendered as the scene background.
-    /// </summary>
+    /// <summary>Finds the node an entity was loaded as, in whichever scene it went into.</summary>
+    /// <param name="entity">The entity to look for.</param>
+    /// <returns>Its node, or <see langword="null"/> when it has none.</returns>
+    public SceneNode? FindNode(EntityLump.Entity entity)
+    {
+        foreach (var scene in Scenes)
+        {
+            if (scene.Find(entity) is { } node)
+            {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Finds a node by its entity's <c>targetname</c>, in whichever scene it went into.</summary>
+    /// <param name="pattern">The target name to match.</param>
+    /// <returns>The first matching node, or <see langword="null"/> when there is none.</returns>
+    public SceneNode? FindNodeByTargetName(string pattern)
+    {
+        foreach (var scene in Scenes)
+        {
+            if (scene.FindNodeByTargetName(pattern) is { } node)
+            {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Gets the scenes drawn, the main scene first, then one per spawn group in load order.</summary>
+    public IReadOnlyList<Scene> Scenes => scenes;
+
+    /// <summary>Gets the spawn groups placed into the loaded map, such as its 3D sky.</summary>
+    public IReadOnlyList<SpawnGroup> SpawnGroups => spawnGroups;
+
+    /// <summary>Gets the spawn group the 3D sky is drawn from, or <see langword="null"/>; the last one placed wins.</summary>
+    // TODO: The game draws the sky of the last skybox_reference to activate, through the first sky_camera in its
+    // world group. Without one it uses the sky_camera named by an ActivateSkybox input, else the newest sky_camera,
+    // even one in the main world group, so a map with only a sky_camera draws itself as its sky. Neither the
+    // fallback nor the ActivateSkybox input is handled here.
+    public SpawnGroup? SkyGroup => spawnGroups.FindLast(static group => group.WorldGroup != null);
+
+    /// <summary>Gets the main scene state in the main view, or <see langword="null"/> until the first update.</summary>
+    public SceneViewState? MainViewState => mainViewStates.GetValueOrDefault(Scene);
+
+    /// <summary>Gets or sets the 2D sky drawn when no scene in view has one.</summary>
     public SceneSkybox2D? Skybox2D { get; set; }
 
     /// <summary>
@@ -180,8 +232,19 @@ public class Renderer
 
     /// <summary>
     /// When not <see langword="null"/>, culling uses this frustum instead of the camera frustum, freezing the cull state.
+    /// Setting it also freezes the 3D sky's cull frustum.
     /// </summary>
-    public Frustum? LockedCullFrustum { get; set; }
+    public Frustum? LockedCullFrustum
+    {
+        get;
+        set
+        {
+            field = value;
+            lockedSkyCullFrustum = value == null ? null : SkyCamera.ViewFrustum.Clone();
+        }
+    }
+
+    private Frustum? lockedSkyCullFrustum;
 
     /// <summary>
     /// When not <see langword="null"/>, PVS queries use this position instead of the camera position, freezing the PVS state.
@@ -194,11 +257,27 @@ public class Renderer
     /// </summary>
     public bool DisableAllCulling { get; set; }
 
-    /// <summary>Reused so <see cref="Scene.GetFrustumCullResults"/> keeps its cache across pre-warm calls.</summary>
+    // Reused so the frustum cull results stay cached across pre-warm calls
     private readonly Frustum noCullFrustum = Frustum.CreateEmpty();
 
-    /// <summary>The frustum to cull against, or <see langword="null"/> to use the camera's own frustum.</summary>
-    private Frustum? CullFrustum => DisableAllCulling ? noCullFrustum : LockedCullFrustum;
+    private readonly SceneView[] frameViews = new SceneView[2];
+
+    private readonly DepthPyramid depthPyramid;
+
+    private readonly List<Scene> scenes = [];
+    private readonly List<SpawnGroup> spawnGroups = [];
+
+    private readonly Dictionary<Scene, SceneViewState> mainViewStates = [];
+    private readonly Dictionary<Scene, SceneViewState> skyViewStates = [];
+
+    private readonly List<SceneViewState> mainViewSceneStates = [];
+    private readonly List<SceneViewState> skyViewSceneStates = [];
+
+    private readonly WorldFogInfo skyFog = new();
+
+    private readonly HashSet<Scene> scenesUpdated = [];
+    private readonly Dictionary<SpawnGroup, Entities.SkyCamera?> skyCameras = [];
+    private readonly List<Scene> sunCasters = [];
 
     // options
     /// <summary>
@@ -212,7 +291,7 @@ public class Renderer
     public bool IsWireframe { get; set; }
 
     /// <summary>
-    /// When <see langword="true"/>, the 3D skybox scene is included in scene rendering. Does not affect the 2D skybox.
+    /// When <see langword="true"/>, the 3D sky is drawn. Does not affect the 2D skybox.
     /// </summary>
     public bool ShowSkybox { get; set; } = true;
 
@@ -238,7 +317,237 @@ public class Renderer
         LightTilesOverlay = new(rendererContext);
         Camera = new Camera(rendererContext.FieldOfView);
         ViewmodelCamera = new Camera();
+        SkyCamera = new Camera();
         Scene = new Scene(rendererContext);
+        EntitySystem = new EntitySystem(rendererContext)
+        {
+            SpawnGroupHost = this,
+        };
+        depthPyramid = new DepthPyramid(rendererContext);
+
+        scenes.Add(Scene);
+    }
+
+    /// <summary>Starts drawing a spawn group; its scene must be initialized before the next frame.</summary>
+    public void AddSpawnGroup(SpawnGroup group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+
+        spawnGroups.Add(group);
+        scenes.Add(group.Scene);
+    }
+
+    /// <summary>
+    /// Stops drawing a spawn group and releases its scene and mounted package. Remove its entities first with
+    /// <see cref="EntitySystem.RemoveSpawnGroup"/>.
+    /// </summary>
+    public void RemoveSpawnGroup(SpawnGroup group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+
+        if (!spawnGroups.Remove(group))
+        {
+            return;
+        }
+
+        scenes.Remove(group.Scene);
+        ReleaseSpawnGroup(group);
+    }
+
+    private void ReleaseSpawnGroup(SpawnGroup group)
+    {
+        skyCameras.Remove(group);
+
+        foreach (var states in (ReadOnlySpan<Dictionary<Scene, SceneViewState>>)[mainViewStates, skyViewStates])
+        {
+            if (states.Remove(group.Scene, out var state))
+            {
+                state.Dispose();
+            }
+        }
+
+        group.Scene.DeleteNodes();
+        group.Scene.Dispose();
+
+        if (group.MountedPackage is { } package)
+        {
+            RendererContext.FileLoader.RemovePackageFromSearch(package);
+            package.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The views this frame draws, main view first, valid until the next call.
+    /// Also updates <see cref="SkyCamera"/> from <paramref name="camera"/>.
+    /// </summary>
+    private ReadOnlySpan<SceneView> CollectViews(Camera camera)
+    {
+        var count = 1;
+
+        mainViewSceneStates.Clear();
+        mainViewSceneStates.Add(ViewStateFor(mainViewStates, Scene));
+
+        foreach (var group in spawnGroups)
+        {
+            if (group.WorldGroup == null)
+            {
+                mainViewSceneStates.Add(ViewStateFor(mainViewStates, group.Scene));
+            }
+        }
+
+        frameViews[0] = new SceneView
+        {
+            States = mainViewSceneStates,
+            Camera = camera,
+            Fog = Scene.FogInfo,
+            LockedCullFrustum = LockedCullFrustum,
+        };
+
+        if (SkyGroup is { } skyGroup)
+        {
+            // Every frame, so a moving reference takes the sky camera with it
+            var reference = skyGroup.PlacedBy?.Transform.Translation ?? skyGroup.Transform.Translation;
+            var sky = SkyTransform.FromEntities(reference, SkyCameraOf(skyGroup));
+
+            sky.ConfigureCamera(SkyCamera, camera);
+
+            // Every frame: the sky loads part way through the map, possibly before the map fog spawns
+            skyFog.SetToSkyView(Scene.FogInfo, skyGroup.Scene.FogInfo);
+
+            skyViewSceneStates.Clear();
+
+            foreach (var group in spawnGroups)
+            {
+                if (group.WorldGroup == skyGroup.WorldGroup)
+                {
+                    skyViewSceneStates.Add(ViewStateFor(skyViewStates, group.Scene));
+                }
+            }
+
+            frameViews[count++] = new SceneView
+            {
+                States = skyViewSceneStates,
+                Camera = SkyCamera,
+                Sky = sky,
+                Fog = skyFog,
+                LockedCullFrustum = lockedSkyCullFrustum,
+            };
+        }
+
+        return frameViews.AsSpan(0, count);
+    }
+
+    private Entities.SkyCamera? SkyCameraOf(SpawnGroup group)
+    {
+        if (skyCameras.TryGetValue(group, out var skyCamera))
+        {
+            return skyCamera;
+        }
+
+        foreach (var entity in EntitySystem.Entities)
+        {
+            if (entity is Entities.SkyCamera candidate && candidate.Scene == group.Scene)
+            {
+                skyCamera = candidate;
+                break;
+            }
+        }
+
+        skyCameras.Add(group, skyCamera);
+
+        return skyCamera;
+    }
+
+    private SceneViewState ViewStateFor(Dictionary<Scene, SceneViewState> states, Scene scene)
+    {
+        if (states.TryGetValue(scene, out var state))
+        {
+            return state;
+        }
+
+        state = new SceneViewState(scene)
+        {
+            DepthPyramid = depthPyramid.Texture,
+        };
+
+        states.Add(scene, state);
+
+        scene.ShadingLightBinner ??= state.LightBinner;
+
+        return state;
+    }
+
+    /// <summary>The frustum a view's CPU cull runs against, or <see langword="null"/> for the camera's own.</summary>
+    private Frustum? CullFrustumFor(in SceneView view) => DisableAllCulling ? noCullFrustum : view.LockedCullFrustum;
+
+    /// <summary>
+    /// The frustum a view's GPU meshlet cull runs against, or <see langword="null"/> to leave its
+    /// indirect buffers untouched, freezing the cull state. Disabled culling still has to dispatch,
+    /// otherwise the indirect draw commands keep the previous contents.
+    /// </summary>
+    private Frustum? MeshletCullFrustumFor(in SceneView view)
+    {
+        if (DisableAllCulling)
+        {
+            return noCullFrustum;
+        }
+
+        return view.LockedCullFrustum == null ? view.Camera.ViewFrustum : null;
+    }
+
+    /// <summary>
+    /// The view the first person viewmodel is drawn through: the main scene at the viewmodel field of
+    /// view, reusing the lights binned for the main view.
+    /// </summary>
+    private SceneView ViewmodelView(in SceneView main)
+        => main with { Camera = ViewmodelCamera, BinnedFor = main.Camera };
+
+    private static void LendSun(in SceneView view)
+    {
+        WorldLightingInfo? donor = null;
+
+        foreach (var state in view.States)
+        {
+            if (state.Scene.LightingInfo.HasOwnSun)
+            {
+                donor = state.Scene.LightingInfo;
+                break;
+            }
+        }
+
+        foreach (var state in view.States)
+        {
+            state.Scene.LightingInfo.BorrowSun(donor);
+        }
+    }
+
+    private List<Scene> SceneCasters(in SceneView view)
+    {
+        sunCasters.Clear();
+
+        foreach (var state in view.States)
+        {
+            sunCasters.Add(state.Scene);
+        }
+
+        return sunCasters;
+    }
+
+    // Last view first, as a 2D sky from the 3D sky view replaces any from the main view
+    private SceneSkybox2D? BackgroundFor(ReadOnlySpan<SceneView> views)
+    {
+        for (var i = views.Length - 1; i >= 0; i--)
+        {
+            foreach (var state in views[i].States)
+            {
+                if (state.Scene.Skybox2D is { } skybox)
+                {
+                    return skybox;
+                }
+            }
+        }
+
+        return Skybox2D;
     }
 
     /// <summary>
@@ -307,8 +616,8 @@ public class Renderer
         histogramShaders[0] = Scene.RendererContext.ShaderLoader.LoadShader("histogram");
         histogramShaders[1] = Scene.RendererContext.ShaderLoader.LoadShader("histogram", ("D_HISTOGRAM_MODE", 1));
 
-        histogramBuffers[0] = StorageBuffer.Allocate<uint>(ReservedBufferSlots.BufferSlot2, "Histogram", 256, BufferUsage.GpuOnly);
-        histogramBuffers[1] = StorageBuffer.Allocate<uint>(ReservedBufferSlots.BufferSlot3, "HistogramReadback", 4, BufferUsage.Readback);
+        histogramBuffers[0] = StorageBuffer.Allocate<uint>(ReservedBufferSlots.BufferSlot15, "Histogram", 256, BufferUsage.GpuOnly);
+        histogramBuffers[1] = StorageBuffer.Allocate<uint>(ReservedBufferSlots.BufferSlot11, "HistogramReadback", 4, BufferUsage.Readback);
 
         ResolvedSceneColor = RenderTexture.Create(4, 4, ImageFormat.RGBA16161616F, nameof(ResolvedSceneColor));
         ResolvedSceneColor.SetFiltering(TextureMinFilter.Linear, TextureMagFilter.Linear);
@@ -328,11 +637,13 @@ public class Renderer
         WaterEffectsBuffer.SetColorSamplerState(TextureMinFilter.Linear, TextureMagFilter.Linear, RsTextureAddressMode.Border);
         SetupWaterEffectsTexture();
 
-        EnsureDepthPyramidSize(256, 256);
+        depthPyramid.LoadShaders();
+        depthPyramid.EnsureSize(256, 256);
     }
 
     /// <summary>Slots out of <see cref="MaterialLoader.ShaderTextures"/> that have been resolved.</summary>
     private readonly HashSet<ReservedTextureSlots> loadedShaderTextures = [];
+    private RenderTexture? morphAtlasTexture;
 
     /// <summary>
     /// Loads any used texture from the <see cref="MaterialLoader.ShaderTextures"/> list.
@@ -419,104 +730,189 @@ public class Renderer
         }
     }
 
-    void UpdatePerViewGpuBuffers(Scene scene, Camera camera, float deltaTime)
+    /// <summary>
+    /// Switches drawing to a view: its view constants, its scene's buffers, and the camera and scene in
+    /// the render context. These must always change together.
+    /// </summary>
+    private void DrawThrough(in SceneView view, SceneViewState state, ref Scene.RenderContext renderContext)
+    {
+        BindView(view, state);
+        state.Scene.SetSceneBuffers();
+        state.LightBinner.Bind();
+
+        renderContext.Camera = view.Camera;
+        renderContext.Scene = state.Scene;
+        renderContext.View = state;
+    }
+
+    private void BindView(in SceneView view, SceneViewState state)
     {
         Debug.Assert(ViewBuffer != null);
 
-        {
-            // Skip occlusion culling if the camera moved too much -- we use last frame depth
-            var moveDelta = ViewBuffer.Data.CameraPosition - camera.Location;
-            var eyeDelta = ViewBuffer.Data.CameraDirWs - camera.Forward;
+        view.Camera.SetViewConstants(ViewBuffer.Data);
 
-            var t = moveDelta.LengthSquared();
-            var t2 = eyeDelta.LengthSquared();
+        // The depth pyramid is shared, but each view reprojects it with its own camera
+        ViewBuffer.Data.WorldToProjectionPrev = state.DepthPyramidViewProjection;
 
-            if (t > 5000f || t2 > 0.5f)
-            {
-                scene.DepthPyramidValid = false;
-                SkyboxScene?.DepthPyramidValid = false;
-            }
-            else
-            {
-                ViewBuffer.Data.WorldToProjectionPrev = scene.DepthPyramidViewProjection;
-            }
-        }
+        // The fog toggle and the weather of the main scene apply to every view
+        Scene.SetFogConstants(ViewBuffer.Data, view.Fog, view.FogSpace);
 
-        camera.SetViewConstants(ViewBuffer.Data);
-        scene.SetFogConstants(ViewBuffer.Data);
+        ViewBuffer.Data.IsSkybox = view.Sky != null;
+        ViewBuffer.Data.SceneIndex = (uint)scenes.IndexOf(state.Scene);
+
+        ViewBuffer.Data.SunShadowsEnabled = view.Sky == null;
+
+        state.LightBinner.SetPixelRemap(view.BinnedFor is { } binnedFor
+            ? view.Camera.GetPixelRemapTo(binnedFor, ViewBuffer.Data.ViewportSize)
+            : ViewConstants.PixelRemapIdentity);
+
+        ViewBuffer.BindBufferBase();
+        ViewBuffer.Update();
+    }
+
+    private void UpdateViewGpuBuffers(in SceneView view, SceneViewState state)
+    {
+        Debug.Assert(ViewBuffer != null);
+
+        var scene = state.Scene;
+
+        BindView(view, state);
 
         var cullWidth = (int)ViewBuffer.Data.ViewportSize.X;
         var cullHeight = (int)ViewBuffer.Data.ViewportSize.Y;
 
-        var tileCullEnabled = scene.EnableTiledLightCulling;
-        scene.LightBinner.Update(ViewBuffer.Data, cullWidth, cullHeight, tileCullEnabled);
-        SkyboxScene?.LightBinner.Update(ViewBuffer.Data, cullWidth, cullHeight, tileCullEnabled);
+        // The main scene's tile culling toggle applies to every view
+        state.LightBinner.Update(ViewBuffer.Data, cullWidth, cullHeight, Scene.EnableTiledLightCulling);
 
-        ViewBuffer.BindBufferBase();
-        ViewBuffer.Update();
-
-        // A locked cull frustum leaves the indirect buffers untouched, freezing the cull state. Disabled
-        // culling still has to dispatch, otherwise the indirect draw commands keep the previous contents.
-        Frustum? gpuCullFrustum = DisableAllCulling
-            ? noCullFrustum
-            : LockedCullFrustum == null ? camera.ViewFrustum : null;
-
-        if (gpuCullFrustum.HasValue)
+        if (MeshletCullFrustumFor(view) is { } meshletCullFrustum)
         {
-            using (new GLDebugGroup("Cull Meshlet Draws"))
+            if (scene.DrawMeshletsIndirect)
             {
-                if (scene.DrawMeshletsIndirect)
-                {
-                    scene.MeshletCullGpu(gpuCullFrustum.Value);
-                }
-
-                if (SkyboxScene is { DrawMeshletsIndirect: true })
-                {
-                    SkyboxScene.MeshletCullGpu(gpuCullFrustum.Value);
-                }
+                using var _ = new GLDebugGroup("Cull Meshlet Draws");
+                state.MeshletCullGpu(meshletCullFrustum);
             }
 
-            using (new GLDebugGroup("Compact Meshlet Draws"))
+            if (scene.CompactMeshletDraws)
             {
-                if (scene.CompactMeshletDraws)
-                {
-                    scene.CompactIndirectDraws();
-                }
-
-                if (SkyboxScene is { CompactMeshletDraws: true })
-                {
-                    SkyboxScene.CompactIndirectDraws();
-                }
+                using var _ = new GLDebugGroup("Compact Meshlet Draws");
+                state.CompactIndirectDraws();
             }
         }
 
         // Also writes the all visible mask when tile culling is off, so it runs even with the cull frozen
         using (new GLDebugGroup("Cull Tiles and Depth Bins"))
         {
-            scene.LightBinner.Dispatch();
-            SkyboxScene?.LightBinner.Dispatch();
+            state.LightBinner.Dispatch();
+        }
+    }
+
+    /// <summary>Updates every view's per-frame GPU state, leaving the main view bound.</summary>
+    private void UpdatePerViewGpuBuffers(ReadOnlySpan<SceneView> views, float deltaTime)
+    {
+        Debug.Assert(ViewBuffer != null);
+
+        var mainCamera = views[0].Camera;
+
+        // Skip occlusion culling if the camera moved too much -- we use last frame depth
+        var moveDelta = ViewBuffer.Data.CameraPosition - mainCamera.Location;
+        var eyeDelta = ViewBuffer.Data.CameraDirWs - mainCamera.Forward;
+
+        if (moveDelta.LengthSquared() > 5000f || eyeDelta.LengthSquared() > 0.5f)
+        {
+            foreach (var view in views)
+            {
+                foreach (var state in view.States)
+                {
+                    state.DepthPyramidValid = false;
+                }
+            }
+        }
+
+        // Backwards, so the first scene of the main view is left bound
+        for (var i = views.Length - 1; i >= 0; i--)
+        {
+            var states = views[i].States;
+
+            for (var j = states.Count - 1; j >= 0; j--)
+            {
+                states[j].Scene.UpdateLightingBuffer();
+                UpdateViewGpuBuffers(views[i], states[j]);
+            }
         }
 
         if (Postprocess != null)
         {
-            Postprocess.State = scene.PostProcessInfo.CurrentState;
-            Postprocess.ResolveColorCorrection(scene.PostProcessInfo.ActiveLuts);
+            Postprocess.State = Scene.PostProcessInfo.CurrentState;
+            Postprocess.ResolveColorCorrection(Scene.PostProcessInfo.ActiveLuts);
             Postprocess.CalculateTonemapScalar(deltaTime);
         }
     }
 
-    private static void RenderTranslucentLayer(Scene scene, Scene.RenderContext renderContext)
+    private void RenderOpaqueLayer(in SceneView view, ref Scene.RenderContext renderContext, Shader? depthOnlyShader = null)
     {
-        scene.RenderOpaqueRefractLayer(renderContext);
-        scene.RenderWaterLayer(renderContext);
+        foreach (var state in view.States)
+        {
+            DrawThrough(view, state, ref renderContext);
+            state.RenderOpaqueLayer(renderContext, depthOnlyShader);
+        }
+    }
 
-        using var _ = GraphicsContext.RenderState.Scope(depthWrite: false, blend: true);
+    // Translucents sort per scene, so a later scene draws over an earlier one
+    private void RenderTranslucentLayer(in SceneView view, ref Scene.RenderContext renderContext)
+    {
+        foreach (var state in view.States)
+        {
+            DrawThrough(view, state, ref renderContext);
 
-        scene.RenderTranslucentLayer(renderContext);
+            state.RenderOpaqueRefractLayer(renderContext);
+            state.RenderWaterLayer(renderContext);
+
+            using var _ = GraphicsContext.RenderState.Scope(depthWrite: false, blend: true);
+
+            state.RenderTranslucentLayer(renderContext);
+        }
     }
 
     /// <summary>
-    /// Renders the opaque and translucent layers of the main scene to <see cref="MainFramebuffer"/>.
+    /// Empties the entity world and every scene, leaving the renderer ready to load something else.
+    /// </summary>
+    public void Clear()
+    {
+        // The scenes go first: emptying them leaves the entities nothing to unhook themselves from
+        foreach (var scene in scenes)
+        {
+            scene.Clear();
+        }
+
+        EntitySystem.Clear();
+
+        DisposeViewStates();
+
+        foreach (var group in spawnGroups)
+        {
+            ReleaseSpawnGroup(group);
+        }
+
+        spawnGroups.Clear();
+        scenes.Clear();
+        scenes.Add(Scene);
+    }
+
+    private void DisposeViewStates()
+    {
+        foreach (var states in (ReadOnlySpan<Dictionary<Scene, SceneViewState>>)[mainViewStates, skyViewStates])
+        {
+            foreach (var state in states.Values)
+            {
+                state.Dispose();
+            }
+
+            states.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Renders the opaque and translucent layers of the main view to <see cref="MainFramebuffer"/>.
     /// </summary>
     public void DrawMainScene()
     {
@@ -534,19 +930,22 @@ public class Renderer
         };
 
         LoadShaderTextures();
-        UpdatePerViewGpuBuffers(Scene, Camera, DeltaTime);
-        Scene.SetSceneBuffers();
 
-        Scene.RenderOpaqueLayer(renderContext);
+        var views = CollectViews(Camera);
+        UpdatePerViewGpuBuffers(views, DeltaTime);
+
+        var mainView = views[0];
+
+        RenderOpaqueLayer(mainView, ref renderContext);
 
         // No grab of its own, so resolve the depth the water effects pass occludes against.
-        if (NeedsWaterEffectsMap)
+        if (NeedsWaterEffectsMap(mainView))
         {
             GrabFramebufferCopy(renderContext.Framebuffer, false, true);
         }
 
-        RenderWaterEffectsMap(renderContext);
-        RenderTranslucentLayer(Scene, renderContext);
+        RenderWaterEffectsMap(mainView, renderContext);
+        RenderTranslucentLayer(mainView, ref renderContext);
     }
 
     /// <summary>
@@ -585,7 +984,7 @@ public class Renderer
     }
 
     /// <summary>
-    /// Renders the main and skybox scenes using the camera and framebuffer specified in the render context.
+    /// Renders every view using the camera and framebuffer specified in the render context.
     /// </summary>
     public void RenderScenesWithView(Scene.RenderContext renderContext)
     {
@@ -593,6 +992,9 @@ public class Renderer
         {
             throw new InvalidOperationException("Initialize() must be called before rendering");
         }
+
+        // Picking can get here before the first Render has loaded the shader textures
+        LoadShaderTextures();
 
         var (w, h) = (renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
 
@@ -605,7 +1007,10 @@ public class Renderer
 
         var isMainFramebuffer = ReferenceEquals(renderContext.Framebuffer, MainFramebuffer);
         var isMaterialPass = renderContext.ReplacementShader == null && isMainFramebuffer;
-        var isStandardPass = isMaterialPass && renderContext.OverdrawShader == null;
+
+        // The outline has its own program and its own mask, so a replacement shader does not stop it
+        var drawsOutline = isMainFramebuffer && renderContext.OverdrawShader == null;
+        var isStandardPass = isMaterialPass && drawsOutline;
 
         if (!isStandardPass)
         {
@@ -621,90 +1026,65 @@ public class Renderer
             ? GraphicsContext.RenderState.Scope(fillMode: RsFillMode.Wireframe)
             : default;
 
-        UpdatePerViewGpuBuffers(Scene, renderContext.Camera, DeltaTime);
+        var views = CollectViews(renderContext.Camera);
+        var mainView = views[0];
+
+        var mainState = mainView.States[0];
+
+        UpdatePerViewGpuBuffers(views, DeltaTime);
 
         using (new GLDebugGroup("Viewmodel Opaque"))
         {
-            var mainCamera = renderContext.Camera;
-
-            ViewmodelCamera.CopyFrom(mainCamera);
+            ViewmodelCamera.CopyFrom(mainView.Camera);
             ViewmodelCamera.FieldOfView = ComputeViewmodelFov();
             ViewmodelCamera.CreateProjectionMatrix();
             ViewmodelCamera.RecalculateMatrices();
 
             GraphicsContext.RenderState.SetDepthRange(DepthRange.Viewmodel);
 
-            ViewmodelCamera.SetViewConstants(ViewBuffer.Data);
-            Scene.SetFogConstants(ViewBuffer.Data);
-
-            var viewmodelTileRemap = ViewmodelCamera.GetPixelRemapTo(mainCamera, ViewBuffer.Data.ViewportSize);
-            Scene.LightBinner.SetPixelRemap(viewmodelTileRemap);
-
-            ViewBuffer.BindBufferBase();
-            ViewBuffer.Update();
-            Scene.SetSceneBuffers();
-
-            renderContext.Camera = ViewmodelCamera;
-            renderContext.Scene = Scene;
-            Scene.RenderViewmodelOpaqueLayer(renderContext);
-            renderContext.Camera = mainCamera;
+            DrawThrough(ViewmodelView(mainView), mainState, ref renderContext);
+            mainState.RenderViewmodelOpaqueLayer(renderContext);
 
             GraphicsContext.RenderState.SetDepthRange(DepthRange.Scene);
-
-            mainCamera.SetViewConstants(ViewBuffer.Data);
-            Scene.SetFogConstants(ViewBuffer.Data);
-            Scene.LightBinner.SetPixelRemap(ViewConstants.PixelRemapIdentity);
-            ViewBuffer.BindBufferBase();
-            ViewBuffer.Update();
         }
-
-        Scene.SetSceneBuffers();
 
         using (new GLDebugGroup("Main Scene Opaque Render"))
         {
-            renderContext.Scene = Scene;
-            Scene.RenderOpaqueLayer(renderContext, isMaterialPass ? depthOnlyShader : null);
+            RenderOpaqueLayer(mainView, ref renderContext, isMaterialPass ? depthOnlyShader : null);
         }
 
         //using (new GLDebugGroup("Sky Render"))
         {
             GraphicsContext.RenderState.SetDepthRange(DepthRange.Sky);
 
-            renderContext.ReplacementShader?.SetUniform1AllVariants("isSkybox", 1u);
-            var skyboxScene = SkyboxScene;
-            var render3DSkybox = ShowSkybox && skyboxScene != null;
-            var (copyColor, copyDepth) = (Scene.WantsSceneColor, Scene.WantsSceneDepth);
-            copyDepth |= ForceResolveSceneDepth;
+            SceneView? skyView = ShowSkybox && views.Length > 1 ? views[1] : null;
+            var copyColor = false;
+            var copyDepth = ForceResolveSceneDepth;
 
-            if (isStandardPass)
+            foreach (var view in views)
             {
-                Postprocess.HasOutlineObjects = Scene.HasOutlineObjects;
-            }
-
-            if (render3DSkybox)
-            {
-                Debug.Assert(skyboxScene is not null); // analyzer is failing here
-
-                skyboxScene.SetSceneBuffers();
-                renderContext.Scene = skyboxScene;
-
-                copyColor |= skyboxScene.WantsSceneColor;
-                copyDepth |= skyboxScene.WantsSceneDepth;
-
-                if (isStandardPass)
+                foreach (var state in view.States)
                 {
-                    Postprocess.HasOutlineObjects |= skyboxScene.HasOutlineObjects;
+                    copyColor |= state.WantsSceneColor;
+                    copyDepth |= state.WantsSceneDepth;
                 }
-
-                using var _ = new GLDebugGroup("3D Sky Scene");
-                skyboxScene.RenderOpaqueLayer(renderContext);
             }
+
+            if (skyView is { } skyOpaque)
+            {
+                using (new GLDebugGroup("3D Sky Scene"))
+                {
+                    RenderOpaqueLayer(skyOpaque, ref renderContext);
+                }
+            }
+
+            DrawThrough(mainView, mainState, ref renderContext);
 
             if (!isWireframe)
             {
                 using (new GLDebugGroup("2D Sky Render"))
                 {
-                    Skybox2D?.Render();
+                    BackgroundFor(views)?.Render();
                 }
             }
 
@@ -718,110 +1098,120 @@ public class Renderer
                     && !DisableAllCulling
                     && Uptime >= OcclusionCullWarmupSeconds;
 
-                copyDepth |= generateDepthPyramid || NeedsWaterEffectsMap;
-                Scene.DepthPyramidValid = !DisableAllCulling && (generateDepthPyramid || LockedCullFrustum != null);
-                SkyboxScene?.DepthPyramidValid = Scene.DepthPyramidValid;
+                copyDepth |= generateDepthPyramid || NeedsWaterEffectsMap(mainView);
+
+                var depthPyramidValid = !DisableAllCulling && (generateDepthPyramid || LockedCullFrustum != null);
+
+                foreach (var view in views)
+                {
+                    foreach (var state in view.States)
+                    {
+                        state.DepthPyramidValid = depthPyramidValid;
+                    }
+                }
 
                 GrabFramebufferCopy(renderContext.Framebuffer, copyColor, copyDepth);
 
                 if (generateDepthPyramid)
                 {
                     Debug.Assert(ResolvedSceneColor != null && ResolvedSceneDepth != null);
-                    EnsureDepthPyramidSize(renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
-                    Scene.GenerateDepthPyramid(ResolvedSceneDepth);
-                    Scene.DepthPyramidViewProjection = Camera.ViewProjectionMatrix;
-                    Scene.DepthPyramidValid = true;
+                    depthPyramid.EnsureSize(renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
+                    depthPyramid.Generate(ResolvedSceneDepth);
 
-                    if (SkyboxScene != null)
+                    // All views were drawn into the same depth buffer, so they share the pyramid
+                    foreach (var view in views)
                     {
-                        SkyboxScene.DepthPyramid = Scene.DepthPyramid;
-                        SkyboxScene.DepthPyramidViewProjection = Scene.DepthPyramidViewProjection;
-                        SkyboxScene.DepthPyramidValid = true;
+                        foreach (var state in view.States)
+                        {
+                            state.DepthPyramid = depthPyramid.Texture;
+                            state.DepthPyramidViewProjection = view.Camera.ViewProjectionMatrix;
+                            state.DepthPyramidValid = true;
+                        }
                     }
                 }
 
                 // After the grab, so it occludes against the depth resolved there rather than resolving
                 // its own. The particles are scene geometry, not sky.
                 GraphicsContext.RenderState.SetDepthRange(DepthRange.Scene);
-                RenderWaterEffectsMap(renderContext);
+                RenderWaterEffectsMap(mainView, renderContext);
                 GraphicsContext.RenderState.SetDepthRange(DepthRange.Sky);
             }
 
-            if (render3DSkybox)
+            if (skyView is { } skyTranslucent)
             {
-                Debug.Assert(skyboxScene is not null); // analyzer is failing here
-
                 using (new GLDebugGroup("3D Sky Scene Translucent Render"))
                 {
-                    RenderTranslucentLayer(skyboxScene, renderContext);
+                    RenderTranslucentLayer(skyTranslucent, ref renderContext);
                 }
-
-                // Back to main scene.
-                Scene.SetSceneBuffers();
-                renderContext.Scene = Scene;
             }
 
-            renderContext.ReplacementShader?.SetUniform1AllVariants("isSkybox", 0u);
             GraphicsContext.RenderState.SetDepthRange(DepthRange.Scene);
         }
 
         using (new GLDebugGroup("Main Scene Translucent Render"))
         {
-            RenderTranslucentLayer(Scene, renderContext);
+            RenderTranslucentLayer(mainView, ref renderContext);
         }
 
         using (new GLDebugGroup("Viewmodel Translucent"))
         {
-            var mainCamera = renderContext.Camera;
-
             GraphicsContext.RenderState.SetDepthRange(DepthRange.Viewmodel);
 
-            ViewmodelCamera.SetViewConstants(ViewBuffer.Data);
-            Scene.SetFogConstants(ViewBuffer.Data);
-            Scene.LightBinner.SetPixelRemap(
-                ViewmodelCamera.GetPixelRemapTo(mainCamera, ViewBuffer.Data.ViewportSize));
-            ViewBuffer.BindBufferBase();
-            ViewBuffer.Update();
-
-            renderContext.Camera = ViewmodelCamera;
-            Scene.RenderViewmodelTranslucentLayer(renderContext);
-            renderContext.Camera = mainCamera;
+            DrawThrough(ViewmodelView(mainView), mainState, ref renderContext);
+            mainState.RenderViewmodelTranslucentLayer(renderContext);
 
             GraphicsContext.RenderState.SetDepthRange(DepthRange.Scene);
 
-            mainCamera.SetViewConstants(ViewBuffer.Data);
-            Scene.SetFogConstants(ViewBuffer.Data);
-            Scene.LightBinner.SetPixelRemap(ViewConstants.PixelRemapIdentity);
-            ViewBuffer.BindBufferBase();
-            ViewBuffer.Update();
+            DrawThrough(mainView, mainState, ref renderContext);
         }
 
         wireframeScope.Dispose();
 
-        if (isStandardPass)
+        if (isStandardPass && computeFramebufferLuminance)
         {
-            if (computeFramebufferLuminance)
+            ComputeAverageLuminance(renderContext);
+        }
+
+        if (drawsOutline)
+        {
+            var hasOutlineObjects = false;
+
+            foreach (var view in views)
             {
-                ComputeAverageLuminance(renderContext);
+                foreach (var state in view.States)
+                {
+                    hasOutlineObjects |= state.HasOutlineObjects;
+                }
             }
+
+            Postprocess.HasOutlineObjects = hasOutlineObjects;
 
             if (Postprocess.HasOutlineObjects)
             {
-                RenderOutlineLayer(renderContext);
+                RenderOutlineLayer(renderContext, views);
             }
+        }
 
+        if (isStandardPass)
+        {
             var overlayBatch = ValveResourceFormat.Renderer.LightTilesOverlay.BatchFor(ViewBuffer!.Data.RenderMode);
 
             if (overlayBatch != ValveResourceFormat.Renderer.LightTilesOverlay.Batch.None)
             {
-                var (tileBase, words) = Scene.LightBinner.GetOverlayRegion(
+                var mainBinner = mainState.LightBinner;
+                var (tileBase, words) = mainBinner.GetOverlayRegion(
                     overlayBatch == ValveResourceFormat.Renderer.LightTilesOverlay.Batch.EnvMaps);
 
-                LightTilesOverlay.Render(Scene.LightBinner.CullBits, tileBase, words);
+                LightTilesOverlay.Render(mainBinner.CullBits, tileBase, words);
             }
 
-            Scene.LightBinner.SubmitVisibilityReadback();
-            SkyboxScene?.LightBinner.SubmitVisibilityReadback();
+            foreach (var view in views)
+            {
+                foreach (var state in view.States)
+                {
+                    state.LightBinner.SubmitVisibilityReadback();
+                }
+            }
         }
         else
         {
@@ -880,7 +1270,13 @@ public class Renderer
                 ViewBuffer.Update();
 
                 PerfStats.Active.Count(Counter.DirectionalShadowMap);
-                Scene.RenderOpaqueShadows(renderContext, depthOnlyShader, Scene.CulledShadowDrawCallsCascades[cascade]);
+
+                foreach (var state in mainViewSceneStates)
+                {
+                    renderContext.Scene = state.Scene;
+                    state.Scene.BindDrawBuffers();
+                    Scene.RenderOpaqueShadows(renderContext, depthOnlyShader, state.Scene.CulledShadowDrawCallsCascades[cascade]);
+                }
             }
         }
     }
@@ -988,7 +1384,7 @@ public class Renderer
         Postprocess.AverageLuminance = output.X;
     }
 
-    private void RenderOutlineLayer(Scene.RenderContext renderContext)
+    private void RenderOutlineLayer(Scene.RenderContext renderContext, ReadOnlySpan<SceneView> views)
     {
         using var _ = new GLDebugGroup("Outline Mask Write");
 
@@ -1004,8 +1400,17 @@ public class Renderer
         GL.Viewport(0, 0, maskBuffer.Width, maskBuffer.Height);
         maskBuffer.BindAndClear();
 
-        SkyboxScene?.RenderOutlineLayer(renderContext);
-        Scene.RenderOutlineLayer(renderContext);
+        // Backwards, so the sky's outlines are drawn first and the main view is the one left bound
+        for (var i = views.Length - 1; i >= 0; i--)
+        {
+            var states = views[i].States;
+
+            for (var j = states.Count - 1; j >= 0; j--)
+            {
+                DrawThrough(views[i], states[j], ref renderContext);
+                states[j].RenderOutlineLayer(renderContext);
+            }
+        }
 
         sceneFramebuffer.Bind(FramebufferTarget.Framebuffer);
         GL.Viewport(0, 0, sceneFramebuffer.Width, sceneFramebuffer.Height);
@@ -1035,6 +1440,20 @@ public class Renderer
         return OutlineMaskBuffer;
     }
 
+    private void UpdateMorphAtlas()
+    {
+        var atlas = RendererContext.MorphAtlas;
+        atlas.Render();
+
+        // Growing the atlas replaces its texture
+        if (atlas.Texture is { } texture && texture != morphAtlasTexture)
+        {
+            morphAtlasTexture = texture;
+            Textures.RemoveAll(static t => t.Slot == ReservedTextureSlots.MorphCompositeTexture);
+            Textures.Add(new(ReservedTextureSlots.MorphCompositeTexture, "g_tCompositeMorphTextureAtlas", texture));
+        }
+    }
+
     /// <summary>Points the reserved <c>g_tWaterEffectsMap</c> slot at the current color attachment.</summary>
     private void SetupWaterEffectsTexture()
     {
@@ -1048,15 +1467,26 @@ public class Renderer
         Textures.Add(new(ReservedTextureSlots.WaterEffectsMap, "g_tWaterEffectsMap", WaterEffectsBuffer.Color));
     }
 
-    /// <summary>Whether anything draws into the water effects map this frame, and anything reads it.</summary>
-    private bool NeedsWaterEffectsMap => Scene.HasWater && Scene.HasWaterEffects;
+    private static bool NeedsWaterEffectsMap(in SceneView view)
+    {
+        var hasWater = false;
+        var hasWaterEffects = false;
 
-    /// <summary>Fills <see cref="WaterEffectsBuffer"/>; must run before any water layer this frame.</summary>
-    private void RenderWaterEffectsMap(Scene.RenderContext renderContext)
+        foreach (var state in view.States)
+        {
+            hasWater |= state.HasWater;
+            hasWaterEffects |= state.HasWaterEffects;
+        }
+
+        return hasWater && hasWaterEffects;
+    }
+
+    // Must run before any water layer this frame
+    private void RenderWaterEffectsMap(in SceneView view, Scene.RenderContext renderContext)
     {
         Debug.Assert(WaterEffectsBuffer != null && ViewBuffer != null);
 
-        var hasDraws = NeedsWaterEffectsMap;
+        var hasDraws = NeedsWaterEffectsMap(view);
 
         if (!hasDraws && waterEffectsMapIsNeutral)
         {
@@ -1082,7 +1512,7 @@ public class Renderer
         renderContext.Framebuffer = WaterEffectsBuffer;
 
         // Data rather than an image: fog would write its color into the ripple and foam channels.
-        Scene.FogInfo.SetFogUniforms(ViewBuffer.Data, viewerFogEnabled: false);
+        Scene.FogInfo.SetFogUniforms(ViewBuffer.Data, viewerFogEnabled: false, FogSpace.World);
         ViewBuffer.Update();
 
         if (hasDraws)
@@ -1102,8 +1532,20 @@ public class Renderer
 
             using (GraphicsContext.RenderState.Scope(depthTest: true, depthWrite: false, depthFunc: RsComparison.CloserEqual))
             {
-                renderContext.Scene = Scene;
-                Scene.RenderWaterEffectsLayer(renderContext);
+                // Only the scene buffers switch, keeping the view constants set above
+                foreach (var state in view.States)
+                {
+                    if (!state.HasWaterEffects)
+                    {
+                        continue;
+                    }
+
+                    state.Scene.SetSceneBuffers();
+
+                    renderContext.Scene = state.Scene;
+                    renderContext.View = state;
+                    state.RenderWaterEffectsLayer(renderContext);
+                }
             }
         }
 
@@ -1187,8 +1629,19 @@ public class Renderer
     public void Dispose()
     {
         ViewBuffer?.Dispose();
-        Scene?.Dispose();
-        SkyboxScene?.Dispose();
+
+        DisposeViewStates();
+        depthPyramid.Delete();
+
+        foreach (var group in spawnGroups)
+        {
+            ReleaseSpawnGroup(group);
+        }
+
+        spawnGroups.Clear();
+        scenes.Clear();
+        Scene.Dispose();
+
         PerfStats?.Dispose();
         ResolvedSceneColor?.Delete();
         ResolvedSceneDepth?.Delete();
@@ -1229,12 +1682,40 @@ public class Renderer
 
         Camera.RecalculateMatrices();
 
-        Scene.Update(updateContext);
-        SkyboxScene?.Update(updateContext);
+        // Entities simulate on their own fixed tick, then the scene nodes of every view pick the result up
+        EntitySystem.Update(updateContext.Timestep);
+
+        var views = CollectViews(updateContext.Camera);
+
+        var boxEye = LockedCullPosition ?? updateContext.Camera.Location;
+
+        scenesUpdated.Clear();
+
+        foreach (var view in views)
+        {
+            foreach (var state in view.States)
+            {
+                if (scenesUpdated.Add(state.Scene))
+                {
+                    state.Scene.Update(updateContext with { Camera = view.Camera });
+                    state.Scene.VisibilityBoxes.PrepareView(DisableAllCulling ? null : view.Sky?.ToSky(boxEye) ?? boxEye);
+                }
+            }
+        }
+
+        UpdateMorphAtlas();
+
+        foreach (var scene in scenesUpdated)
+        {
+            scene.UpdateInstanceTransformBuffers();
+            scene.UpdateIndirectRenderingState();
+        }
 
         Scene.PostProcessInfo.UpdatePostProcessing(updateContext.Camera, updateContext.Timestep);
 
-        Scene.SetupSceneShadows(updateContext.Camera, DisableAllCulling ? -1 : ShadowDepthBuffer.Width);
+        LendSun(views[0]);
+
+        Scene.SetupSunShadows(Scene.LightingInfo, SceneCasters(views[0]), updateContext.Camera, DisableAllCulling ? -1 : ShadowDepthBuffer.Width);
 
         if (EnableBarnLights)
         {
@@ -1245,22 +1726,25 @@ public class Renderer
             Scene.LightingInfo.ClearBarnLights();
         }
 
-        if (!DisableAllCulling && Scene is { EnablePvsCulling: true, VoxelVisibility: not null })
-        {
-            var pvsPosition = LockedCullPosition ?? updateContext.Camera.Location;
-            Scene.CurrentFramePvs = Scene.VoxelVisibility.GetVisibilityRowForPoint(pvsPosition);
-        }
-        else
-        {
-            Scene.CurrentFramePvs = default;
-        }
+        var pvsPosition = LockedCullPosition ?? updateContext.Camera.Location;
+        var pvsEnabled = !DisableAllCulling && Scene.EnablePvsCulling;
 
-        Scene.UpdateIndirectRenderingState();
-        SkyboxScene?.UpdateIndirectRenderingState();
+        foreach (var view in views)
+        {
+            // Sky views cull from the main eye mapped into sky space; an eye outside the sky visibility culls nothing
+            var viewPvsPosition = view.Sky?.ToSky(pvsPosition) ?? pvsPosition;
 
-        var cullFrustum = CullFrustum;
-        Scene.CollectSceneDrawCalls(updateContext.Camera, cullFrustum);
-        SkyboxScene?.CollectSceneDrawCalls(updateContext.Camera, cullFrustum);
+            foreach (var state in view.States)
+            {
+                var scene = state.Scene;
+
+                state.Pvs = pvsEnabled && scene.VoxelVisibility is { } visibility
+                    ? visibility.GetVisibilityRowForPoint(Vector3.Transform(viewPvsPosition, scene.WorldToVisibility))
+                    : default;
+
+                state.CollectSceneDrawCalls(view.Camera, CullFrustumFor(view));
+            }
+        }
 
         if (ShowSoundDebug && Sound.Player != null)
         {
@@ -1328,32 +1812,5 @@ public class Renderer
 
             y += lineHeight;
         }
-    }
-
-    /// <summary>Largest width of the depth pyramid; height follows the viewport's aspect.</summary>
-    private const int DepthPyramidMaxDimension = 512;
-
-    void EnsureDepthPyramidSize(int width, int height)
-    {
-        var scale = Math.Min(1f, DepthPyramidMaxDimension / (float)Math.Max(width, height));
-
-        static int NearestPowerOfTwo(float value)
-            => 1 << Math.Max(0, (int)MathF.Round(MathF.Log2(MathF.Max(value, 1f))));
-
-        var targetWidth = NearestPowerOfTwo(width * scale);
-        var targetHeight = NearestPowerOfTwo(height * scale);
-
-        if (Scene.DepthPyramid != null && Scene.DepthPyramid.Width == targetWidth && Scene.DepthPyramid.Height == targetHeight)
-        {
-            return;
-        }
-
-        Scene.DepthPyramid?.Delete();
-
-        // Mips needed to take the larger axis down to 1
-        var maxMipLevel = (int)Math.Log2(Math.Max(targetWidth, targetHeight));
-
-        Scene.DepthPyramid = RenderTexture.Create(targetWidth, targetHeight, ImageFormat.R32F, maxMipLevel + 1, "DepthPyramid");
-        Scene.DepthPyramid.SetBaseMaxLevel(0, maxMipLevel);
     }
 }

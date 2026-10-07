@@ -45,6 +45,12 @@ internal abstract class GLBaseControl : IDisposable
     /// <summary>Whether the mouse has moved while a button was held since the last mouse down.</summary>
     protected bool MouseDragged;
 
+    /// <summary>
+    /// Set when the viewport lets go of the cursor (focus lost, or escape in walk mode) so mouse look
+    /// does not take it straight back; cleared by clicking back into the viewport.
+    /// </summary>
+    protected bool MouseReleased;
+
     private readonly Lock inputStateLock = new();
     private Point pendingMouseDelta;
     private int pendingMouseWheelDelta;
@@ -63,6 +69,7 @@ internal abstract class GLBaseControl : IDisposable
                 if (value)
                 {
                     mouseLookNeedsRebase = true;
+                    Dispatcher.UIThread.Post(() => HideCursorForMouseLook(MousePreviousPosition));
                 }
                 else
                 {
@@ -315,6 +322,7 @@ internal abstract class GLBaseControl : IDisposable
         MouseDelta = Point.Empty;
         currentDragIsTouch = false;
         mouseLookNeedsRebase = true;
+        MouseReleased = true;
         GrabbedMouse = false;
         RestoreCursorAfterDrag();
         OnViewportLostFocus();
@@ -520,6 +528,7 @@ internal abstract class GLBaseControl : IDisposable
         InitialMousePosition = new Point(e.X, e.Y);
         MouseDelta = Point.Empty;
         MouseDragged = false;
+        MouseReleased = false;
         mouseLookNeedsRebase = true;
         MousePreviousPosition = InitialMousePosition;
 
@@ -557,6 +566,19 @@ internal abstract class GLBaseControl : IDisposable
                 RestoreCursorAfterDrag();
             }
         }
+    }
+
+    private void HideCursorForMouseLook(Point restorePosition)
+    {
+        if (cursorHiddenForDrag || GLControl == null)
+        {
+            return;
+        }
+
+        cursorHiddenForDrag = true;
+        mouseLookRestorePosition = restorePosition;
+        mouseLookNeedsRebase = true;
+        GLControl.Cursor = new AvaloniaCursor(StandardCursorType.None);
     }
 
     private void RestoreCursorAfterDrag()
@@ -630,12 +652,7 @@ internal abstract class GLBaseControl : IDisposable
             return;
         }
 
-        if (!cursorHiddenForDrag)
-        {
-            cursorHiddenForDrag = true;
-            mouseLookRestorePosition = new Point(position.X - delta.X, position.Y - delta.Y);
-            GLControl.Cursor = new AvaloniaCursor(StandardCursorType.None);
-        }
+        HideCursorForMouseLook(new Point(position.X - delta.X, position.Y - delta.Y));
 
         // Relative mouse: pin the cursor so the look can continue past the screen edges
         var center = CenterOfRenderArea();
@@ -861,6 +878,8 @@ internal abstract class GLBaseControl : IDisposable
         MainFramebuffer.Initialize();
 
         OnGLLoad();
+
+        RendererContext.ShaderLoader.LinkLoadedShaders();
     }
 
     /// <summary>Reports how long presenting the frame blocked the render thread.</summary>

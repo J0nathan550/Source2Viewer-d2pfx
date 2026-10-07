@@ -36,7 +36,7 @@ namespace GUI.Types.Viewers
     /// Compiled resources: the matching GL viewer when there is one, plus a tab per block and the decompiled content.
     /// Port of the WinForms Resource viewer, viewer selection is kept in step with it.
     /// </summary>
-    class Resource(VrfGuiContext vrfGuiContext, ResourceViewMode viewMode, bool verifyFileSize) : IViewer, IDisposable
+    class Resource(VrfGuiContext vrfGuiContext, ResourceViewMode viewMode) : IViewer, IDisposable
     {
         private ValveResourceFormat.Resource? resource;
         private RendererContext? rendererContext;
@@ -65,7 +65,7 @@ namespace GUI.Types.Viewers
             {
                 if (stream != null)
                 {
-                    resource.Read(stream, verifyFileSize);
+                    resource.Read(stream);
                 }
                 else
                 {
@@ -310,7 +310,7 @@ namespace GUI.Types.Viewers
                     GLViewer = null;
                     DisposeExtraGraphViewers();
                     resTabs.Items.Clear();
-                    resTabs.Items.Add(new TabItem { Header = "Viewer Error", Content = CodeTextBox.CreateFromException(GLViewerError) });
+                    resTabs.Items.Add(new TabItem { Header = "Viewer Error", Content = CodeTextBox.CreateFromException(GLViewerError, vrfGuiContext.FullPath) });
                 }
 
                 // Entity lumps get the same browsable grid a map's world viewer provides, with or
@@ -394,7 +394,7 @@ namespace GUI.Types.Viewers
             }
             catch (Exception ex)
             {
-                resTabs.Items.Add(new TabItem { Header = "Decompile Error", Content = CodeTextBox.CreateFromException(ex) });
+                resTabs.Items.Add(new TabItem { Header = "Decompile Error", Content = CodeTextBox.CreateFromException(ex, vrfGuiContext.FullPath) });
             }
 
             if (resTabs.SelectedIndex < 0 && resTabs.ItemCount > 0)
@@ -604,17 +604,14 @@ namespace GUI.Types.Viewers
                     break;
 
                 case ResourceType.Sound:
-                    if (resource.ContainsBlockType(BlockType.DATA))
+                    if (resource.DataBlock is Sound { StreamingDataSize: > 0 } soundData)
                     {
                         var autoPlay = ((Settings.QuickPreviewFlags)Settings.Config.QuickFilePreview & Settings.QuickPreviewFlags.AutoPlaySounds) != 0;
                         var panel = new DockPanel();
 
-                        if (resource.DataBlock is Sound soundData)
-                        {
-                            var info = CreateSoundInfoLabel(soundData);
-                            DockPanel.SetDock(info, Dock.Top);
-                            panel.Children.Add(info);
-                        }
+                        var info = CreateSoundInfoLabel(soundData);
+                        DockPanel.SetDock(info, Dock.Top);
+                        panel.Children.Add(info);
 
                         try
                         {
@@ -800,31 +797,8 @@ namespace GUI.Types.Viewers
             return new HexViewer(input);
         }
 
-        private Control CreateTextViewControl(ValveResourceFormat.Resource resource, Block block)
-        {
-            if (resource.ResourceType == ResourceType.SboxShader && block is SboxShader shaderBlock)
-            {
-                var viewer = new CompiledShader(vrfGuiContext);
-
-                try
-                {
-                    var control = viewer.Create(
-                        shaderBlock.Shaders,
-                        Path.GetFileNameWithoutExtension(resource.FileName.AsSpan()),
-                        ValveResourceFormat.CompiledShader.VcsProgramType.Features
-                    );
-
-                    viewer = null;
-                    return control;
-                }
-                finally
-                {
-                    viewer?.Dispose();
-                }
-            }
-
-            return CreateTextViewControl(resource.ResourceType, block);
-        }
+        private static Control CreateTextViewControl(ValveResourceFormat.Resource resource, Block block)
+            => CreateTextViewControl(resource.ResourceType, block);
 
         private static Control CreateTextViewControl(ResourceType resourceType, Block block)
         {

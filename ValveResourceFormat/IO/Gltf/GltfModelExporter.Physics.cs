@@ -41,7 +41,7 @@ public partial class GltfModelExporter
                     var pose = bindPose.Length == 0 ? Matrix4x4.Identity : bindPose[p];
 
                     // Process sphere shapes with matching properties
-                    foreach (var sphere in shape.Spheres.Where(s => s.CollisionAttributeIndex == collisionAttrIndex && s.SurfacePropertyIndex == surfacePropIndex))
+                    foreach (var sphere in shape.GetAllSpheres().Where(s => s.CollisionAttributeIndex == collisionAttrIndex && s.SurfacePropertyIndex == surfacePropIndex))
                     {
                         var center = Vector3.Transform(sphere.Shape.Center, pose);
                         var radius = sphere.Shape.Radius;
@@ -49,7 +49,7 @@ public partial class GltfModelExporter
                     }
 
                     // Process capsule shapes with matching properties
-                    foreach (var capsule in shape.Capsules.Where(c => c.CollisionAttributeIndex == collisionAttrIndex && c.SurfacePropertyIndex == surfacePropIndex))
+                    foreach (var capsule in shape.GetAllCapsules().Where(c => c.CollisionAttributeIndex == collisionAttrIndex && c.SurfacePropertyIndex == surfacePropIndex))
                     {
                         var center = capsule.Shape.Center;
                         var start = Vector3.Transform(center[0], pose);
@@ -59,7 +59,7 @@ public partial class GltfModelExporter
                     }
 
                     // Process hull shapes with matching properties
-                    foreach (var hull in shape.Hulls.Where(h => h.CollisionAttributeIndex == collisionAttrIndex && h.SurfacePropertyIndex == surfacePropIndex))
+                    foreach (var hull in shape.GetAllHulls().Where(h => h.CollisionAttributeIndex == collisionAttrIndex && h.SurfacePropertyIndex == surfacePropIndex))
                     {
                         var vertexPositions = hull.Shape.GetVertexPositions();
                         var transformedPositions = TransformVertices(vertexPositions, pose);
@@ -69,7 +69,7 @@ public partial class GltfModelExporter
                     }
 
                     // Process mesh shapes with matching properties
-                    foreach (var mesh in shape.Meshes.Where(m => m.CollisionAttributeIndex == collisionAttrIndex && m.SurfacePropertyIndex == surfacePropIndex))
+                    foreach (var mesh in shape.GetAllMeshes().Where(m => m.CollisionAttributeIndex == collisionAttrIndex && m.SurfacePropertyIndex == surfacePropIndex))
                     {
                         var triangles = mesh.Shape.GetTriangles();
                         var vertices = mesh.Shape.GetVertices();
@@ -213,12 +213,9 @@ public partial class GltfModelExporter
         return meshName;
     }
 
-    private static Vector3 ComputeNormal(Vector3 a, Vector3 b, Vector3 c)
-    {
-        var side1 = b - a;
-        var side2 = c - a;
-        return Vector3.Normalize(Vector3.Cross(side1, side2));
-    }
+    // Degenerate triangles have no direction, but glTF requires every normal to be unit length
+    internal static Vector3 ComputeNormal(Vector3 a, Vector3 b, Vector3 c)
+        => MathUtils.SafeNormalize(MathUtils.TriangleCross(a, b, c), Vector3.UnitZ, 1e-12f);
 
     /// <summary>
     /// Generates a procedural sphere mesh with proper normals and spherical UV coordinates.
@@ -294,8 +291,10 @@ public partial class GltfModelExporter
     /// </summary>
     private static void CreateCapsuleMesh(List<Vector3> verts, List<Vector3> normals, List<Vector2> uvs, List<int> indices, Vector3 start, Vector3 end, float radius)
     {
-        var direction = Vector3.Normalize(end - start);
         var length = Vector3.Distance(start, end);
+
+        // A capsule with both ends at the same point is a sphere, so any axis works
+        var direction = MathUtils.SafeNormalize(end - start, Vector3.UnitZ, 1e-12f);
         var center = (start + end) * 0.5f;
 
         // Find perpendicular vectors
@@ -326,11 +325,9 @@ public partial class GltfModelExporter
             for (var seg = 0; seg <= segments; seg++)
             {
                 var angle = seg * MathF.Tau / segments;
-                var x = MathF.Cos(angle) * radius;
-                var z = MathF.Sin(angle) * radius;
 
-                var normal = right * x + up * z;
-                normal = Vector3.Normalize(normal);
+                // Right and up are perpendicular unit vectors, so this is unit length even for a zero radius
+                var normal = right * MathF.Cos(angle) + up * MathF.Sin(angle);
 
                 // Generate cylindrical UV coordinates
                 var u = (float)seg / segments;

@@ -94,7 +94,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             public Vector4 Color { get; init; }
         }
 
-        public RenderRopes(ParticleDefinitionParser parse, RendererContext rendererContext) : base(parse)
+        public RenderRopes(ParticleDefinitionParser parse, RendererContext rendererContext, Scene scene) : base(parse, scene)
         {
             this.rendererContext = rendererContext;
 
@@ -102,7 +102,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             (layers, var textureName) = ParticleTextureLayer.Build(parse, rendererContext, DefaultTextureName, srgbRead: OutputIsColor);
 
-            shader = rendererContext.ShaderLoader.LoadShader(ShaderName, ("S_TEXTURE_LAYERS", (byte)(layers.Length - 1)));
+            var shaderArguments = CreateShaderArguments();
+            shaderArguments["S_TEXTURE_LAYERS"] = (byte)(layers.Length - 1);
+
+            shader = rendererContext.ShaderLoader.LoadShader(ShaderName, shaderArguments);
             (vaoHandle, vertexBufferHandle) = SetupQuadBuffer($"{nameof(RenderRopes)}: {System.IO.Path.GetFileName(textureName)}");
 
             orientationType = parse.Enum("m_nOrientationType", orientationType);
@@ -189,37 +192,6 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             }
 
             return Math.Clamp(index, 0, count - 1);
-        }
-
-        private static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
-        {
-            var t2 = t * t;
-            var t3 = t2 * t;
-
-            return 0.5f * ((2f * p1)
-                + ((-p0 + p2) * t)
-                + (((2f * p0) - (5f * p1) + (4f * p2) - p3) * t2)
-                + ((-p0 + (3f * p1) - (3f * p2) + p3) * t3));
-        }
-
-        private static float CatmullRom(float p0, float p1, float p2, float p3, float t)
-        {
-            var t2 = t * t;
-            var t3 = t2 * t;
-
-            return 0.5f * ((2f * p1)
-                + ((-p0 + p2) * t)
-                + (((2f * p0) - (5f * p1) + (4f * p2) - p3) * t2)
-                + ((-p0 + (3f * p1) - (3f * p2) + p3) * t3));
-        }
-
-        private static Vector3 CatmullRomTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
-        {
-            var t2 = t * t;
-
-            return 0.5f * ((-p0 + p2)
-                + (((4f * p0) - (10f * p1) + (8f * p2) - (2f * p3)) * t)
-                + (((-3f * p0) + (9f * p1) - (9f * p2) + (3f * p3)) * t2));
         }
 
         /// <summary>
@@ -470,10 +442,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         /// </summary>
         private RopeSample EvaluateSample(in RopeNode n0, in RopeNode n1, in RopeNode n2, in RopeNode n3, float t, Camera camera)
         {
-            var position = CatmullRom(n0.Position, n1.Position, n2.Position, n3.Position, t);
-            var radius = CatmullRom(n0.Radius, n1.Radius, n2.Radius, n3.Radius, t);
+            var position = CableMeshBuilder.CatmullRom(n0.Position, n1.Position, n2.Position, n3.Position, t);
+            var radius = CableMeshBuilder.CatmullRom(n0.Radius, n1.Radius, n2.Radius, n3.Radius, t);
 
-            var tangent = CatmullRomTangent(n0.Position, n1.Position, n2.Position, n3.Position, t);
+            var tangent = CableMeshBuilder.CatmullRomTangent(n0.Position, n1.Position, n2.Position, n3.Position, t);
             tangent = MathUtils.SafeNormalize(tangent, Vector3.UnitX, ParticleMath.MinimumLengthSquared);
 
             var planeNormal = orientationType switch
@@ -664,6 +636,13 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             PerfStats.Active.Count(Counter.ParticleDraw);
             GL.DrawElements(PrimitiveType.Triangles, quadCount * 6, DrawElementsType.UnsignedShort, 0);
         }
+
+        /// <inheritdoc/>
+        public override bool CanRenderReplacement => true;
+
+        /// <inheritdoc/>
+        public override void RenderReplacement(Shader replacement, uint objectId)
+            => DrawReplacement(replacement, objectId, vaoHandle, quadCount * 6, DrawElementsType.UnsignedShort);
 
         /// <inheritdoc/>
         public override IEnumerable<string> GetSupportedRenderModes() => shader.RenderModes;

@@ -250,7 +250,7 @@ public sealed class TextureExtract
     public ContentFile ToMaterialMaps(IEnumerable<MaterialExtract.UnpackInfo> mapsToUnpack)
     {
         // unpacking not supported in these scenarios
-        if (isCubeMap || isArray || ExportExr)
+        if (isCubeMap || isArray)
         {
             var vtexContent = ToContentFile();
 
@@ -276,6 +276,19 @@ public sealed class TextureExtract
             Bitmap = bitmap,
             FileName = fileName!,
         };
+
+        if (ExportExr)
+        {
+            // Channels are not unpacked from HDR images, the whole image is written under the first name the material uses
+            var firstUnpackInfo = mapsToUnpack.FirstOrDefault();
+
+            if (firstUnpackInfo.FileName != null)
+            {
+                vtex.AddImageSubFile(Path.GetFileName(firstUnpackInfo.FileName), ToExrImage);
+            }
+
+            return vtex;
+        }
 
         foreach (var unpackInfo in mapsToUnpack)
         {
@@ -895,6 +908,12 @@ public sealed class TextureExtract
         var faceWidth = faces[0].Width;
         var faceHeight = faces[0].Height;
 
+        var facePixels = new nint[6];
+        for (var face = 0; face < 6; face++)
+        {
+            facePixels[face] = faces[face].GetPixels();
+        }
+
         var latLongInfo = new SKImageInfo(faceWidth * 4, faceHeight * 2, colorType, faces[0].Info.AlphaType);
         var latLongBitmap = new SKBitmap(latLongInfo);
         using var latLongPixels = latLongBitmap.PeekPixels();
@@ -917,7 +936,7 @@ public sealed class TextureExtract
 
                 var dir = new Vector3(sinV * cosU, cosV, sinV * sinU);
 
-                var color = SampleCubemapDirection(faces, dir);
+                var color = SampleCubemapDirection(facePixels, faceWidth, faceHeight, dir);
                 latLongSpan[y * width + x] = color;
             }
         });
@@ -925,11 +944,8 @@ public sealed class TextureExtract
         return latLongBitmap;
     }
 
-    private static SKColorF SampleCubemapDirection(SKPixmap[] faces, Vector3 dir)
+    private static unsafe SKColorF SampleCubemapDirection(nint[] facePixels, int faceWidth, int faceHeight, Vector3 dir)
     {
-        var faceWidth = faces[0].Width;
-        var faceHeight = faces[0].Height;
-
         // determine which face the direction vector intersects and get the corresponding UV coordinates
         var absDir = Vector3.Abs(dir);
         var maxAxis = absDir.MaxComponent();
@@ -1008,7 +1024,7 @@ public sealed class TextureExtract
         var tx = fx - x0;
         var ty = fy - y0;
 
-        var colorSpan = faces[faceIndex].GetPixelSpan<SKColorF>();
+        var colorSpan = new ReadOnlySpan<SKColorF>((void*)facePixels[faceIndex], faceWidth * faceHeight);
 
         // get the four neighboring pixels
         var c00 = SampleCubemapSeamless(colorSpan, x0, y0, faceWidth, faceHeight);

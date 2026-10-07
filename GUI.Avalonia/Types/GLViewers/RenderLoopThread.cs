@@ -95,7 +95,8 @@ namespace GUI.Types.GLViewers
 
             glControl.OnDetachedFromRenderLoop();
 
-            if (currentGLControl == null)
+            // With no instances left the loop has been told to quit.
+            if (currentGLControl == null && Volatile.Read(ref instances) > 0)
             {
                 renderSignal.Reset();
             }

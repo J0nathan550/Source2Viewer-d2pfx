@@ -732,9 +732,7 @@ namespace ValveResourceFormat.IO
 
             if (group == "Default")
             {
-                var physicsSurfaceNames = phys.SurfacePropertyHashes.Select(StringToken.GetKnownString).ToArray();
-
-                var surfaceProperty = physicsSurfaceNames[desc.SurfacePropertyIndex];
+                var surfaceProperty = StringToken.GetKnownString(phys.SurfacePropertyHashes[desc.SurfacePropertyIndex]);
                 material = materialNameProvider.Invoke(surfaceProperty);
             }
 
@@ -835,11 +833,10 @@ namespace ValveResourceFormat.IO
                     var surfacePropertyIndex = physicsSurfaces.Length > 0 ? physicsSurfaces[keptTriangleIndices[i]] : desc.SurfacePropertyIndex;
                     var surfaceProperty = physicsSurfaceNames[surfacePropertyIndex];
 
-                    material = surfaceProperty switch
-                    {
-                        "default" => "materials/tools/toolsnodraw.vmat", // default is just nodraw, ignore it
-                        _ => materialNameProvider.Invoke(surfaceProperty)
-                    };
+                    // default is just nodraw, ignore it
+                    material = surfaceProperty.Equals("default", StringComparison.OrdinalIgnoreCase)
+                        ? "materials/tools/toolsnodraw.vmat"
+                        : materialNameProvider.Invoke(surfaceProperty);
                 }
 
                 AddFace(inds, material);

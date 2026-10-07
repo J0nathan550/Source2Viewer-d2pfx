@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Serialization.KeyValues;
 using Entity = ValveResourceFormat.ResourceTypes.EntityLump.Entity;
 
 namespace ValveResourceFormat.Renderer.Entities;
@@ -16,7 +17,7 @@ namespace ValveResourceFormat.Renderer.Entities;
 public readonly record struct EntityIOTarget(string Name, EntityIOTargetType Type);
 
 /// <summary>
-/// The entity context for a <see cref="Scene"/>: the world every simulated entity lives in. It owns the
+/// The world every simulated entity lives in. It owns the
 /// list of living entities, runs them on a fixed tick, and carries the entity I/O queue between them.
 /// </summary>
 /// <remarks>
@@ -43,14 +44,44 @@ public sealed class EntitySystem
     /// <summary>The most ticks one frame may run before the leftover time is dropped.</summary>
     public const int MaxTicksPerFrame = 8;
 
-    /// <summary>Gets the main scene, the one that owns and ticks this world. Entities spawned into the 3D skybox carry their own <see cref="BaseEntity.Scene"/>.</summary>
-    public Scene Scene { get; }
+    /// <summary>Gets the shared renderer context this world loads and logs through.</summary>
+    public RendererContext RendererContext { get; }
+
+    /// <summary>
+    /// Gets the physics world of the main world group, the one every trace is made against: the player's
+    /// movement, use, pushers and the rest. It holds the world physics of every spawn group loaded into
+    /// that group.
+    /// </summary>
+    public PhysicsWorld PhysicsWorld { get; } = new();
+
+    // Every other world group has a physics world of its own, such as a 3D sky's, which nothing traces
+    private readonly Dictionary<string, PhysicsWorld> worldGroupPhysicsWorlds = [];
+
+    /// <summary>
+    /// Gets the physics world of a world group, creating it the first time it is asked for.
+    /// </summary>
+    /// <param name="worldGroup">The world group, or <see langword="null"/> for the main one.</param>
+    public PhysicsWorld GetPhysicsWorld(string? worldGroup)
+    {
+        if (worldGroup == null)
+        {
+            return PhysicsWorld;
+        }
+
+        if (!worldGroupPhysicsWorlds.TryGetValue(worldGroup, out var physicsWorld))
+        {
+            physicsWorld = new PhysicsWorld();
+            worldGroupPhysicsWorlds.Add(worldGroup, physicsWorld);
+        }
+
+        return physicsWorld;
+    }
 
     /// <summary>Gets the loader entities use to pull their models and physics.</summary>
-    public IFileLoader FileLoader => Scene.RendererContext.FileLoader;
+    public IFileLoader FileLoader => RendererContext.FileLoader;
 
     /// <summary>Gets the logger for entity problems.</summary>
-    public ILogger Logger => Scene.RendererContext.Logger;
+    public ILogger Logger => RendererContext.Logger;
 
     /// <summary>Gets every living entity, in spawn order.</summary>
     public IReadOnlyList<BaseEntity> Entities => entities;
@@ -65,8 +96,11 @@ public sealed class EntitySystem
     /// <summary>Gets the player, once one has been spawned into this world.</summary>
     public PlayerEntity? Player { get; private set; }
 
-    /// <summary>Gets the <c>worldspawn</c> at the root of the entity hierarchy. Always exists.</summary>
-    public WorldEntity World { get; private set; }
+    /// <summary>
+    /// Gets the world entity at the root of the entity hierarchy, once a map has loaded. A trace that
+    /// hits the static world reports it as the entity it hit.
+    /// </summary>
+    public WorldEntity? World { get; private set; }
 
     /// <summary>Gets the current simulation time in seconds, the engine's <c>curtime</c>.</summary>
     public float CurrentTime { get; private set; }
@@ -98,44 +132,54 @@ public sealed class EntitySystem
 
     private readonly List<QueuedInput> inputQueue = [];
     private readonly Dictionary<EntityLump.Connection, int> firedCounts = [];
+    private readonly HashSet<BaseEntity> playerImpacts = [];
     private long sequence;
     private float tickAccumulator;
     private bool hasRemovedEntities;
 
     /// <summary>
-    /// Initializes an entity system for a scene. Prefer <see cref="Scene.EntitySystem"/> over constructing
-    /// one directly; a scene has exactly one world.
+    /// Initializes an entity world. Prefer <see cref="Renderer.EntitySystem"/> over constructing one
+    /// directly.
     /// </summary>
-    public EntitySystem(Scene scene)
+    /// <param name="context">The shared renderer context entities load and log through.</param>
+    public EntitySystem(RendererContext context)
     {
-        Scene = scene;
-        World = CreateDefaultWorld();
-    }
+        ArgumentNullException.ThrowIfNull(context);
 
-    private WorldEntity CreateDefaultWorld()
-    {
-        var world = new WorldEntity(this);
-        entities.Add(world);
-        return world;
+        RendererContext = context;
     }
 
     /// <summary>
-    /// Creates the entity for a map entity's keyvalues and puts it in the world. Returns
-    /// <see langword="null"/> when the classname is not one the entity system implements, in which case
-    /// the caller keeps ownership of it.
+    /// Creates the entity for a map entity's keyvalues and puts it in the world. A classname the entity
+    /// system does not implement becomes a <see cref="GenericModelEntity"/> or a <see cref="GenericEntity"/>,
+    /// which draw themselves but do nothing else.
     /// </summary>
     /// <param name="data">The entity's keyvalues.</param>
     /// <param name="parentTransform">Transform of whatever spawned it.</param>
     /// <param name="layerName">Visibility layer for its nodes.</param>
-    /// <param name="intoScene">Scene the entity's nodes render into; the main scene when omitted.</param>
-    /// <returns>The spawned entity, or <see langword="null"/> if the classname is not implemented.</returns>
-    public BaseEntity? CreateEntity(Entity data, Matrix4x4 parentTransform, string? layerName, Scene? intoScene = null)
+    /// <param name="intoScene">Scene the entity's nodes render into.</param>
+    /// <param name="nameFixup">What the spawning group puts in place of the markers in the entity's names.</param>
+    /// <returns>
+    /// The spawned entity, or <see langword="null"/> if the keyvalues name no classname or a <c>worldspawn</c>.
+    /// </returns>
+    public BaseEntity? CreateEntity(Entity data, Matrix4x4 parentTransform, string? layerName, Scene intoScene, EntityNameFixup nameFixup)
     {
-        var entity = EntityFactory.Create(this, new EntitySpawnInfo(data, parentTransform, layerName, intoScene ?? Scene));
+        var entity = EntityFactory.Create(this, new EntitySpawnInfo(data, parentTransform, layerName, intoScene, nameFixup));
 
         if (entity == null)
         {
             return null;
+        }
+
+        // The engine binds the move parent before spawning, so a child's Spawn sees its pose local to the
+        // parent. The parent may not exist yet, so the child spawns in Activate once it is bound.
+        if (string.IsNullOrEmpty(data.GetStringProperty("parentname")))
+        {
+            entity.Spawn();
+        }
+        else
+        {
+            pendingSpawns.Add(entity);
         }
 
         Add(entity);
@@ -148,7 +192,7 @@ public sealed class EntitySystem
     /// spawned.
     /// </summary>
     /// <returns>The player entity.</returns>
-    public PlayerEntity SpawnPlayer(IPlayerController controller)
+    public PlayerEntity SpawnPlayer(IPlayerController controller, Scene scene)
     {
         if (Player != null)
         {
@@ -158,7 +202,7 @@ public sealed class EntitySystem
         // Registration is what usually binds a class's inputs; the player never goes through the factory
         EntityInputTable.Bind<PlayerEntity>();
 
-        Player = new PlayerEntity(this, controller);
+        Player = new PlayerEntity(this, scene, controller);
         Player.Spawn();
         Add(Player);
 
@@ -167,39 +211,69 @@ public sealed class EntitySystem
 
     private void Add(BaseEntity entity)
     {
-        // Only the main scene's authored worldspawn takes over as the root; the 3D skybox lump carries
-        // one of its own, which joins the world as an ordinary inert entity
-        if (entity is WorldEntity world && world.Scene == Scene)
-        {
-            ReplaceWorld(world);
-        }
-        else
-        {
-            entity.Owner ??= World;
-        }
+        entity.Owner ??= World;
 
         entities.Add(entity);
     }
 
-    /// <summary>The map's authored worldspawn takes over from the default, adopting its children.</summary>
-    private void ReplaceWorld(WorldEntity world)
+    /// <summary>
+    /// Creates the world entity when the first map loads, before any of its entities, so it owns all of
+    /// them. It stays until <see cref="Clear"/>, whatever spawn groups come and go.
+    /// </summary>
+    internal void SpawnWorld(Scene scene)
     {
-        var previous = World;
-        World = world;
-
-        entities.Remove(previous);
-
-        foreach (var entity in entities)
+        if (World != null)
         {
-            if (entity.Owner == previous)
-            {
-                entity.Owner = world;
-            }
+            return;
         }
+
+        World = new WorldEntity(this, scene);
+        World.Spawn();
+        Add(World);
     }
 
     /// <summary>Puts an entity built in code, rather than from map keyvalues, into the world.</summary>
     public void AddEntity(BaseEntity entity) => Add(entity);
+
+    // Numbers the placed maps that set their names apart, never reused while the game runs
+    private int nameFixupCount;
+
+    /// <summary>Gets the number for the next placed map that sets its names apart with a prefix of its own.</summary>
+    internal int NextNameFixupIndex() => ++nameFixupCount;
+
+    /// <summary>Gets or sets the host that draws spawn groups loaded at runtime.</summary>
+    public ISpawnGroupHost? SpawnGroupHost { get; set; }
+
+    internal void AddSpawnGroup(World.SpawnGroup group)
+    {
+        Activate();
+        SpawnGroupHost?.AddSpawnGroup(group);
+    }
+
+    /// <summary>Removes the entities of a spawn group and releases the group.</summary>
+    public void RemoveSpawnGroup(World.SpawnGroup group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+
+        for (var i = 0; i < entities.Count; i++)
+        {
+            if (entities[i].Scene == group.Scene)
+            {
+                Remove(entities[i]);
+            }
+        }
+
+        // Only the group's own collision; the world group keeps its physics world, as the engine's does
+        if (group.WorldGroup == null)
+        {
+            PhysicsWorld.Remove(group.Scene);
+        }
+        else if (worldGroupPhysicsWorlds.TryGetValue(group.WorldGroup, out var physicsWorld))
+        {
+            physicsWorld.Remove(group.Scene);
+        }
+        SpawnGroupHost?.RemoveSpawnGroup(group);
+    }
 
     /// <summary>
     /// Runs <see cref="BaseEntity.Activate"/> on every entity spawned since the last call. Called once
@@ -214,6 +288,28 @@ public sealed class EntitySystem
             ResolveMoveParentChain(entities[i]);
         }
 
+        // HACK: Parents before their children, so a parent's Spawn has placed it before its children spawn
+        var spawning = new HashSet<BaseEntity>(pendingSpawns);
+
+        foreach (var entity in parented)
+        {
+            if (spawning.Remove(entity))
+            {
+                entity.Spawn();
+            }
+        }
+
+        // Named a parent that does not exist
+        foreach (var entity in pendingSpawns)
+        {
+            if (spawning.Remove(entity))
+            {
+                entity.Spawn();
+            }
+        }
+
+        pendingSpawns.Clear();
+
         for (var i = activatedCount; i < entities.Count; i++)
         {
             entities[i].Activate();
@@ -224,10 +320,9 @@ public sealed class EntitySystem
 
     /// <summary>
     /// Resolves an entity's move parent and lists it in <see cref="parented"/> behind its whole parent
-    /// chain. Following is a per-tick delta off the parent, so a parent has to follow before anything
-    /// riding it does.
+    /// chain, the order children tick and draw in.
     /// </summary>
-    private void ResolveMoveParentChain(BaseEntity entity)
+    internal void ResolveMoveParentChain(BaseEntity entity)
     {
         if (entity.IsMoveParentResolved)
         {
@@ -236,14 +331,16 @@ public sealed class EntitySystem
 
         entity.ResolveMoveParent();
 
-        if (entity.MoveParent is { } parent)
+        if (entity.MoveParent != null)
         {
-            ResolveMoveParentChain(parent);
             parented.Add(entity);
         }
     }
 
     private int activatedCount;
+
+    // Parented entities created since the last Activate, waiting for their parent to be bound
+    private readonly List<BaseEntity> pendingSpawns = [];
 
     /// <summary>
     /// Notify every entity a round started.
@@ -308,8 +405,7 @@ public sealed class EntitySystem
         {
             var entity = entities[i];
 
-            if (!entity.IsTrigger || entity.IsRemoved || !entity.InPlayableWorld
-                || entity.Collider is not { IsEmpty: false } volume)
+            if (!entity.IsTrigger || entity.IsRemoved || entity.Collider is not { IsEmpty: false } volume)
             {
                 continue;
             }
@@ -322,6 +418,12 @@ public sealed class EntitySystem
                 return;
             }
 
+            // Entities of the 3D sky share coordinates with the map but must not touch it
+            if (entity.Scene.WorldGroup != player.Scene.WorldGroup)
+            {
+                continue;
+            }
+
             // Against the volume rather than its surface: a player standing well inside a big trigger is
             // still touching it. Rejects on world bounds first, so a trigger nowhere near costs one box test.
             var isOverlapping = volume.OverlapsVolume(center, halfExtents);
@@ -332,8 +434,48 @@ public sealed class EntitySystem
     }
 
     /// <summary>
-    /// Drops every entity and resets the clock. The scene nodes themselves are the scene's to clean up;
-    /// this is what <see cref="Scene.Clear"/> calls once it has done that.
+    /// Records that the player's movement ran into a solid entity, for the next tick to report as a touch.
+    /// </summary>
+    /// <param name="entity">The entity a movement sweep hit.</param>
+    public void NotePlayerImpact(BaseEntity entity) => playerImpacts.Add(entity);
+
+    /// <summary>Notes what a sweep of the player ran into, unless it missed or struck the world.</summary>
+    public void NotePlayerImpact(in Rubikon.TraceResult trace)
+    {
+        if (trace.HitEntity is { } entity && entity != World)
+        {
+            NotePlayerImpact(entity);
+        }
+    }
+
+    // On the tick rather than as the player moves, for the same reason as the trigger touches
+    private void DispatchPlayerImpacts()
+    {
+        if (playerImpacts.Count == 0)
+        {
+            return;
+        }
+
+        BaseEntity[] impacted = [.. playerImpacts];
+        playerImpacts.Clear();
+
+        if (Player is not { IsRemoved: false } player)
+        {
+            return;
+        }
+
+        foreach (var entity in impacted)
+        {
+            if (!entity.IsRemoved && entity.Scene.WorldGroup == player.Scene.WorldGroup)
+            {
+                entity.Impact(player);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Drops every entity and resets the clock. The scene nodes themselves are the scene's to clean up,
+    /// which <see cref="Renderer.Clear"/> does before calling this.
     /// </summary>
     public void Clear()
     {
@@ -347,11 +489,15 @@ public sealed class EntitySystem
 
         entities.Clear();
         parented.Clear();
-        World = CreateDefaultWorld();
+        pendingSpawns.Clear();
+        PhysicsWorld.Clear();
+        worldGroupPhysicsWorlds.Clear();
+        World = null;
         Player = null;
         activatedCount = 0;
         inputQueue.Clear();
         firedCounts.Clear();
+        playerImpacts.Clear();
         hasRemovedEntities = false;
         tickAccumulator = 0f;
         CurrentTime = 0f;
@@ -394,8 +540,17 @@ public sealed class EntitySystem
             tickAccumulator = 0f;
         }
 
-        // Entities are not scene nodes, so nothing else would place what they own
+        // Entities are not scene nodes, so nothing else would place what they own. Parents first, as a
+        // child is drawn in the frame its parent was just drawn at.
         foreach (var entity in entities)
+        {
+            if (entity.MoveParent == null)
+            {
+                entity.Update();
+            }
+        }
+
+        foreach (var entity in parented)
         {
             entity.Update();
         }
@@ -406,9 +561,25 @@ public sealed class EntitySystem
         TickCount++;
         CurrentTime = TickCount * TickInterval;
 
+        foreach (var entity in entities)
+        {
+            entity.BeginTick();
+        }
+
         for (var i = 0; i < entities.Count; i++)
         {
             var entity = entities[i];
+
+            if (!entity.IsRemoved && entity.MoveParent == null)
+            {
+                entity.Simulate(TickInterval);
+            }
+        }
+
+        // Children move in their parent frame, so they simulate after the parents they ride
+        for (var i = 0; i < parented.Count; i++)
+        {
+            var entity = parented[i];
 
             if (!entity.IsRemoved)
             {
@@ -416,25 +587,24 @@ public sealed class EntitySystem
             }
         }
 
-        // Children ride their move parent after every parent has moved, whatever the tick order
-        for (var i = 0; i < parented.Count; i++)
-        {
-            var entity = parented[i];
-
-            if (!entity.IsRemoved)
-            {
-                entity.FollowMoveParent();
-            }
-        }
-
         if (hasRemovedEntities)
         {
+            // Activated entities are at the front of the list, so the count drops by each removed one
+            for (var i = activatedCount - 1; i >= 0; i--)
+            {
+                if (entities[i].IsRemoved)
+                {
+                    activatedCount--;
+                }
+            }
+
             entities.RemoveAll(static entity => entity.IsRemoved);
             parented.RemoveAll(static entity => entity.IsRemoved);
             hasRemovedEntities = false;
         }
 
         UpdateTouchLinks();
+        DispatchPlayerImpacts();
 
         // Last, as the engine services its event queue after everything has moved and touched. A touch
         // handler's outputs therefore land in the tick that saw the touch rather than the one after it,
@@ -465,7 +635,7 @@ public sealed class EntitySystem
             // A hull inside this entity cannot be swept - the SAT sweep is meaningless from an
             // overlapping start. A move whose endpoint is fully outside steps out freely, anything
             // else stops where it stands: escape is always possible, crossing the interior never is,
-            // and the deep depenetration is the pusher's own job, done immediately on its tick.
+            // and a pusher never leaves the player deep inside it.
             if (entity.Collider.OverlapsVolume(from, insideExtents))
             {
                 if (!entity.Collider.OverlapsVolume(to, insideExtents))
@@ -496,6 +666,20 @@ public sealed class EntitySystem
         return hitEntity;
     }
 
+    /// <summary>Gets whether an axis-aligned box overlaps any solid entity where it stands.</summary>
+    public bool OverlapsSolidEntity(Vector3 center, Vector3 halfExtents)
+    {
+        foreach (var entity in entities)
+        {
+            if (entity.IsCollidable && entity.Collider!.OverlapsVolume(center, halfExtents))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Finds the nearest usable entity along a ray, for the player's <c>+use</c>.
     /// </summary>
@@ -503,20 +687,20 @@ public sealed class EntitySystem
     public BaseEntity? FindUseTarget(Vector3 from, Vector3 to)
     {
         // Seeded with the world, so a wall between the player and a button wins the trace
-        var nearest = Scene.PhysicsWorld?.TraceRay(from, to) ?? new Rubikon.TraceResult();
+        var nearest = PhysicsWorld.TraceRay(from, to, Rubikon.Cs2PlayerCollisionFilter);
         BaseEntity? target = null;
 
         foreach (var entity in entities)
         {
             if (entity.IsRemoved
-                || !entity.InPlayableWorld
+                || !entity.IsInQueryWorld
                 || (entity.ObjectCaps & EntityCapability.UsableMask) == 0
                 || entity.Collider is not { IsEmpty: false } collider)
             {
                 continue;
             }
 
-            if (nearest.MinimizeWith(collider.TraceRay(from, to)))
+            if (nearest.MinimizeWith(collider.TraceRay(from, to, Rubikon.Cs2PlayerCollisionFilter)))
             {
                 target = entity;
             }
@@ -594,9 +778,11 @@ public sealed class EntitySystem
     /// <summary>
     /// Fires one of an entity's authored outputs, delivering it to every connection with that name.
     /// Source's <c>FireOutput</c>. The value is what the output reports, for the ones that carry a reading;
-    /// a connection authored with its own parameter overrides it, as in the engine.
+    /// a connection authored with its own parameter overrides it, as in the engine. The caller defaults to
+    /// <paramref name="source"/>; the few outputs that pass on the caller of the input that fired them name it.
     /// </summary>
-    public void TriggerOutput(BaseEntity source, string outputName, BaseEntity? activator = null, string? value = null)
+    public void TriggerOutput(BaseEntity source, string outputName, BaseEntity? activator = null, string? value = null,
+        BaseEntity? caller = null)
     {
         if (source.Data?.Connections == null)
         {
@@ -616,25 +802,80 @@ public sealed class EntitySystem
                 continue;
             }
 
-            // The authored override wins over whatever the output reports, which is the precedence
-            // CBaseEntityOutput::FireOutput uses: a parameter on the connection replaces the value
-            var parameter = string.IsNullOrEmpty(connection.OverrideParam) || connection.OverrideParam == "(null)"
-                ? value
-                : connection.OverrideParam;
-
-            QueueInputByTarget(new EntityIOTarget(connection.TargetName, connection.TargetType),
-                connection.InputName, parameter, activator, source, connection.Delay, connection);
+            QueueInputByTarget(ConnectionTarget(connection, source.NameFixup),
+                connection.InputName, ConnectionParameter(connection, source.NameFixup, value), activator, caller ?? source, connection.Delay, connection);
         }
     }
 
     /// <summary>
-    /// Finds every entity whose targetname matches.
+    /// Fires one authored connection on its own, for triggering map logic by
+    /// hand.
+    /// </summary>
+    /// <param name="connection">The connection to fire.</param>
+    /// <param name="activator">The entity that started the chain, usually the player.</param>
+    public void QueueConnection(EntityLump.Connection connection, BaseEntity? activator = null)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+
+        var source = entities.Find(entity => !entity.IsRemoved && entity.Data == connection.SourceEntity);
+        var nameFixup = source?.NameFixup ?? EntityNameFixup.None;
+
+        QueueInputByTarget(ConnectionTarget(connection, nameFixup),
+            connection.InputName, ConnectionParameter(connection, nameFixup, null), activator, source, 0f, null);
+    }
+
+    /// <summary>
+    /// The target of an authored connection, named as the source entity's spawn group names its entities.
+    /// </summary>
+    internal static EntityIOTarget ConnectionTarget(EntityLump.Connection connection, EntityNameFixup nameFixup)
+        => new(nameFixup.Apply(connection.TargetName), connection.TargetType);
+
+    /// <summary>
+    /// The authored override wins over whatever the output reports, which is the precedence
+    /// CBaseEntityOutput::FireOutput uses: a parameter on the connection replaces the value. The override
+    /// gets the source entity's name fixup too.
+    /// </summary>
+    private static string? ConnectionParameter(EntityLump.Connection connection, EntityNameFixup nameFixup, string? value)
+        => string.IsNullOrEmpty(connection.OverrideParam) || connection.OverrideParam == "(null)"
+            ? value
+            : nameFixup.Apply(connection.OverrideParam);
+
+    /// <summary>
+    /// Finds every entity whose targetname matches, in any world group, as the engine's name lookups do.
     /// </summary>
     public IEnumerable<BaseEntity> FindAllByTargetName(string pattern)
     {
         foreach (var entity in entities)
         {
             if (Matches(entity, pattern))
+            {
+                yield return entity;
+            }
+        }
+    }
+
+    /// <summary>Finds the first entity whose targetname matches, in any world group.</summary>
+    public BaseEntity? FindByTargetName(string pattern)
+    {
+        foreach (var entity in FindAllByTargetName(pattern))
+        {
+            return entity;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Finds every entity in the world group of <paramref name="scene"/> whose targetname matches. Only
+    /// <c>parentname</c> is looked up this way; every other name an entity refers to is found in any world group.
+    /// </summary>
+    public IEnumerable<BaseEntity> FindAllByTargetNameInWorldGroup(string pattern, Scene scene)
+    {
+        ArgumentNullException.ThrowIfNull(scene);
+
+        foreach (var entity in entities)
+        {
+            if (entity.Scene.WorldGroup == scene.WorldGroup && Matches(entity, pattern))
             {
                 yield return entity;
             }
@@ -796,8 +1037,8 @@ public sealed class EntitySystem
             }
         }
 
-        // A name that matches nothing falls back to the classname, as the loader's resolver does: the
-        // combined type is the map saying "whichever of the two this turns out to be"
+        // A name that matches nothing falls back to the classname: the combined type is the map saying
+        // "whichever of the two this turns out to be"
         if (!byClass || matchedName)
         {
             yield break;

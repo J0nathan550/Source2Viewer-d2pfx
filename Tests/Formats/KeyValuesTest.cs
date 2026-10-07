@@ -9,6 +9,7 @@ using ValveKeyValue;
 using ValveResourceFormat;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
+using ValveResourceFormat.Utils;
 
 namespace Tests.Formats
 {
@@ -252,6 +253,282 @@ namespace Tests.Formats
             binaryKV3.SerializationVersion = 5;
             binaryKV3.SerializationCompressionMethod = (KV3BinaryCompressionMethod)99;
             await Assert.That(() => binaryKV3.Serialize(new MemoryStream())).ThrowsExactly<NotSupportedException>();
+        }
+
+        [Test]
+        public async Task TestBinaryKV3Version4ZstdBlobsAreSecondFrame()
+        {
+            var root = KVObject.Collection();
+            root["blob"] = KVObject.Blob([1, 2, 3, 4]);
+            root["value"] = "hello";
+            var binaryKV3 = new BinaryKV3(root, KV3IDLookup.Get("generic"))
+            {
+                Resource = null!,
+                SerializationVersion = 4,
+                SerializationCompressionMethod = KV3BinaryCompressionMethod.Zstd,
+            };
+
+            using var stream = new MemoryStream();
+            binaryKV3.Serialize(stream);
+            var data = stream.ToArray();
+
+            // The first frame must hold only the buffer, readers stop at its end and stream the blobs separately
+            var sizeUncompressed = BitConverter.ToInt32(data, HeaderStart + 28);
+            var sizeCompressed = BitConverter.ToInt32(data, HeaderStart + 32);
+            var frames = data.AsSpan(HeaderStart + 52, sizeCompressed);
+            var firstFrameLength = GetZstdFrameLength(frames);
+            var firstFrameContentSize = ZstdSharp.Decompressor.GetDecompressedSize(frames[..firstFrameLength]);
+            var secondFrameContentSize = ZstdSharp.Decompressor.GetDecompressedSize(frames[firstFrameLength..]);
+
+            stream.Position = 0;
+            var deserializedBinaryKV3 = ReadBinaryKV3(stream);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(firstFrameContentSize).IsEqualTo((ulong)sizeUncompressed);
+                await Assert.That(secondFrameContentSize).IsEqualTo(4UL);
+                await Assert.That(deserializedBinaryKV3.Data.Root["blob"].AsBlob()).IsEquivalentTo(new byte[] { 1, 2, 3, 4 }, CollectionOrdering.Matching);
+                await Assert.That((string)deserializedBinaryKV3.Data.Root["value"]).IsEqualTo("hello");
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3Version5HeaderCounts()
+        {
+            var root = KVObject.Collection();
+            root["array"] = KVObject.Array([1, 2]);
+            root["object"] = KVObject.Collection();
+            root["emptyArray"] = KVObject.Array();
+            root["blob"] = KVObject.Blob([1, 2, 3]);
+            var binaryKV3 = new BinaryKV3(root, KV3IDLookup.Get("generic"))
+            {
+                Resource = null!,
+                SerializationVersion = 5,
+            };
+
+            using var stream = new MemoryStream();
+            binaryKV3.Serialize(stream);
+            var data = stream.ToArray();
+            int Header(int offset) => BitConverter.ToInt32(data, HeaderStart + offset);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(BitConverter.ToUInt16(data, HeaderStart + 24)).IsEqualTo((ushort)2);
+                await Assert.That(BitConverter.ToUInt16(data, HeaderStart + 26)).IsEqualTo((ushort)2);
+                await Assert.That(Header(84)).IsEqualTo(7); // root, 4 members, 2 array elements
+                await Assert.That(Header(88)).IsEqualTo(2);
+                await Assert.That(Header(92)).IsEqualTo(2);
+                await Assert.That(Header(96)).IsEqualTo(3); // the empty array counts as one element
+                await Assert.That(Header(32)).IsEqualTo(Header(28)); // uncompressed blobs are not part of the compressed size
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3Version5ManyObjects()
+        {
+            var root = KVObject.Array();
+
+            for (var i = 0; i < 70000; i++)
+            {
+                root.Add(KVObject.Collection());
+            }
+
+            var binaryKV3 = new BinaryKV3(root, KV3IDLookup.Get("generic"))
+            {
+                Resource = null!,
+                SerializationVersion = 5,
+            };
+
+            using var stream = new MemoryStream();
+            binaryKV3.Serialize(stream);
+            var data = stream.ToArray();
+
+            stream.Position = 0;
+            var deserializedBinaryKV3 = ReadBinaryKV3(stream);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(BitConverter.ToUInt16(data, HeaderStart + 24)).IsEqualTo(ushort.MaxValue);
+                await Assert.That(BitConverter.ToInt32(data, HeaderStart + 88)).IsEqualTo(70000);
+                await Assert.That(deserializedBinaryKV3.Data.Root).Count().IsEqualTo(70000);
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3ReadsInt8AndUInt8()
+        {
+            var binaryKV3 = ReadCraftedBinaryKV3(4, bytes1: [0xFF, 0xFF], bytes4: [2, 0, 1], strings: ["a", "b"], types: [9, 22, 23]);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(binaryKV3.Data.Root["a"].ValueType).IsEqualTo(KVValueType.Int32);
+                await Assert.That((int)binaryKV3.Data.Root["a"]).IsEqualTo(-1);
+                await Assert.That(binaryKV3.Data.Root["b"].ValueType).IsEqualTo(KVValueType.UInt32);
+                await Assert.That((uint)binaryKV3.Data.Root["b"]).IsEqualTo(255U);
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3SkipsByteAfterTypeWithBit6()
+        {
+            var binaryKV3 = ReadCraftedBinaryKV3(4, bytes1: [], bytes4: [2, 0, 42, 1, 43], strings: ["a", "b"], types: [9, 0x40 | 11, 0xAB, 11]);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That((int)binaryKV3.Data.Root["a"]).IsEqualTo(42);
+                await Assert.That((int)binaryKV3.Data.Root["b"]).IsEqualTo(43);
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3InvalidStringIdsAreEmpty()
+        {
+            var binaryKV3 = ReadCraftedBinaryKV3(4, bytes1: [], bytes4: [2, 0, 7, -5, 0], strings: ["a"], types: [9, 6, 6]);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That((string)binaryKV3.Data.Root["a"]).IsEmpty();
+                await Assert.That((string)binaryKV3.Data.Root[string.Empty]).IsEqualTo("a");
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3RepeatedMemberNameReplacesValue()
+        {
+            var binaryKV3 = ReadCraftedBinaryKV3(4, bytes1: [], bytes4: [2, 0, 1, 0, 2], strings: ["a"], types: [9, 11, 11]);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(binaryKV3.Data.Root).Count().IsEqualTo(1);
+                await Assert.That((int)binaryKV3.Data.Root["a"]).IsEqualTo(2);
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3RejectsEmptyTypedArray()
+        {
+            await Assert.That(() => ReadCraftedBinaryKV3(4, bytes1: [0], bytes4: [], strings: [], types: [24, 11])).Throws<InvalidDataException>();
+        }
+
+        [Test]
+        public async Task TestBinaryKV3Version2FlagBits()
+        {
+            // Resource, ResourceName and Panorama at once, a lone multiline bit, and multiline with SoundEvent
+            var binaryKV3 = ReadCraftedBinaryKV3(2, bytes1: [], bytes4: [3, 0, 0, 1, 1, 2, 2], strings: ["a", "b", "c"], types: [9, 0x86, 0x0B, 0x86, 0x04, 0x86, 0x14]);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(binaryKV3.Data.Root["a"].Flag).IsEqualTo(KVFlag.Resource);
+                await Assert.That(binaryKV3.Data.Root["b"].Flag).IsEqualTo(KVFlag.None);
+                await Assert.That(binaryKV3.Data.Root["c"].Flag).IsEqualTo(KVFlag.SoundEvent);
+            }
+        }
+
+        [Test]
+        public async Task TestBinaryKV3RejectsEmptyFlag()
+        {
+            await Assert.That(() => ReadCraftedBinaryKV3(4, bytes1: [], bytes4: [1, 0, 0], strings: ["a"], types: [9, 0x86, 0x00])).Throws<UnexpectedMagicException>();
+        }
+
+        private static int GetZstdFrameLength(ReadOnlySpan<byte> data)
+        {
+            var descriptor = data[4];
+            var contentSizeFlag = descriptor >> 6;
+            var singleSegment = (descriptor & 0x20) != 0;
+            var hasChecksum = (descriptor & 0x04) != 0;
+            var offset = 5;
+
+            offset += singleSegment ? 0 : 1;
+            offset += (descriptor & 3) switch { 0 => 0, 1 => 1, 2 => 2, _ => 4 };
+            offset += contentSizeFlag switch { 0 => singleSegment ? 1 : 0, 1 => 2, 2 => 4, _ => 8 };
+
+            while (true)
+            {
+                var header = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16);
+                var blockType = (header >> 1) & 3;
+                offset += 3 + (blockType == 1 ? 1 : header >> 3);
+
+                if ((header & 1) != 0)
+                {
+                    break;
+                }
+            }
+
+            return offset + (hasChecksum ? 4 : 0);
+        }
+
+        // Header fields start after the magic and the format guid
+        private const int HeaderStart = 20;
+
+        // Builds an uncompressed version 2 to 4 block without blobs
+        private static BinaryKV3 ReadCraftedBinaryKV3(int version, byte[] bytes1, int[] bytes4, string[] strings, byte[] types)
+        {
+            using var buffer = new MemoryStream();
+            int countTypes;
+
+            using (var writer = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true))
+            {
+                writer.Write(bytes1);
+
+                while (buffer.Length % 4 != 0)
+                {
+                    writer.Write((byte)0);
+                }
+
+                writer.Write(strings.Length);
+
+                foreach (var value in bytes4)
+                {
+                    writer.Write(value);
+                }
+
+                while (buffer.Length % 8 != 0)
+                {
+                    writer.Write((byte)0);
+                }
+
+                var stringsStart = buffer.Length;
+
+                foreach (var value in strings)
+                {
+                    writer.Write(Encoding.UTF8.GetBytes(value));
+                    writer.Write((byte)0);
+                }
+
+                writer.Write(types);
+                countTypes = (int)(buffer.Length - stringsStart);
+                writer.Write(0xFFEEDD00);
+            }
+
+            var stream = new MemoryStream();
+
+            using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+            {
+                writer.Write(0x4B563300 | version);
+                writer.Write(KV3IDLookup.Get("generic").Id.ToByteArray());
+                writer.Write(0); // uncompressed
+                writer.Write(0); // dictionary id and frame size
+                writer.Write(bytes1.Length);
+                writer.Write(bytes4.Length + 1);
+                writer.Write(0);
+                writer.Write(countTypes);
+                writer.Write(0); // object and array counts
+                writer.Write((int)buffer.Length);
+                writer.Write((int)buffer.Length);
+                writer.Write(0);
+                writer.Write(0);
+
+                if (version >= 4)
+                {
+                    writer.Write(0);
+                    writer.Write(0);
+                }
+
+                writer.Write(buffer.ToArray());
+            }
+
+            stream.Position = 0;
+            return ReadBinaryKV3(stream);
         }
 
         [Test]

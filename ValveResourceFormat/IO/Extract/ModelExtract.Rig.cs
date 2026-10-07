@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes;
@@ -65,11 +66,17 @@ partial class ModelExtract
         }
     }
 
+    // Bone and attachment names as spelled in this model, the global string token table is only a fallback
+    private readonly Dictionary<uint, string> rigNames = [];
+
+    bool TryGetRigName(uint hash, [MaybeNullWhen(false)] out string name)
+        => rigNames.TryGetValue(hash, out name) || StringToken.InvertedTable.TryGetValue(hash, out name);
+
     KVObject? ProcessBoneConstraintTarget(KVObject target)
     {
         var isAttachment = target.GetBooleanProperty("m_bIsAttachment");
         var targetHash = target.GetUInt32Property("m_nBoneHash");
-        if (!StringToken.InvertedTable.TryGetValue(targetHash, out var targetName))
+        if (!TryGetRigName(targetHash, out var targetName))
         {
             ProgressReporter?.Report($"Skipping a bone constraint: no name for {(isAttachment ? "attachment" : "bone")} {targetHash}.");
             return null;
@@ -94,7 +101,7 @@ partial class ModelExtract
     KVObject? ProcessBoneConstraintSlave(KVObject slave)
     {
         var boneHash = slave.GetUInt32Property("m_nBoneHash");
-        if (!StringToken.InvertedTable.TryGetValue(boneHash, out var boneName))
+        if (!TryGetRigName(boneHash, out var boneName))
         {
             ProgressReporter?.Report($"Skipping a bone constraint: no name for bone {boneHash}.");
             return null;
@@ -107,7 +114,7 @@ partial class ModelExtract
         return node;
     }
 
-    void ProcessBoneConstraintChildren(KVObject boneConstraint, KVObject node)
+    bool ProcessBoneConstraintChildren(KVObject boneConstraint, KVObject node)
     {
         var targets = boneConstraint.GetArray("m_targets")
                                     .Select(p => ProcessBoneConstraintTarget(p))
@@ -116,10 +123,22 @@ partial class ModelExtract
         IEnumerable<KVObject> children;
         if (node.GetStringProperty("_class") == "AnimConstraintParent")
         {
+            var parentSlaves = boneConstraint.GetArray("m_slaves");
+            if (parentSlaves.Count == 0)
+            {
+                return false;
+            }
+
             //Parent constraints only have a single slave and it's not a child node in the .vmdl
             children = targets;
 
-            var constrainedBoneData = boneConstraint.GetArray("m_slaves")[0];
+            var constrainedBoneData = parentSlaves[0];
+            var constrainedBoneHash = constrainedBoneData.GetUInt32Property("m_nBoneHash");
+            if (TryGetRigName(constrainedBoneHash, out var constrainedBoneName))
+            {
+                node.Add("constrained_bone", constrainedBoneName);
+            }
+
             AddBoneConstraintProperty<double>(constrainedBoneData, node, "m_flWeight", "weight");
             AddBoneConstraintProperty<Vector3>(constrainedBoneData, node, "m_vBasePosition", "translation_offset");
 
@@ -146,6 +165,7 @@ partial class ModelExtract
             childrenKV.Add(child);
         }
         node.Add("children", childrenKV);
+        return true;
     }
 
     KVObject? ProcessBoneConstraint(BoneConstraint constraint)
@@ -170,7 +190,10 @@ partial class ModelExtract
             return MakeNode(targetClassName, boneConstraint);
         }
 
-        ProcessBoneConstraintChildren(boneConstraint, node);
+        if (!ProcessBoneConstraintChildren(boneConstraint, node))
+        {
+            return null;
+        }
 
         AddBoneConstraintProperty<long>(boneConstraint, node, "m_nTargetAxis", "input_axis");
         AddBoneConstraintProperty<long>(boneConstraint, node, "m_nSlaveAxis", "slave_axis");
@@ -197,7 +220,10 @@ partial class ModelExtract
             stringTokenKeys = stringTokenKeys.Concat(mesh.Attachments.Keys);
         }
 
-        StringToken.Store(stringTokenKeys);
+        foreach (var name in stringTokenKeys)
+        {
+            rigNames.TryAdd(StringToken.Store(name), name);
+        }
 
         var childrenKV = KVObject.Array();
 
@@ -438,14 +464,20 @@ partial class ModelExtract
     /// Copies a key across only when the compiled block carries it, leaving a key an older compiler
     /// never wrote absent.
     /// </summary>
-    static void AddBonesRecursive(IEnumerable<Bone> bones, KVObject parent)
+    void AddBonesRecursive(IEnumerable<Bone> bones, KVObject parent)
     {
         foreach (var bone in bones)
         {
+            if (ReconstructsCloth && ClothBones.IsCompilerOwned(bone))
+            {
+                AddBonesRecursive(bone.Children, parent);
+                continue;
+            }
+
             var boneDefinitionNode = MakeNode(
                 "Bone",
                 ("name", GetExportBoneName(bone)),
-                ("origin", ToKVArray(bone.Position)),
+                ("origin", ToKVArray(BonePosition(bone, Cloth.RestBonePositions))),
                 ("angles", ToKVArray(EntityTransformHelper.ToEulerAngles(bone.Angle))),
                 ("do_not_discard", true)
             );

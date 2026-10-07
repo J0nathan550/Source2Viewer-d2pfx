@@ -1,21 +1,15 @@
 namespace ValveResourceFormat.Renderer.Entities;
 
 /// <summary>
-/// <c>worldspawn</c>, Source's <c>CWorld</c>: the root of the entity hierarchy. Every world has exactly
-/// one - a default is created with the <see cref="EntitySystem"/>, and a map's authored worldspawn
-/// replaces it when the map loads.
+/// Source's <c>CWorld</c>, the root of the entity hierarchy. An entity world has exactly one, created on
+/// its own rather than from a map: a map's <c>worldspawn</c> keyvalues never spawn an entity.
 /// </summary>
 public sealed class WorldEntity : BaseEntity
 {
-    internal WorldEntity(EntitySystem system) : base(system, "worldspawn")
+    /// <summary>Initializes the world entity, which has no keyvalues.</summary>
+    /// <param name="system">The entity world it is the root of.</param>
+    /// <param name="scene">The scene of the map it was created for.</param>
+    public WorldEntity(EntitySystem system, Scene scene) : base(system, scene, "worldent")
     {
     }
-
-    /// <summary>Initializes the world from the map's authored worldspawn keyvalues.</summary>
-    public WorldEntity(EntitySystem system, EntitySpawnInfo spawnInfo) : base(system, spawnInfo)
-    {
-    }
-
-    /// <summary>Draws nothing; the world geometry already draws itself.</summary>
-    protected override SceneNode? CreateRootNode() => null;
 }

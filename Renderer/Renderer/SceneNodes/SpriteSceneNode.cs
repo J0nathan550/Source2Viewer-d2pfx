@@ -38,13 +38,10 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         private readonly RenderMaterial material;
         private readonly float spriteSize;
 
-        /// <summary>Color multiplier applied to the sprite, in gamma space.</summary>
-        public Vector4 Tint { get; set; } = Vector4.One;
-
         public SpriteSceneNode(Scene scene, RendererContext renderContext, Resource resource, Vector3 position)
             : base(scene)
         {
-            material = renderContext.MaterialLoader.LoadMaterial(resource);
+            material = renderContext.MaterialLoader.LoadMaterial(resource, scene.LightingInfo.CreateShaderArguments());
 
             // Forcefully clamp sprites so they don't render extra pixels on edges
             foreach (var texture in material.Textures.Values)
@@ -60,10 +57,17 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             spriteSize = material.FloatParams.GetValueOrDefault("g_flUniformPointSize", 16);
             spriteSize /= 2f; // correct the scale to actually be 16x16
 
-            LocalBoundingBox = new AABB(-Vector3.One * spriteSize, Vector3.One * spriteSize);
+            LocalBoundingBox = new AABB(-Vector3.One, Vector3.One);
             Transform = Matrix4x4.CreateTranslation(position.X, position.Y, position.Z);
 
             RenderPasses |= CustomRenderPasses.DepthOnly;
+        }
+
+        public override void Update(Scene.UpdateContext context)
+        {
+            Transform = Matrix4x4.CreateScale(spriteSize * PlacementScale)
+                * context.Camera.BillboardMatrix
+                * Matrix4x4.CreateTranslation(Transform.Translation);
         }
 
         public override void Render(Scene.RenderContext context)
@@ -81,15 +85,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             VertexArray.Bind(vao, renderShader);
 
-            var transform = Matrix4x4.CreateScale(spriteSize)
-                * context.Camera.BillboardMatrix
-                * Matrix4x4.CreateTranslation(Transform.Translation);
-            renderShader.SetUniform3x4("transform", transform);
-
-            renderShader.SetUniform1("bIsInstancing", 0u);
-
-            renderShader.SetBoneAnimationData(false);
-            renderShader.SetUniform1("vTint", Color32.FromVector4Clamped(Tint).PackedValue);
             renderShader.SetUniform1("shaderId", material.Shader.NameHash);
             renderShader.SetUniform1("shaderProgramId", (uint)material.Shader.Program);
 

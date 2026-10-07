@@ -64,6 +64,21 @@ partial class ModelExtract
         /// When provided, bones are emitted into the DMX <c>jointList</c> so ModelDoc can resolve indices.
         /// </summary>
         public Skeleton? Skeleton { get; init; }
+
+        /// <summary>
+        /// Parent-space bone positions to emit in place of the skeleton's own, keyed by bone name
+        /// (see <see cref="ClothExtract.RestBonePositions"/>).
+        /// </summary>
+        internal IReadOnlyDictionary<string, Vector3>? BonePositions { get; init; }
+
+        /// <summary>The cloth proxy surface a painted render vertex binds to.</summary>
+        internal ClothProxySurface? ClothSurface { get; init; }
+
+        /// <summary>
+        /// Whether generated cloth proxy bones are left out of the joint list, with their weight written as
+        /// <c>cloth_enable</c> paint instead.
+        /// </summary>
+        internal bool ReconstructCloth { get; init; }
     }
 
     /// <summary>
@@ -104,6 +119,18 @@ partial class ModelExtract
         EnqueueRenderMeshes();
         EnqueuePhysMeshes();
     }
+
+    /// <summary>
+    /// Gets the parent-space position to emit for a bone, preferring its entry in <paramref name="overrides"/>.
+    /// </summary>
+    internal static Vector3 BonePosition(Bone bone, IReadOnlyDictionary<string, Vector3>? overrides)
+        => overrides is not null && overrides.TryGetValue(bone.Name, out var position) ? position : bone.Position;
+
+    /// <summary>
+    /// Gets the parent-space rotation to emit for a bone, preferring its entry in <paramref name="overrides"/>.
+    /// </summary>
+    private static Quaternion BoneRotation(Bone bone, IReadOnlyDictionary<string, Quaternion>? overrides)
+        => overrides is not null && overrides.TryGetValue(bone.Name, out var rotation) ? rotation : bone.Angle;
 
     private void EnqueueRenderMeshes()
     {
@@ -164,7 +191,7 @@ partial class ModelExtract
     /// </summary>
     public static IEnumerable<ContentFile> GetContentFiles_DrawCallSplit(Resource aggregateModelResource, IFileLoader fileLoader, Vector3[] drawOrigins, int drawCallCount)
     {
-        var extract = new ModelExtract(aggregateModelResource, fileLoader) { Type = ModelExtractType.Map_AggregateSplit };
+        var extract = new ModelExtract(aggregateModelResource, fileLoader) { Type = ModelExtractType.Map_AggregateSplit, ReconstructSoftbody = false };
         Debug.Assert(extract.RenderMeshesToExtract.Count == 1);
 
         if (extract.RenderMeshesToExtract.Count == 0)
@@ -246,7 +273,7 @@ partial class ModelExtract
 
         if (options.Skeleton is { Bones.Length: > 0 } skeleton)
         {
-            skeletonRoot = BuildDmeDagSkeleton(skeleton, out _);
+            skeletonRoot = BuildDmeDagSkeleton(skeleton, out _, bonePositions: options.BonePositions, keepClothProxyBones: !options.ReconstructCloth);
         }
 
         return DmxMeshBuilder.Build(mesh, name, new DmxMeshBuildOptions
@@ -256,6 +283,7 @@ partial class ModelExtract
             MaterialInputSignatures = options.MaterialInputSignatures,
             BoneRemapTable = options.BoneRemapTable,
             SkeletonRoot = skeletonRoot,
+            Cloth = options.ReconstructCloth ? ClothRenderBinding.Create(options.Skeleton, options.ClothSurface) : null,
         });
     }
 

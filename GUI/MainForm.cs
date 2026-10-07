@@ -150,34 +150,35 @@ namespace GUI
             for (var i = 0; i < args.Length; i++)
             {
                 var file = args[i];
+                List<string> packagePaths = [];
+                var innerFile = file;
 
-                // Handle vpk: protocol
-                if (file.StartsWith("vpk:", StringComparison.InvariantCulture))
+                if (VpkLink.IsVpkLink(file))
                 {
-                    file = System.Net.WebUtility.UrlDecode(file[4..]);
-
-                    // Every ".vpk:" separates a package from the path inside it, so nested packages
-                    // can be addressed as "outer_dir.vpk:maps/inner.vpk:models/file.vmdl_c"
-                    var packagePaths = new List<string>();
-                    var innerFile = file;
-                    int separator;
-
-                    while ((separator = innerFile.IndexOf(".vpk:", StringComparison.OrdinalIgnoreCase)) != -1)
-                    {
-                        packagePaths.Add(innerFile[..(separator + 4)]);
-                        innerFile = innerFile[(separator + 5)..];
-                    }
+                    (packagePaths, innerFile) = VpkLink.Parse(file);
 
                     if (packagePaths.Count == 0)
                     {
                         Log.Error(nameof(MainForm), $"For vpk: protocol to work, specify a file path inside of the package, for example: \"vpk:C:/path/pak01_dir.vpk:inner/file.vmdl_c\"");
-
-                        OpenFile(file);
-                        continue;
+                        file = innerFile;
                     }
+                }
 
+                if (packagePaths.Count > 0)
+                {
                     file = packagePaths[0];
+                }
 
+                // Paths can be relative to a Steam app, such as "steam:730/game/csgo/pak01_dir.vpk"
+                if (!GameFolderLocator.TryResolveSteamAppPath(file, out file, out var steamAppPathError))
+                {
+                    Log.Error(nameof(MainForm), steamAppPathError);
+                    mainTabs.OpenTab("Console");
+                    continue;
+                }
+
+                if (packagePaths.Count > 0)
+                {
                     if (!File.Exists(file))
                     {
                         var dirFile = string.Concat(file.AsSpan(0, file.Length - 4), "_dir.vpk");
@@ -316,6 +317,8 @@ namespace GUI
             mainTabs.TabPages.Add(consoleTabPage);
             consoleTab.InitializeFont();
 
+            NativeWindowFactory.WarmUpInBackground();
+
             if (Settings.IsFirstStartup)
             {
                 OpenWelcome();
@@ -429,17 +432,35 @@ namespace GUI
         private void CloseAndReOpenActiveTab()
         {
             var tab = mainTabs.SelectedTab;
-            if (tab is not null && tab.Tag is ExportData exportData)
+            if (tab is null || tab.Tag is not ExportData exportData)
             {
-                var (newFileContext, packageEntry) = exportData.VrfGuiContext.FindFileWithContext(
-                    exportData.PackageEntry?.GetFullPath() ?? exportData.VrfGuiContext.FileName
-                );
+                return;
+            }
 
-                if (newFileContext != null)
+            if (exportData.PackageEntry is { } packageEntry && exportData.VrfGuiContext.ParentGuiContext is { } packageContext)
+            {
+                var fileContext = new VrfGuiContext(packageEntry.GetFullPath(), packageContext);
+
+                try
                 {
-                    OpenFile(newFileContext, packageEntry);
-                    mainTabs.CloseTab(tab);
+                    OpenFile(fileContext, packageEntry);
+                    fileContext = null;
                 }
+                finally
+                {
+                    fileContext?.Dispose();
+                }
+
+                mainTabs.CloseTab(tab);
+                return;
+            }
+
+            var (newFileContext, newPackageEntry) = exportData.VrfGuiContext.FindFileWithContext(exportData.VrfGuiContext.FileName);
+
+            if (newFileContext != null)
+            {
+                OpenFile(newFileContext, newPackageEntry);
+                mainTabs.CloseTab(tab);
             }
         }
 
@@ -607,13 +628,13 @@ namespace GUI
                 }
             }
 
-            var vrfGuiContext = new VrfGuiContext(fileName, null);
-            OpenFile(vrfGuiContext, null);
+            var vrfGuiContext = new VrfGuiContext(fileName, null, loadSearchPaths: false);
+            OpenFile(vrfGuiContext, null, loadSearchPaths: true);
 
             Settings.TrackRecentFile(fileName);
         }
 
-        public void OpenFile(VrfGuiContext vrfGuiContext, PackageEntry? file, TreeViewWithSearchResults? packageTreeView = null, bool withoutViewer = false)
+        public void OpenFile(VrfGuiContext vrfGuiContext, PackageEntry? file, TreeViewWithSearchResults? packageTreeView = null, bool withoutViewer = false, bool loadSearchPaths = false)
         {
             var isPreview = packageTreeView != null;
 
@@ -654,30 +675,16 @@ namespace GUI
 
             try
             {
-                var parentContext = vrfGuiContext.ParentGuiContext;
-
-                while (parentContext != null)
-                {
-                    tab.ToolTipText = $"{tab.ToolTipText} ← {parentContext.FileName}";
-
-                    parentContext = parentContext.ParentGuiContext;
-                }
+                tab.ToolTipText = vrfGuiContext.FullPath;
 
                 var extension = Path.GetExtension(vrfGuiContext.FileName.AsSpan());
 
                 if (MemoryExtensions.Equals(extension, ".vpk", StringComparison.OrdinalIgnoreCase))
                 {
-                    foreach (var game in ExplorerControl.SteamGames)
+                    if (GameFolderLocator.FindSteamGameContainingPath(vrfGuiContext.FileName, ExplorerControl.SteamGames) is { } game
+                        && AppIcons.GameIcons.TryGetValue(game.AppID, out var imageIndexGame))
                     {
-                        if (vrfGuiContext.FileName.StartsWith(game.GamePath, StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (AppIcons.GameIcons.TryGetValue(game.AppID, out var imageIndexGame))
-                            {
-                                tab.ImageIndex = imageIndexGame;
-                            }
-
-                            break;
-                        }
+                        tab.ImageIndex = imageIndexGame;
                     }
                 }
 
@@ -735,7 +742,15 @@ namespace GUI
 
             Types.Viewers.IViewer? createdViewer = null;
 
-            var taskLoad = Task.Run(() => Types.Viewers.ViewerFactory.CreateAndLoadAsync(vrfGuiContext, file, viewMode));
+            var taskLoad = Task.Run(() =>
+            {
+                if (loadSearchPaths)
+                {
+                    vrfGuiContext.LoadSearchPaths();
+                }
+
+                return Types.Viewers.ViewerFactory.CreateAndLoadAsync(vrfGuiContext, file, viewMode);
+            });
 
             taskLoad.ContinueWith(t =>
             {
@@ -745,6 +760,11 @@ namespace GUI
                 {
                     BeginInvoke(() =>
                     {
+                        if (tab.IsDisposed)
+                        {
+                            return;
+                        }
+
                         var control = CodeTextBox.CreateFromException(ex, tab.ToolTipText);
 
                         tab.Controls.Add(control);
@@ -780,7 +800,20 @@ namespace GUI
                             Debug.Assert(false);
                         }
 
-                        viewer.Create(tab);
+                        try
+                        {
+                            viewer.Create(tab);
+                        }
+                        catch (Exception) when (tab.IsDisposed)
+                        {
+                            return;
+                        }
+
+                        if (tab.IsDisposed)
+                        {
+                            return;
+                        }
+
                         createdViewer = viewer;
 
                         if (mainTabs.SelectedTab == tab)
@@ -806,6 +839,11 @@ namespace GUI
                     {
                         BeginInvoke(() =>
                         {
+                            if (tab.IsDisposed)
+                            {
+                                return;
+                            }
+
                             var control = CodeTextBox.CreateFromException(ex, tab.ToolTipText);
 
                             tab.Controls.Add(control);
@@ -831,7 +869,11 @@ namespace GUI
                 {
                     vrfGuiContext.LoadingProgress = null;
 
-                    if (keepFrozen)
+                    if (tab.IsDisposed)
+                    {
+                        loadingFile?.Dispose();
+                    }
+                    else if (keepFrozen)
                     {
                         // Same-type preview: swap the frozen previous view for the newly loaded viewer.
                         Debug.Assert(packageTreeView != null);

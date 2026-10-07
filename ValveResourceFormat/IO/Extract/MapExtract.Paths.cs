@@ -5,8 +5,8 @@ using ValveResourceFormat.IO.ContentFormats.ValveMap;
 using ValveResourceFormat.Particles.Utils;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
-using static ValveResourceFormat.ResourceTypes.EntityLump;
 using ValveResourceFormat.Utils;
+using static ValveResourceFormat.ResourceTypes.EntityLump;
 
 namespace ValveResourceFormat.IO;
 
@@ -423,7 +423,7 @@ public sealed partial class MapExtract
 
             foreach (var part in physics.Parts)
             {
-                foreach (var mesh in part.Shape.Meshes)
+                foreach (var mesh in part.Shape.GetAllMeshes())
                 {
                     physicsVertices += mesh.Shape.GetVertices().Length;
                 }
