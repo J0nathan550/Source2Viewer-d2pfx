@@ -141,6 +141,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         public List<string> Abilities { get; } = [];
         public List<HeroSlot> Slots { get; } = [];
 
+        /// <summary>
+        /// The model the hero's hex turns its targets into, e.g. Shadow Shaman's chicken, which items swap with
+        /// "hex_model" modifiers. Null for heroes without a hex.
+        /// </summary>
+        public string? HexModel { get; set; }
+
         /// <summary>The voice lines the hero's chat wheel plays.</summary>
         public List<ChatWheelLine> ChatWheel { get; } = [];
 
@@ -703,6 +709,15 @@ namespace GUI.Types.Exporter.CharacterAssets
                     }
                 }
 
+                // The hero's own hex turns targets into a gameplay prop it preloads, e.g. Shadow Shaman's chicken
+                if (heroData.GetSubCollection("precache") is { ValueType: KVValueType.Collection } precache)
+                {
+                    hero.HexModel = precache
+                        .Where(static entry => entry.Key == "model")
+                        .Select(static entry => entry.Value.ToString())
+                        .FirstOrDefault(static model => model != null && model.StartsWith("models/props_gameplay/", StringComparison.OrdinalIgnoreCase));
+                }
+
                 if (heroData.GetSubCollection("ItemSlots") is { ValueType: KVValueType.Collection } itemSlots)
                 {
                     foreach (var (_, slotData) in itemSlots)
@@ -776,6 +791,16 @@ namespace GUI.Types.Exporter.CharacterAssets
                     && !model.StartsWith("models/development/", StringComparison.OrdinalIgnoreCase))
                 {
                     models.TryAdd(name, model);
+                }
+            }
+
+            // Units with a version per ability level, e.g. "npc_dota_shadow_shaman_ward_1", are named without the level
+            // where slots generate them, and share the model of the first
+            foreach (var (name, model) in models.ToList())
+            {
+                if (name.EndsWith("_1", StringComparison.Ordinal))
+                {
+                    models.TryAdd(name[..^2], model);
                 }
             }
 

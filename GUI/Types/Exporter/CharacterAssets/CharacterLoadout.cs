@@ -156,19 +156,37 @@ namespace GUI.Types.Exporter.CharacterAssets
             .DistinctBy(static swap => swap.DefaultModel, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Models of the hero's abilities that the equipped items swap, e.g. the mound Nyx Assassin burrows into or
-        /// Tidehunter's fish, with the game's own model they replace. Unlike swaps of other items' models, these apply
-        /// whatever else is equipped. Only the hero's own models count: refits of item models no item of the hero wears,
-        /// e.g. a pedestal, still need that item.
+        /// Models of the hero's abilities that the equipped items swap, e.g. the mound Nyx Assassin burrows into,
+        /// Tidehunter's fish or the animal Shadow Shaman's hex turns targets into, with the game's own model they
+        /// replace. Unlike swaps of other items' models, these apply whatever else is equipped. Only the hero's own
+        /// models count: refits of item models no item of the hero wears, e.g. a pedestal, still need that item.
         /// </summary>
         public IEnumerable<(EquippedItem Item, string Model, string DefaultModel)> AbilityModelSwaps => Items
             .SelectMany(item => item.Modifiers
-                .Where(modifier => modifier.Type == "model" && IsModelPath(modifier.Modifier) && IsModelPath(modifier.Asset)
-                    && NormalizePath(modifier.Asset!).StartsWith("models/heroes/", StringComparison.OrdinalIgnoreCase)
-                    && !itemModels.Contains(NormalizePath(modifier.Asset!))
-                    && !IsSamePath(modifier.Asset, Hero.Model))
-                .Select(modifier => (Item: item, Model: modifier.Modifier!, DefaultModel: modifier.Asset!)))
+                .Where(static modifier => modifier.Type is "model" or "hex_model" && IsModelPath(modifier.Modifier))
+                .Select(modifier => (Item: item, Model: modifier.Modifier!, DefaultModel: GetAbilityModel(modifier))))
+            .Where(static swap => swap.DefaultModel != null)
+            .Select(static swap => (swap.Item, swap.Model, DefaultModel: swap.DefaultModel!))
             .DistinctBy(static swap => swap.DefaultModel, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The model of the hero's own that a swap replaces, or null when it swaps another item's model. Hex swaps name
+        /// the model, e.g. Lion's frog, or only "hex" for the hero's own.
+        /// </summary>
+        private string? GetAbilityModel(AssetModifier modifier)
+        {
+            if (modifier.Type == "hex_model")
+            {
+                return IsModelPath(modifier.Asset) ? modifier.Asset : Hero.HexModel;
+            }
+
+            return IsModelPath(modifier.Asset)
+                && NormalizePath(modifier.Asset!).StartsWith("models/heroes/", StringComparison.OrdinalIgnoreCase)
+                && !itemModels.Contains(NormalizePath(modifier.Asset!))
+                && !IsSamePath(modifier.Asset, Hero.Model)
+                    ? modifier.Asset
+                    : null;
+        }
 
         /// <summary>
         /// The units' own models, for the units of slots something is equipped in that no item gives another model.
