@@ -218,10 +218,13 @@ namespace GUI.Types.Exporter.CharacterAssets
         public IReadOnlyList<UnusualEffect> GetUnusualEffects(EconItem item) => item.CanBeUnusual ? unusualEffects : [];
 
         /// <summary>
-        /// The model a unit has when no item dresses it, e.g. Beastmaster's boar, or null for units that only get one
-        /// from items.
+        /// The models a unit has when no item dresses it, e.g. Beastmaster's boar, by unit name. Slots name units without
+        /// their versions, which items dress one by one, so these are included: one per ability level, e.g.
+        /// "npc_dota_shadow_shaman_ward_1" or "npc_dota_unit_tombstone1", and variants like
+        /// "npc_dota_unit_undying_zombie_torso". Units that only get a model from items are left out.
         /// </summary>
-        public string? GetUnitModel(string unit) => unitModels.GetValueOrDefault(unit);
+        public IEnumerable<KeyValuePair<string, string>> GetUnitModels(string unit) => unitModels
+            .Where(pair => pair.Key.StartsWith(unit, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>
         /// The localized text of a token, e.g. "DOTA_Tooltip_ability_drow_ranger_multishot", or null when there is none.
@@ -791,16 +794,6 @@ namespace GUI.Types.Exporter.CharacterAssets
                     && !model.StartsWith("models/development/", StringComparison.OrdinalIgnoreCase))
                 {
                     models.TryAdd(name, model);
-                }
-            }
-
-            // Units with a version per ability level, e.g. "npc_dota_shadow_shaman_ward_1", are named without the level
-            // where slots generate them, and share the model of the first
-            foreach (var (name, model) in models.ToList())
-            {
-                if (name.EndsWith("_1", StringComparison.Ordinal))
-                {
-                    models.TryAdd(name[..^2], model);
                 }
             }
 

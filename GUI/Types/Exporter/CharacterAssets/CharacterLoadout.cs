@@ -92,19 +92,22 @@ namespace GUI.Types.Exporter.CharacterAssets
         private readonly Dictionary<string, string> defaultModels;
         private readonly Dictionary<string, HeroSlot> slots;
         private readonly Dictionary<string, string> unitModels;
+        private readonly Dictionary<string, List<string>> slotUnitModels;
         private readonly HashSet<string> itemModels;
 
         public HeroDefinition Hero { get; }
         public IReadOnlyList<EquippedItem> Items { get; }
 
         private CharacterLoadout(HeroDefinition hero, IReadOnlyList<EquippedItem> items, Dictionary<string, string> defaultModels,
-            Dictionary<string, HeroSlot> slots, Dictionary<string, string> unitModels, HashSet<string> itemModels)
+            Dictionary<string, HeroSlot> slots, Dictionary<string, string> unitModels, Dictionary<string, List<string>> slotUnitModels,
+            HashSet<string> itemModels)
         {
             Hero = hero;
             Items = items;
             this.defaultModels = defaultModels;
             this.slots = slots;
             this.unitModels = unitModels;
+            this.slotUnitModels = slotUnitModels;
             this.itemModels = itemModels;
         }
 
@@ -113,6 +116,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             var defaultModels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var slots = new Dictionary<string, HeroSlot>(StringComparer.OrdinalIgnoreCase);
             var unitModels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var slotUnitModels = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var slot in catalog.GetSlots(hero))
             {
@@ -125,10 +129,28 @@ namespace GUI.Types.Exporter.CharacterAssets
 
                 foreach (var unit in slot.Units ?? [])
                 {
-                    if (catalog.GetUnitModel(unit) is { } unitModel)
+                    var versions = catalog.GetUnitModels(unit).ToList();
+
+                    if (versions.Count == 0)
                     {
-                        unitModels.TryAdd(unit, unitModel);
+                        continue;
                     }
+
+                    // Items dress the unit by the name the slot gives it too, which units with a version per level lack
+                    unitModels.TryAdd(unit, versions[0].Value);
+
+                    foreach (var (version, unitModel) in versions)
+                    {
+                        unitModels.TryAdd(version, unitModel);
+                    }
+
+                    if (!slotUnitModels.TryGetValue(slot.Name, out var models))
+                    {
+                        models = [];
+                        slotUnitModels.Add(slot.Name, models);
+                    }
+
+                    models.AddRange(versions.Select(static version => version.Value));
                 }
             }
 
@@ -141,7 +163,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 .Select(NormalizePath)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            return new CharacterLoadout(hero, items, defaultModels, slots, unitModels, itemModels);
+            return new CharacterLoadout(hero, items, defaultModels, slots, unitModels, slotUnitModels, itemModels);
         }
 
         /// <summary>
@@ -198,9 +220,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 var swapped = UnitModelSwaps.Select(static swap => swap.DefaultModel).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
                 return Items
-                    .SelectMany(item => slots.GetValueOrDefault(item.Item.Slot)?.Units ?? [])
-                    .Select(unit => unitModels.GetValueOrDefault(unit))
-                    .OfType<string>()
+                    .SelectMany(item => slotUnitModels.GetValueOrDefault(item.Item.Slot) ?? [])
                     .Where(model => !swapped.Contains(model))
                     .Distinct(StringComparer.OrdinalIgnoreCase);
             }

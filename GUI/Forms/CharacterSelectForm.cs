@@ -1722,13 +1722,6 @@ namespace GUI.Forms
             effectRows.Clear();
             modelEffectRows.Clear();
 
-            void AddRow(Control control)
-            {
-                var row = effectsTable.RowCount++;
-                effectsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-                effectsTable.Controls.Add(control, 0, row);
-            }
-
             var effects = loadout.CreatedEffects.Where(static effect => !effect.Item.Item.IsDefault && !effect.IsUnusual).ToList();
             var items = loadout.Items
                 .Where(item => !item.Item.IsDefault && (catalog.GetUnusualEffects(item.Item).Count > 0 || effects.Any(effect => effect.Item == item)))
@@ -1736,7 +1729,7 @@ namespace GUI.Forms
 
             if (items.Count == 0)
             {
-                AddRow(new Label
+                AddEffectsRow(new Label
                 {
                     AutoSize = true,
                     Text = "No equipped item creates effects.",
@@ -1819,21 +1812,21 @@ namespace GUI.Forms
 
                     headerPanel.Controls.Add(titleLabel);
                     headerPanel.Controls.Add(itemFxBtn);
-                    AddRow(headerPanel);
+                    AddEffectsRow(headerPanel);
 
                     if (catalog.GetUnusualEffects(item.Item) is { Count: > 0 } unusualEffects)
                     {
-                        AddRow(CreateUnusualRow(item, unusualEffects));
+                        AddEffectsRow(CreateUnusualRow(item, unusualEffects));
                     }
 
                     // Чекбоксы эффектов с индивидуальной палитрой 🎨 для каждого партикла
                     foreach (var effect in currentItemEffects)
                     {
-                        AddRow(CreateEffectRow(loadout, effect));
+                        AddEffectsRow(CreateEffectRow(loadout, effect));
                     }
                 }
 
-                AddModelEffectRows(loadout, AddRow);
+                AddModelEffectRows(loadout);
             }
             finally
             {
@@ -1842,6 +1835,13 @@ namespace GUI.Forms
 
             Themer.ThemeControl(effectsTable);
             effectsTable.ResumeLayout(true);
+        }
+
+        private void AddEffectsRow(Control control)
+        {
+            var row = effectsTable.RowCount++;
+            effectsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            effectsTable.Controls.Add(control, 0, row);
         }
 
         /// <summary>
@@ -2044,7 +2044,7 @@ namespace GUI.Forms
         /// staging for the loadout screen, e.g. a circle on the ground, see <see cref="ModelDocEditor.LooksLikeStaging"/>.
         /// The unticked ones are taken out of the exported models.
         /// </summary>
-        private void AddModelEffectRows(CharacterLoadout loadout, Action<Control> addRow)
+        private void AddModelEffectRows(CharacterLoadout loadout)
         {
             var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var first = true;
@@ -2070,10 +2070,10 @@ namespace GUI.Forms
                         Margin = new Padding(3, 14, 3, 3),
                     };
                     toolTip.SetToolTip(header, "Unticked effects are taken out of the exported models, which are written for it even when nothing else about them changes.");
-                    addRow(header);
+                    AddEffectsRow(header);
                 }
 
-                addRow(new Label
+                AddEffectsRow(new Label
                 {
                     AutoSize = true,
                     Text = Path.GetFileNameWithoutExtension(model),
@@ -2106,7 +2106,7 @@ namespace GUI.Forms
                     };
 
                     modelEffectRows.Add((particle, checkBox));
-                    addRow(checkBox);
+                    AddEffectsRow(checkBox);
                 }
             }
         }
