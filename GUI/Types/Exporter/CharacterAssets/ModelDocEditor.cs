@@ -541,6 +541,8 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <param name="prefix">Prepended to the names of meshes that clash with this model's meshes.</param>
         public static string MergeModel(string vmdl, string otherVmdl, string prefix)
         {
+            vmdl = AddCloth(vmdl, otherVmdl, prefix);
+
             var children = GetRootChildren(vmdl);
             var otherChildren = GetRootChildren(otherVmdl);
 
@@ -672,6 +674,205 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// Numbers a model's sequences like those of the model it is written over. A mod only changes what the client
+        /// shows, the server still picks sequences from the original by number, e.g. one of two runs for each of Death
+        /// Prophet's Exorcism spirits. Sequences the original has and this model lacks are copies of one with the same
+        /// activity, else of its idle one, and an AnimOrder keeps the original's numbering.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="original">The original model's sequences in order, with their activities.</param>
+        /// <param name="details">Receives a description of the copies added.</param>
+        public static string MatchSequenceOrder(string vmdl, IReadOnlyList<(string Name, string? Activity)> original, ICollection<string>? details = null)
+        {
+            var sequences = GetSequenceNames(vmdl);
+            var animations = GetAnimFiles(vmdl);
+            var idle = animations.FirstOrDefault(static animation => animation.Activity == "ACT_DOTA_IDLE")
+                ?? animations.FirstOrDefault(static animation => animation.Looping);
+
+            if (idle == null || original.Count == 0)
+            {
+                return vmdl;
+            }
+
+            var copies = new StringBuilder();
+            var copied = new List<string>();
+
+            // Sequence names are compared ignoring case, the model's own spelling is kept
+            string? FindOwn(string name) => sequences.FirstOrDefault(own => own.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            // Models name their sequences after themselves, e.g. ss_totem_attack_90 and ss_monster_ward_attack_90
+            var originalPrefix = GetCommonPrefix(original.Select(static sequence => sequence.Name));
+            var ownPrefix = GetCommonPrefix(animations.Select(static animation => animation.Name.Value));
+
+            static string WithoutPrefix(string name, string prefix)
+                => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? name[prefix.Length..] : name;
+
+            foreach (var (name, activity) in original.Where(sequence => FindOwn(sequence.Name) == null))
+            {
+                var suffix = WithoutPrefix(name, originalPrefix);
+                var source = animations.FirstOrDefault(animation => WithoutPrefix(animation.Name.Value, ownPrefix).Equals(suffix, StringComparison.OrdinalIgnoreCase))
+                    ?? animations.FirstOrDefault(animation => animation.Activity is { Length: > 0 } own
+                        && own.Equals(activity, StringComparison.OrdinalIgnoreCase))
+                    ?? idle;
+
+                copies.Append('\n').Append(GetNodeText(vmdl, source.Start, source.End, source.Name, name));
+                copied.Add($"{name} as a copy of {source.Name.Value}");
+                sequences.Add(name);
+            }
+
+            var order = original.Select(sequence => FindOwn(sequence.Name)!).ToList();
+            order.AddRange(sequences.Except(order, StringComparer.OrdinalIgnoreCase));
+
+            // Only one AnimOrder is compiled, the one the decompiled model may have is replaced
+            foreach (var (start, end) in FindObjects(vmdl).Where(range => ObjectHeaderRegex().Match(vmdl, range.Start) is { Success: true } header
+                && header.Groups["class"].Value == "AnimOrder").OrderByDescending(static range => range.Start))
+            {
+                var lineStart = GetLineStart(vmdl, start);
+                vmdl = string.Concat(vmdl.AsSpan(0, lineStart), vmdl.AsSpan(GetLineEnd(vmdl, end)));
+            }
+
+            var animationList = AnimationListChildrenRegex().Match(vmdl);
+
+            if (!animationList.Success)
+            {
+                throw new InvalidDataException("The model's animation list was not found");
+            }
+
+            var names = string.Join('\n', order.Select(static name => $"        \"{name}\","));
+            var animOrder = $$"""
+
+                {
+                    _class = "AnimOrder"
+                    anim_order =
+                    [
+                {{names}}
+                    ]
+                },
+                """;
+
+            vmdl = vmdl.Insert(animationList.Index + animationList.Length, copies + Indent(animOrder, 5));
+
+            if (copied.Count > 0)
+            {
+                details?.Add($"sequences numbered like the original's, with {string.Join(", ", copied)}");
+            }
+
+            return Validate(vmdl);
+        }
+
+        /// <summary>
+        /// The start the names share up to an underscore, e.g. "ss_totem_", or an empty string.
+        /// </summary>
+        private static string GetCommonPrefix(IEnumerable<string> names)
+        {
+            var list = names.Where(static name => !name.Equals("bindpose", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (list.Count < 2)
+            {
+                return string.Empty;
+            }
+
+            var length = list.Min(static name => name.Length);
+
+            for (var i = 0; i < length; i++)
+            {
+                if (list.Any(name => char.ToLowerInvariant(name[i]) != char.ToLowerInvariant(list[0][i])))
+                {
+                    length = i;
+                    break;
+                }
+            }
+
+            return list[0][..(list[0].LastIndexOf('_', Math.Max(length - 1, 0)) + 1)];
+        }
+
+        /// <summary>
+        /// The names of the model's sequences in document order: the animation list's own nodes and those of its
+        /// folders, but not what they contain.
+        /// </summary>
+        private static List<string> GetSequenceNames(string vmdl)
+        {
+            var objects = FindObjects(vmdl);
+            var names = new List<string>();
+            var containers = new List<(int Start, int End)>();
+
+            foreach (var (start, end) in objects)
+            {
+                if (ObjectHeaderRegex().Match(vmdl, start) is not { Success: true } header)
+                {
+                    continue;
+                }
+
+                var nodeClass = header.Groups["class"].Value;
+
+                if (nodeClass is "AnimationList" or "Folder")
+                {
+                    containers.Add((start, end));
+                    continue;
+                }
+
+                // A sequence is directly inside the animation list or a folder, the innermost object around it
+                var parent = objects.Where(range => range.Start < start && range.End >= end).OrderByDescending(static range => range.Start).FirstOrDefault();
+
+                if (header.Groups["name"].Success && nodeClass != "AnimOrder" && containers.Contains(parent))
+                {
+                    names.Add(header.Groups["name"].Value);
+                }
+            }
+
+            return names;
+        }
+
+        /// <summary>
+        /// Adds the cloth another model simulates on its bones to this one, e.g. a skirt that would otherwise only
+        /// follow the bone it hangs from rigidly. Its chains go into this model's soft body, or into one of their own.
+        /// </summary>
+        private static string AddCloth(string vmdl, string otherVmdl, string prefix)
+        {
+            var objects = FindObjects(otherVmdl);
+            var softbody = objects.FirstOrDefault(range => ObjectHeaderRegex().Match(otherVmdl, range.Start) is { Success: true } header
+                && header.Groups["class"].Value == "Softbody");
+
+            if (softbody == default)
+            {
+                return vmdl;
+            }
+
+            // Alignment nodes are named, the merged model's would clash with this model's
+            string Rename(string text) => ClothNodeNameRegex().Replace(text, match => $"{match.Groups["prefix"].Value}{prefix}_{match.Groups["name"].Value}\"");
+
+            if (SoftbodyChildrenRegex().Match(vmdl) is { Success: true } ownChildren)
+            {
+                var entries = new StringBuilder();
+                var end = 0;
+
+                foreach (var (start, objectEnd) in objects.Where(range => range.Start > softbody.Start && range.End < softbody.End).OrderBy(static range => range.Start))
+                {
+                    // Only the soft body's own children, not what they contain
+                    if (start < end)
+                    {
+                        continue;
+                    }
+
+                    entries.Append('\n').Append(Rename(otherVmdl[GetLineStart(otherVmdl, start)..objectEnd])).Append(',');
+                    end = objectEnd;
+                }
+
+                return Validate(vmdl.Insert(ownChildren.Index + ownChildren.Length, entries.ToString()));
+            }
+
+            var rootChildren = RootNodeChildrenRegex().Match(vmdl);
+
+            if (!rootChildren.Success)
+            {
+                return vmdl;
+            }
+
+            var node = Rename(otherVmdl[GetLineStart(otherVmdl, softbody.Start)..softbody.End]);
+            return Validate(vmdl.Insert(rootChildren.Index + rootChildren.Length, $"\n{node},"));
+        }
+
+        /// <summary>
         /// Plays another model's animations on the bones its meshes add to this one, as layers of this model's
         /// sequences. The game only plays a wearable's own sequences while it is a model of its own, e.g. to turn a
         /// wind-up key, but it combines an addon hero's wearables into the hero, where nothing moves those bones. Each
@@ -687,7 +888,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             ICollection<string>? details = null)
         {
             var otherAnimations = GetAnimFiles(otherVmdl)
-                .Where(static animation => !animation.Hidden && !IsLoadoutAnimation(animation.Name.Value))
+                .Where(static animation => IsPlayed(animation) && !IsLoadoutAnimation(animation.Name.Value))
                 .ToList();
             var idle = otherAnimations.FirstOrDefault(static animation => animation.Activity == "ACT_DOTA_IDLE")
                 ?? otherAnimations.FirstOrDefault(static animation => animation.Looping)
@@ -699,7 +900,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             foreach (var animation in GetAnimFiles(vmdl))
             {
-                if (animation.Hidden)
+                if (!IsPlayed(animation))
                 {
                     continue;
                 }
@@ -807,6 +1008,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
             return Validate(vmdl);
         }
+
+        /// <summary>
+        /// Whether the game plays the sequence: visible ones, and hidden ones it still picks by activity, e.g. Death
+        /// Prophet's run. Hidden ones without an activity are only parts of other sequences.
+        /// </summary>
+        private static bool IsPlayed(AnimFileNode animation) => !animation.Hidden || animation.Activity is { Length: > 0 };
 
         /// <summary>
         /// A copy of an animation to be layered on other sequences: hidden and without an activity, so it is never
@@ -1561,6 +1768,12 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"_class\s*=\s*""RootNode""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex RootNodeChildrenRegex();
+
+        [GeneratedRegex(@"_class\s*=\s*""Softbody""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
+        private static partial Regex SoftbodyChildrenRegex();
+
+        [GeneratedRegex(@"(?<prefix>_class\s*=\s*""ClothNode""\s*name\s*=\s*"")(?<name>[^""]*)""", RegexOptions.CultureInvariant)]
+        private static partial Regex ClothNodeNameRegex();
 
         [GeneratedRegex(@"\bgame_class\s*=\s*""(?<class>[^""]*)""", RegexOptions.CultureInvariant)]
         private static partial Regex GameClassRegex();

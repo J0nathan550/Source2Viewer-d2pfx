@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -13,9 +14,9 @@ using GUI.Utils;
 using ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
-using VmdlExtractor;
 using ValveResourceFormat.ResourceTypes;
-using System.Text.RegularExpressions;
+using ValveResourceFormat.Serialization.KeyValues;
+using VmdlExtractor;
 
 namespace GUI.Types.Exporter.CharacterAssets
 {
@@ -436,6 +437,18 @@ namespace GUI.Types.Exporter.CharacterAssets
                         }
                     }
 
+                    if (!CharacterLoadout.IsSamePath(replacement.Source, replacement.Target) && GetSequences(fileLoader, replacement.Target) is { Count: > 0 } original)
+                    {
+                        try
+                        {
+                            vmdl = ModelDocEditor.MatchSequenceOrder(vmdl, original, details);
+                        }
+                        catch (Exception e)
+                        {
+                            progress.Report($"  ! {replacement.Target}: sequences were not numbered like the original's: {e.Message}");
+                        }
+                    }
+
                     var targetPath = GetOutputPath(outputRoot, Path.ChangeExtension(replacement.Target, "vmdl"));
                     Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
                     File.WriteAllText(targetPath, vmdl);
@@ -518,6 +531,29 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return failed;
+        }
+
+        /// <summary>
+        /// A compiled model's sequences in the order they are numbered by, with the first activity of each.
+        /// </summary>
+        private static List<(string Name, string? Activity)> GetSequences(IFileLoader fileLoader, string model)
+        {
+            using var resource = fileLoader.LoadFileCompiled(CharacterLoadout.NormalizePath(model));
+
+            if (resource?.GetBlockByType(BlockType.ASEQ) is not KeyValuesOrNTRO { Data: { } sequenceData })
+            {
+                return [];
+            }
+
+            var activities = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+            foreach (var sequence in sequenceData.GetArray("m_localS1SeqDescArray") ?? [])
+            {
+                activities.TryAdd(sequence.GetStringProperty("m_sName"),
+                    sequence.GetArray("m_activityArray") is [var activity, ..] ? activity.GetStringProperty("m_name") : null);
+            }
+
+            return [.. (sequenceData.GetArray<string>("m_localSequenceNameArray") ?? []).Select(name => (name, activities.GetValueOrDefault(name)))];
         }
 
         /// <summary>

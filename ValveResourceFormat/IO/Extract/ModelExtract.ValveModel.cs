@@ -89,6 +89,7 @@ partial class ModelExtract
         }
 
         AddPhysicsBodyNodes(lists);
+        AddClothNodes(lists);
 
         if (Translation != Vector3.Zero)
         {

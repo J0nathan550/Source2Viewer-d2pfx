@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.ModelAnimation;
@@ -523,6 +523,11 @@ partial class ModelExtract
         if (AnimationsToExtract.Count > 0 || tables.BySequenceName.Count > 0)
         {
             var animationToFolder = new Dictionary<string, KVObject>(AnimationsToExtract.Count);
+
+            // Folders are placed where their first sequence goes, as the compiler numbers sequences in document
+            // order and particles rendering a model play its sequences by number
+            var pendingFolders = new Dictionary<KVObject, KVObject>(ReferenceEqualityComparer.Instance);
+
             if (tables.Block?.Data.GetSubCollection("m_keyValues") is KVObject sequenceKeyValues)
             {
                 if (sequenceKeyValues.GetSubCollection("faceposer_folders") is KVObject faceposerFolders)
@@ -533,7 +538,7 @@ partial class ModelExtract
 
                         var (folderNode, children) = MakeListNode("Folder");
                         folderNode.Add("name", folderName);
-                        lists.Animations.Add(folderNode);
+                        pendingFolders.Add(children, folderNode);
 
                         foreach (var animationName in animationNames!)
                         {
@@ -546,6 +551,12 @@ partial class ModelExtract
             void AddToFolderOrRoot(string name, KVObject node)
             {
                 var folderOrRoot = animationToFolder.GetValueOrDefault(name, lists.Animations);
+
+                if (pendingFolders.Remove(folderOrRoot, out var folderNode))
+                {
+                    lists.Animations.Add(folderNode);
+                }
+
                 folderOrRoot.Add(node);
             }
 
@@ -820,6 +831,19 @@ partial class ModelExtract
                 }
 
                 AddToFolderOrRoot(animation.Anim.Name, animationFile);
+            }
+
+            foreach (var folderNode in pendingFolders.Values)
+            {
+                lists.Animations.Add(folderNode);
+            }
+
+            // The game orders such a model's sequences as listed instead of its own way, which particles that play
+            // its sequences rely on
+            if (tables.Block?.Data.GetSubCollection("m_keyValues")?.GetBooleanProperty("reorder_sequences") == true
+                && tables.LocalSequenceNames is { Length: > 0 } sequenceNames)
+            {
+                lists.Animations.Add(MakeNode("AnimOrder", ("anim_order", MakeArray(sequenceNames.Select(static name => (KVObject)name)))));
             }
         }
     }
