@@ -1,5 +1,7 @@
 using System.Linq;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using GUI.Utils;
 using ValveKeyValue;
 using ValveResourceFormat.Graphs;
@@ -17,11 +19,15 @@ namespace GUI.Controls
             internal string? ExternalReference { get; init; }
         }
 
-        public sealed record OutputRow(string Output, string Target, string Input, string Parameter, float Delay, string TimesToFire);
+        public sealed record OutputRow(string Output, string Target, string Input, string Parameter, float Delay, string TimesToFire)
+        {
+            internal Connection? Connection { get; init; }
+        }
 
         public sealed record InputRow(string Source, string Output, string Input, string Parameter, float Delay, string TimesToFire)
         {
             internal Entity? SourceEntity { get; init; }
+            internal Connection? Connection { get; init; }
         }
 
         private readonly List<PropertyRow> properties = [];
@@ -42,6 +48,9 @@ namespace GUI.Controls
 
         /// <summary>Raised when a property value that references a resource was opened.</summary>
         public event Action? ExternalReferenceOpened;
+
+        /// <summary>Raised when the fire button of an output or input connection is clicked.</summary>
+        public event EventHandler<Connection>? ConnectionFireRequested;
 
         protected override Type StyleKeyOverride => typeof(TabControl);
 
@@ -83,6 +92,60 @@ namespace GUI.Controls
             inputsTab = new TabItem { Header = "Inputs", Content = inputsGrid };
 
             Items.Add(propertiesTab);
+        }
+
+        /// <summary>
+        /// Gets or sets whether connections show a button to fire them, for hosts with a live entity world.
+        /// </summary>
+        public bool CanFireConnections
+        {
+            get;
+            set
+            {
+                if (field == value)
+                {
+                    return;
+                }
+
+                field = value;
+
+                if (value)
+                {
+                    outputsGrid.Columns.Insert(0, CreateFireColumn());
+                    inputsGrid.Columns.Insert(0, CreateFireColumn());
+                }
+                else
+                {
+                    outputsGrid.Columns.RemoveAt(0);
+                    inputsGrid.Columns.RemoveAt(0);
+                }
+            }
+        }
+
+        private DataGridTemplateColumn CreateFireColumn() => new()
+        {
+            Header = "Fire",
+            CellTemplate = new FuncDataTemplate<object>((row, _) =>
+            {
+                var button = new Button { Content = "Fire", Padding = new Thickness(8, 0) };
+                button.Click += (_, _) => FireConnection(button.DataContext);
+                return button;
+            }),
+        };
+
+        private void FireConnection(object? row)
+        {
+            var connection = row switch
+            {
+                OutputRow output => output.Connection,
+                InputRow input => input.Connection,
+                _ => null,
+            };
+
+            if (connection != null)
+            {
+                ConnectionFireRequested?.Invoke(this, connection);
+            }
         }
 
         public void ShowPropertiesTab() => SelectedItem = propertiesTab;
@@ -142,7 +205,10 @@ namespace GUI.Controls
                 connectionData.InputName,
                 connectionData.OverrideParam,
                 connectionData.Delay,
-                GetStringTimesToFire(connectionData.TimesToFire)));
+                GetStringTimesToFire(connectionData.TimesToFire))
+            {
+                Connection = connectionData,
+            });
         }
 
         public void AddInputConnection(Connection connectionData)
@@ -156,6 +222,7 @@ namespace GUI.Controls
                 GetStringTimesToFire(connectionData.TimesToFire))
             {
                 SourceEntity = connectionData.SourceEntity,
+                Connection = connectionData,
             });
         }
 

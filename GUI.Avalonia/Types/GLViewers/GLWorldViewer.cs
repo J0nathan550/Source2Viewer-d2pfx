@@ -713,6 +713,8 @@ namespace GUI.Types.GLViewers
 
                 entityInfoForm.EntityInfoControl.OutputTargetActivated += OnEntityInfoOutputActivated;
                 entityInfoForm.EntityInfoControl.InputSourceActivated += OnEntityInfoInputActivated;
+                entityInfoForm.EntityInfoControl.ConnectionFireRequested += OnConnectionFireRequested;
+                entityInfoForm.EntityInfoControl.CanFireConnections = true;
                 entityInfoForm.Closed += OnEntityInfoFormClosed;
                 entityInfoForm.Show(Program.MainForm);
             }
@@ -806,6 +808,12 @@ namespace GUI.Types.GLViewers
 
             entityInfoForm.EntityInfoControl.ShowPopulatedTabs();
             entityInfoForm.Activate();
+        }
+
+        private void OnConnectionFireRequested(object? sender, EntityLump.Connection connection)
+        {
+            using var lockedGl = MakeCurrent();
+            Renderer.EntitySystem.QueueConnection(connection, Renderer.EntitySystem.Player);
         }
 
         private void OnEntityInfoOutputActivated(string entityName)
