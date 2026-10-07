@@ -225,7 +225,9 @@ public partial class ModelExtract
             return;
         }
 
-        cloth = ReconstructSoftbody ? new ClothExtract(model, physAggregateData) : new ClothExtract(null, null);
+        // Cloth simulated on bones only is rebuilt by AddClothNodes, which leaves meshes, skeletons and animations as
+        // they are, the full reconstruction is for cloth simulated on a mesh
+        cloth = ReconstructSoftbody && !HasOnlyBoneCloth() ? new ClothExtract(model, physAggregateData) : new ClothExtract(null, null);
         cloth.Build(fileName, GetDmxFileName_ForCloth);
     }
 

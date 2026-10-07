@@ -125,20 +125,22 @@ Decompiling produces a `.vmdl` plus DMX files for meshes, physics shapes, and an
 loadable in ModelDoc. Reconstructed: render meshes with all vertex streams, skeleton,
 attachments with their camera previews, bodygroups, LOD groups, hitbox sets, material groups
 (skins), static collision shapes, physics joints and body properties, bone constraints, IK
-chains and control rigs, face flexes, breakable pieces, cloth (chains, sheets, springs,
-collision shapes and effects rebuilt from the compiled `FeModel`), embedded sequences with
-events/layers/root motion, Animgraph 2 clips and references, and a wide range of game data
-blocks (prop_data, particle attachments, and many more) passed through verbatim.
+chains and control rigs, face flexes, breakable pieces, cloth rebuilt from the compiled
+`FeModel`, embedded sequences with events/layers/root motion, Animgraph 2 clips and references,
+and a wide range of game data blocks (prop_data, particle attachments, and many more) passed
+through verbatim.
 
-Cloth decompiling is experimental. Most cloth recompiles to the same simulation, but not all of
-it does, so please report models whose cloth comes back wrong. A model whose cloth cannot be
-rebuilt is decompiled without it, with a warning.
+Cloth simulated only on bones is rebuilt as cloth chains, with the nodes that align bones between
+them. Cloth simulated on a mesh's vertices is rebuilt with its chains, sheets, springs, collision
+shapes and effects. Cloth decompiling is experimental, so please report models whose cloth comes
+back wrong. A model whose cloth on a mesh cannot be rebuilt keeps only its cloth on bones, with a
+warning.
 
 What a recompiled model will be missing:
 
 | What                                      | Why                          | Details                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Exact cloth values                        | Partly not in compiled files | Some cloth values, such as painted masses and planarized collision shapes, are worked back from the compiled data and can come out slightly different. Models built by older compilers differ most.                                                                                                                                                                   |
+| Cloth simulation                          | Partly not in compiled files | Node masses of cloth on bones come out from the geometry rather than as authored, and joints aligned to the same node twice can take a different base node. Some values of cloth on a mesh, such as painted masses and planarized collision shapes, are worked back from the compiled data and can come out slightly different. [#653](https://github.com/ValveResourceFormat/ValveResourceFormat/issues/653) |
 | Physics constraints and motors            | Not implemented              | `m_constraints2` constraints are not parsed, and joint motors are not exported.                                                                                                                                                                                                                                                                                       |
 | Stereo flex controls                      | Not in compiled files        | The compiler splits a stereo slider into independent left and right controllers, so it comes back as two sliders.                                                                                                                                                                                                                                                     |
 | Animations from external animation groups | Not implemented              | Only embedded sequences and Animgraph 2 clips get DMX files; sequences in referenced `vagrp` files are skipped. Animations from referenced include-models are not written either, but their `AnimIncludeModel` references are kept, so they come back if those models are decompiled too.                                                                             |

@@ -97,6 +97,12 @@ partial class ModelExtract
         AddPhysicsBodyNodes(lists);
         Cloth.AddToValveModel(root.Children);
 
+        // Also when the full reconstruction failed, so the cloth on bones is kept
+        if (ReconstructSoftbody && !ReconstructsCloth)
+        {
+            AddClothNodes(lists);
+        }
+
         if (Translation != Vector3.Zero)
         {
             lists.ModelModifiers.Add(MakeNode("ModelModifier_Translate", ("translation", ToKVArray(Translation))));
