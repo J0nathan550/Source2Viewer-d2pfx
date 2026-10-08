@@ -123,6 +123,7 @@ namespace GUI.Forms
         private readonly CheckBox skipUnchangedCheckBox;
         private readonly CheckBox arcanaMaterialsCheckBox;
         private readonly CheckBox editMaterialsCheckBox;
+        private readonly CheckBox recommendedSharedParticlesCheckBox;
         private readonly RadioButton recommendedRadioButton;
         private readonly RadioButton customRadioButton;
         private readonly TextBlock exportHintLabel;
@@ -324,6 +325,18 @@ namespace GUI.Forms
                 }
             };
 
+            recommendedSharedParticlesCheckBox = Check("Also replace shared particles, like the blink dagger's (changes them for all heroes)",
+                preferences.RecommendedSharedParticles);
+            recommendedSharedParticlesCheckBox.Margin = new(3, 0, 3, 4);
+            recommendedSharedParticlesCheckBox.IsCheckedChanged += (_, _) =>
+            {
+                if (IsRecommended)
+                {
+                    replaceSharedParticlesCheckBox.IsChecked = IsChecked(recommendedSharedParticlesCheckBox);
+                    UpdateExportHint();
+                }
+            };
+
             var includeTable = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*") };
             AddCell(includeTable, heroModelCheckBox, 0, 0);
             AddCell(includeTable, itemModelsCheckBox, 0, 1);
@@ -353,7 +366,7 @@ namespace GUI.Forms
                 Children = { recommendedRadioButton, customRadioButton },
             };
 
-            var includePanel = new StackPanel { Children = { modePanel, exportHintLabel, editMaterialsCheckBox, includeTable } };
+            var includePanel = new StackPanel { Children = { modePanel, exportHintLabel, editMaterialsCheckBox, recommendedSharedParticlesCheckBox, includeTable } };
 
             var includeGroupBox = Controls.GroupBox.Create("Export", includePanel);
             includeGroupBox.Margin = new(3);
@@ -657,6 +670,9 @@ namespace GUI.Forms
             ToolTip.SetTip(editMaterialsCheckBox,
                 "Only for retexturing or otherwise changing the materials: decompile the materials every exported model uses, with their textures,\n" +
                 "so the addon compiles its own copies to edit. Otherwise they are left out, the game applies its own by itself.");
+            ToolTip.SetTip(recommendedSharedParticlesCheckBox,
+                "Also write the particles every hero uses that the items swap, e.g. an arcana's blink dagger or deny effects.\n" +
+                "They change for every hero in the game, not only this one.");
             ToolTip.SetTip(customRadioButton, "Pick what to export yourself. Options that add files the mod most likely does not need are pointed out before exporting.");
             ToolTip.SetTip(skipUnchangedCheckBox,
                 "When replacing default assets, leave out the models the loadout does not change, e.g. the hero's own model when only a weapon is swapped.\n" +
@@ -968,6 +984,7 @@ namespace GUI.Forms
                 isRecommended = true;
                 ApplyOptions(CharacterExportOptions.Recommended);
                 materialsCheckBox.IsChecked = IsChecked(editMaterialsCheckBox);
+                replaceSharedParticlesCheckBox.IsChecked = IsChecked(recommendedSharedParticlesCheckBox);
             }
             else
             {
@@ -981,6 +998,7 @@ namespace GUI.Forms
             }
 
             editMaterialsCheckBox.IsVisible = recommended;
+            recommendedSharedParticlesCheckBox.IsVisible = recommended;
             UpdateReplaceDefaultsDependents();
             UpdateExportHint();
         }
@@ -1004,9 +1022,13 @@ namespace GUI.Forms
         {
             if (IsRecommended)
             {
-                exportHintLabel.Text = IsChecked(editMaterialsCheckBox)
-                    ? "Only what the loadout changes is exported, and the materials to modify. Pick Custom to choose for yourself."
-                    : "Only what the loadout changes is exported. Pick Custom to choose for yourself.";
+                exportHintLabel.Text = (IsChecked(editMaterialsCheckBox), IsChecked(recommendedSharedParticlesCheckBox)) switch
+                {
+                    (true, true) => "Only what the loadout changes is exported, the materials to modify, and the shared particles. Pick Custom to choose for yourself.",
+                    (true, false) => "Only what the loadout changes is exported, and the materials to modify. Pick Custom to choose for yourself.",
+                    (false, true) => "Only what the loadout changes is exported, and the shared particles. Pick Custom to choose for yourself.",
+                    (false, false) => "Only what the loadout changes is exported. Pick Custom to choose for yourself.",
+                };
                 ToolTip.SetTip(exportHintLabel, null);
                 return;
             }
@@ -1049,6 +1071,7 @@ namespace GUI.Forms
             preferences.Options = IsRecommended ? customOptions : GetTickedOptions();
             preferences.Options.OnlyWhatChanges = IsRecommended;
             preferences.RecommendedMaterials = IsChecked(editMaterialsCheckBox);
+            preferences.RecommendedSharedParticles = IsChecked(recommendedSharedParticlesCheckBox);
             preferences.PreviewEffects = IsChecked(previewEffectsCheckBox);
             preferences.LastColor = lastPickedColor.ToArgb();
             preferences.Save();

@@ -70,6 +70,8 @@ namespace GUI.Types.PackageViewer
 
         private List<ListRow> currentRows = [];
         private readonly NavigationHistory navigationHistory = new();
+        private readonly TypeAheadSearch itemsTypeAhead = new();
+        private readonly TypeAheadSearch treeTypeAhead = new();
         private bool suppressHistoryRecording;
         private bool suppressTreeSelection;
         private CancellationTokenSource? previewTokenSource;
@@ -224,6 +226,7 @@ namespace GUI.Types.PackageViewer
             tree.SelectionChanged += OnTreeSelectionChanged;
             tree.DoubleTapped += OnTreeDoubleTapped;
             tree.ContextRequested += (_, e) => OnContextRequested(tree, e);
+            tree.TextInput += OnTreeTextInput;
             treeView = tree;
 
             // Toolbar, laid out like the WinForms one: two navigation buttons, the view mode and the grid size
@@ -306,6 +309,7 @@ namespace GUI.Types.PackageViewer
             list.ItemList.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
             list.ItemList.SelectionChanged += (_, _) => RevealSelectedRow();
             list.ItemList.KeyDown += OnItemsKeyDown;
+            list.ItemList.TextInput += OnItemsTextInput;
             list.ItemList.ContextRequested += (_, e) => OnContextRequested(list.ItemList, e);
             fileList = list;
 
@@ -320,6 +324,7 @@ namespace GUI.Types.PackageViewer
             grid.DoubleTapped += (_, e) => OnItemsDoubleTapped(e);
             grid.SelectionChanged += (_, _) => RevealSelectedRow();
             grid.KeyDown += OnItemsKeyDown;
+            grid.TextInput += OnItemsTextInput;
             grid.ContextRequested += (_, e) => OnContextRequested(grid, e);
             gridList = grid;
 
@@ -887,6 +892,69 @@ namespace GUI.Types.PackageViewer
             {
                 OpenRow(parent);
                 e.Handled = true;
+            }
+        }
+
+        /// <summary>Typing a name selects the first item that starts with it, like in Explorer.</summary>
+        private void OnItemsTextInput(object? sender, TextInputEventArgs e)
+        {
+            if (sender is not ListBox listBox)
+            {
+                return;
+            }
+
+            var items = listBox.Items;
+            var index = itemsTypeAhead.Find(e.Text, items.Count, i => (items[i] as ListRow)?.Name ?? string.Empty, listBox.SelectedIndex);
+
+            if (index < 0)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            listBox.SelectedIndex = index;
+            listBox.ScrollIntoView(index);
+            listBox.ContainerFromIndex(index)?.Focus(NavigationMethod.Directional);
+        }
+
+        /// <summary>Typing a name selects the first folder or file shown in the tree that starts with it.</summary>
+        private void OnTreeTextInput(object? sender, TextInputEventArgs e)
+        {
+            if (treeView == null)
+            {
+                return;
+            }
+
+            var nodes = new List<BetterTreeNode>();
+            AddShownNodes(treeView.Items.OfType<BetterTreeNode>(), nodes);
+
+            var current = treeView.SelectedItem is BetterTreeNode selected ? nodes.IndexOf(selected) : -1;
+            var index = treeTypeAhead.Find(e.Text, nodes.Count, i => nodes[i].Text, current);
+
+            if (index < 0)
+            {
+                return;
+            }
+
+            e.Handled = true;
+
+            var node = nodes[index];
+            treeView.SelectedItems.Clear();
+            treeView.SelectedItem = node;
+            node.BringIntoView();
+            node.Focus(NavigationMethod.Directional);
+        }
+
+        private static void AddShownNodes(IEnumerable<BetterTreeNode> nodes, List<BetterTreeNode> shown)
+        {
+            foreach (var node in nodes)
+            {
+                shown.Add(node);
+
+                if (node.IsExpanded)
+                {
+                    AddShownNodes(node.ChildNodes, shown);
+                }
             }
         }
 

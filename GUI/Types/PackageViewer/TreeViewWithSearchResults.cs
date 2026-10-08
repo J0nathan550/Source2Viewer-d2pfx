@@ -126,6 +126,7 @@ namespace GUI.Types.PackageViewer
             mainListView.VirtualMode = true;
             mainListView.VirtualItems = ListViewItems;
             mainListView.RetrieveVirtualItem += MainListView_RetrieveVirtualItem;
+            mainListView.SearchForVirtualItem += MainListView_SearchForVirtualItem;
 
             Dock = DockStyle.Fill;
 
@@ -218,6 +219,34 @@ namespace GUI.Types.PackageViewer
         private void MainListView_RetrieveVirtualItem(object? sender, RetrieveVirtualItemEventArgs e)
         {
             e.Item = ListViewItems[e.ItemIndex];
+        }
+
+        /// <summary>
+        /// Typing a name jumps to the first item that starts with it, after the focused one, like in Explorer. A virtual
+        /// list view asks for the match since it does not hold the items itself.
+        /// </summary>
+        private void MainListView_SearchForVirtualItem(object? sender, SearchForVirtualItemEventArgs e)
+        {
+            var count = ListViewItems.Count;
+
+            if (string.IsNullOrEmpty(e.Text) || count == 0)
+            {
+                return;
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                var index = (Math.Max(e.StartIndex, 0) + i) % count;
+                var text = ListViewItems[index].Text;
+
+                if (e.IsPrefixSearch
+                    ? text.StartsWith(e.Text, StringComparison.OrdinalIgnoreCase)
+                    : text.Equals(e.Text, StringComparison.OrdinalIgnoreCase))
+                {
+                    e.Index = index;
+                    return;
+                }
+            }
         }
 
         protected override void OnCreateControl()

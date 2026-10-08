@@ -31,6 +31,7 @@ namespace GUI.Types.PackageViewer
 
         private BetterTreeNode(string text, string iconName)
         {
+            Text = text;
             Header = AppIcons.CreateHeader(iconName, text);
             Template = new FuncControlTemplate(static (control, scope) => ((BetterTreeNode)control).BuildTemplate(scope));
         }
@@ -53,6 +54,9 @@ namespace GUI.Types.PackageViewer
         }
 
         protected override Type StyleKeyOverride => typeof(TreeViewItem);
+
+        /// <summary>The name shown for the node.</summary>
+        public string Text { get; }
 
         public PackageEntry? PackageEntry { get; }
 

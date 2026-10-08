@@ -151,6 +151,7 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>
         /// Also replaces particles every hero uses, like the blink dagger or stun effects, which then change for all heroes.
+        /// Works without <see cref="ItemParticles"/>, to export only these.
         /// </summary>
         public bool ReplaceSharedParticles { get; set; }
 
@@ -331,6 +332,14 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <see cref="ModelDocEditor.AddLayeredAnimations"/>. Empty when only the hero's skeleton moves it.
         /// </summary>
         public IReadOnlyList<string> AnimatedBones { get; init; } = [];
+
+        /// <summary>
+        /// The activity modifiers of the hero's sequences that play the model's scripted gesture on <see cref="AnimatedBones"/>,
+        /// e.g. Legion Commander's wings raised for as long as Press the Attack lasts. The item has the game play that
+        /// gesture for the ability's buff, which an addon hero without the item never gets, so the sequences the buff
+        /// picks play it instead.
+        /// </summary>
+        public IReadOnlyList<string> GestureModifiers { get; init; } = [];
 
         /// <summary>
         /// Whether the model shows only the body group choices picked for it, like the game shows the item at the arcana
@@ -1051,7 +1060,12 @@ namespace GUI.Types.Exporter.CharacterAssets
                     {
                         // Written over the slot's default model it would be combined into the hero and stand still
                         var (skin, bodyGroups) = GetModelLook(loadout, model, item.Skin, styleRemaps: false);
-                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups) { AnimatedBones = animatedBones, PickedChoicesOnly = true });
+                        merged.Add(new MergedModel(NormalizePath(model), skin, bodyGroups)
+                        {
+                            AnimatedBones = animatedBones,
+                            GestureModifiers = GetGestureModifiers(hero, item),
+                            PickedChoicesOnly = true,
+                        });
                         heroParticles.AddRange(createdParticles);
 
                         if (defaultModel != null)
@@ -1099,7 +1113,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                     AddTransformationReplacements(loadout, item, rename, plan);
                 }
 
-                if (!options.ItemParticles || isDefault)
+                // Shared particles have an option of their own, so they can be exported without the hero's
+                if (!(options.ItemParticles || options.ReplaceSharedParticles) || isDefault)
                 {
                     continue;
                 }
@@ -1127,7 +1142,15 @@ namespace GUI.Types.Exporter.CharacterAssets
                         continue;
                     }
 
-                    if (!options.ReplaceSharedParticles && !IsHeroParticle(hero, replacement.Target))
+                    if (IsHeroParticle(hero, replacement.Target))
+                    {
+                        if (!options.ItemParticles)
+                        {
+                            continue;
+                        }
+                    }
+                    // An empty placeholder like status_effect_null stands in for unrelated effects everywhere
+                    else if (!options.ReplaceSharedParticles || Path.GetFileNameWithoutExtension(replacement.Target).EndsWith("null", StringComparison.OrdinalIgnoreCase))
                     {
                         plan.SkippedSharedParticles.Add(replacement);
                         continue;
@@ -1241,6 +1264,26 @@ namespace GUI.Types.Exporter.CharacterAssets
                     Rename = rename,
                 });
             }
+        }
+
+        /// <summary>
+        /// The abilities an item has the game play a gesture for, from its "apply_&lt;hero&gt;_&lt;ability&gt;_gesture"
+        /// named values, e.g. "press_the_attack" for Legion Commander's Hell's Legion back. The ability's buff puts the
+        /// activity modifier of the same name on the hero's sequences, see <see cref="MergedModel.GestureModifiers"/>.
+        /// </summary>
+        private static List<string> GetGestureModifiers(HeroDefinition hero, EquippedItem item)
+        {
+            var prefix = $"apply_{hero.ShortName}_";
+            const string Suffix = "_gesture";
+
+            return [.. item.Modifiers
+                .Where(modifier => modifier.Type == "named_value" && modifier.Value != 0
+                    && modifier.Asset is { } name
+                    && name.Length > prefix.Length + Suffix.Length
+                    && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    && name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
+                .Select(modifier => modifier.Asset![prefix.Length..^Suffix.Length])
+                .Distinct(StringComparer.OrdinalIgnoreCase)];
         }
 
         /// <summary>
@@ -1640,7 +1683,26 @@ namespace GUI.Types.Exporter.CharacterAssets
         private static bool IsHeroParticle(HeroDefinition hero, string path)
             => IsEconParticle(path)
                 || (hero.ParticleFolder != null && path.StartsWith(NormalizePath(hero.ParticleFolder).TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))
-                || path.Contains(hero.ShortName, StringComparison.OrdinalIgnoreCase);
+                || path.Contains(hero.ShortName, StringComparison.OrdinalIgnoreCase)
+                || NamesHeroFolder(hero, path);
+
+        /// <summary>
+        /// Whether the particle's name has the hero's name as its particle folder spells it, e.g. Drow Ranger's
+        /// "status_effect_drow_frost_arrow" for "hero_drow", which only the hero's abilities play.
+        /// </summary>
+        private static bool NamesHeroFolder(HeroDefinition hero, string path)
+        {
+            const string FolderPrefix = "hero_";
+
+            var folder = hero.ParticleFolder == null ? null : Path.GetFileName(NormalizePath(hero.ParticleFolder).TrimEnd('/'));
+
+            if (folder == null || folder.Length <= FolderPrefix.Length || !folder.StartsWith(FolderPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return $"_{Path.GetFileNameWithoutExtension(path)}_".Contains($"_{folder[FolderPrefix.Length..]}_", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static bool IsParticlePath([NotNullWhen(true)] string? value)
             => IsAssetPath(value) && value.EndsWith(".vpcf", StringComparison.OrdinalIgnoreCase);

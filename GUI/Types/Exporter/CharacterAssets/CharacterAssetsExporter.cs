@@ -392,7 +392,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                             {
                                 try
                                 {
-                                    vmdl = ModelDocEditor.AddLayeredAnimations(vmdl, mergedVmdl, prefix, merged.AnimatedBones, details);
+                                    vmdl = ModelDocEditor.AddLayeredAnimations(vmdl, mergedVmdl, prefix, merged.AnimatedBones, merged.GestureModifiers, details);
                                 }
                                 catch (Exception e)
                                 {
@@ -439,7 +439,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                         }
                     }
 
-                    if (!CharacterLoadout.IsSamePath(replacement.Source, replacement.Target) && GetSequences(fileLoader, replacement.Target) is { Count: > 0 } original)
+                    // Also for the model itself, layered animations add sequences the compiler numbers in among its own
+                    if (GetSequences(fileLoader, replacement.Target) is { Count: > 0 } original)
                     {
                         try
                         {

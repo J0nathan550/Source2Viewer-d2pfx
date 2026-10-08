@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -83,8 +84,69 @@ static class UpdateInstaller
 
         if (OperatingSystem.IsWindows())
         {
+            var windowsPendingPath = GetWindowsPendingPath(exePath);
+
+            // A newer build is an update another window downloaded, waiting for every viewer to exit, or one whose
+            // install was interrupted. It is installed when this one exits rather than removed from under that window.
+            if (File.Exists(windowsPendingPath) && !IsSameBuild(windowsPendingPath, exePath) && !IsOlderBuild(windowsPendingPath, exePath))
+            {
+                pendingUpdatePath = windowsPendingPath;
+                InstalledVersionText = FileVersionInfo.GetVersionInfo(windowsPendingPath).FileVersion;
+                return;
+            }
+
             // Still running for a moment when it started this instance after putting itself in place
-            _ = DeleteReplacedAsync(GetWindowsPendingPath(exePath));
+            _ = DeleteReplacedAsync(windowsPendingPath);
+        }
+    }
+
+    private static bool IsSameBuild(string path, string otherPath)
+    {
+        try
+        {
+            return FileVersionInfo.GetVersionInfo(path).ProductVersion == FileVersionInfo.GetVersionInfo(otherPath).ProductVersion;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsOlderBuild(string path, string otherPath)
+        => Version.TryParse(FileVersionInfo.GetVersionInfo(path).FileVersion, out var version)
+            && Version.TryParse(FileVersionInfo.GetVersionInfo(otherPath).FileVersion, out var otherVersion)
+            && version < otherVersion;
+
+    /// <summary>
+    /// Whether a viewer other than this process runs from the executable, which Windows does not let be replaced
+    /// until every one of them has exited.
+    /// </summary>
+    private static bool IsRunningElsewhere(string exePath)
+    {
+        var processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(exePath));
+
+        try
+        {
+            return processes.Any(process =>
+            {
+                try
+                {
+                    return process.Id != Environment.ProcessId && !process.HasExited
+                        && string.Equals(process.MainModule?.FileName, exePath, StringComparison.OrdinalIgnoreCase);
+                }
+                catch (Exception e) when (e is Win32Exception or InvalidOperationException)
+                {
+                    // Exited meanwhile, or not ours to inspect
+                    return false;
+                }
+            });
+        }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                process.Dispose();
+            }
         }
     }
 
@@ -130,7 +192,7 @@ static class UpdateInstaller
 
         // A random name in the user's own temp folder cannot be planted ahead of time by anyone else
         var downloadPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        var downloaded = false;
+        string? downloadedHash = null;
 
         using (var dialog = new GenericProgressForm { Text = $"Downloading {UpdateChecker.NewVersionText}" })
         {
@@ -153,7 +215,7 @@ static class UpdateInstaller
                     dialog.SetProgress("Verifying build provenance…");
                     await VerifyProvenanceAsync(httpClient, hash, cancellationToken).ConfigureAwait(false);
 
-                    downloaded = true;
+                    downloadedHash = hash;
                 }
                 catch
                 {
@@ -166,7 +228,7 @@ static class UpdateInstaller
             await dialog.WorkCompletion.ConfigureAwait(true);
         }
 
-        if (!downloaded)
+        if (downloadedHash == null)
         {
             return;
         }
@@ -188,7 +250,16 @@ static class UpdateInstaller
             // Bring the download next to the executable first, so that the copy from the temp folder, which may be on
             // another drive or not allow running programs, and any permission problem in the install folder surface
             // before the running executable is touched. What remains are two renames on the same volume.
-            File.Move(downloadPath, pendingPath, overwrite: true);
+            // Another window may have put the same build there already, whose updater keeps it in use while it waits
+            // for every viewer to exit.
+            if (await IsSameFileAsync(pendingPath, downloadedHash).ConfigureAwait(true))
+            {
+                File.Delete(downloadPath);
+            }
+            else
+            {
+                File.Move(downloadPath, pendingPath, overwrite: true);
+            }
 
             await VerifyVersionAsync(pendingPath, exePath).ConfigureAwait(true);
 
@@ -219,8 +290,12 @@ static class UpdateInstaller
 
         InstalledVersionText = UpdateChecker.NewVersionText;
 
+        var otherWindows = OperatingSystem.IsWindows() && IsRunningElsewhere(exePath)
+            ? $"{Environment.NewLine}Other Source 2 Viewer windows are open, it is put in place once they are all closed."
+            : string.Empty;
+
         var restart = await AppMessageDialogs.ConfirmAsync(
-            $"Source 2 Viewer {InstalledVersionText} has been installed.{Environment.NewLine}It will be used the next time the viewer starts.",
+            $"Source 2 Viewer {InstalledVersionText} has been installed.{Environment.NewLine}It will be used the next time the viewer starts.{otherWindows}",
             "Update installed",
             confirmText: "Restart now",
             cancelText: "Later").ConfigureAwait(true);
@@ -298,9 +373,25 @@ static class UpdateInstaller
         }
     }
 
+    private static async Task<bool> IsSameFileAsync(string path, string hash)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.Asynchronous);
+            var fileHash = await SHA256.HashDataAsync(stream).ConfigureAwait(false);
+
+            return Convert.ToHexStringLower(fileHash).Equals(hash, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Runs in the downloaded Windows build, see <see cref="ApplyUpdateArgument"/>: waits for the viewer that downloaded
-    /// it to exit, copies itself over its executable and starts it again if asked to.
+    /// it and every other viewer of the same executable to exit, copies itself over the executable and starts it again
+    /// if asked to.
     /// </summary>
     /// <returns>The process exit code.</returns>
     public static int ApplyPendingUpdate(string processIdText, bool restart)
@@ -327,6 +418,56 @@ static class UpdateInstaller
             {
                 // Already exited
             }
+        }
+
+        // Every window that exits with the update pending starts one of these, they take turns
+        var exePathHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(exePath.ToUpperInvariant())));
+        using var mutex = new Mutex(initiallyOwned: false, $"Local\\Source2Viewer.ApplyUpdate.{exePathHash[..16]}");
+
+        try
+        {
+            mutex.WaitOne();
+        }
+        catch (AbandonedMutexException)
+        {
+            // The previous one was killed, the mutex is ours now
+        }
+
+        try
+        {
+            return ApplyPendingUpdate(pendingPath, exePath, stagingPath, restart);
+        }
+        finally
+        {
+            mutex.ReleaseMutex();
+        }
+    }
+
+    private static int ApplyPendingUpdate(string pendingPath, string exePath, string stagingPath, bool restart)
+    {
+        // An earlier turn already put it in place, and started the viewer again if it was asked to
+        if (IsSameBuild(pendingPath, exePath))
+        {
+            if (restart && !IsRunningElsewhere(exePath))
+            {
+                Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = false });
+            }
+
+            return 0;
+        }
+
+        // Left next to the executable otherwise, so the next viewer to exit installs it
+        var waitUntil = DateTime.UtcNow + TimeSpan.FromMinutes(30);
+
+        while (IsRunningElsewhere(exePath))
+        {
+            if (DateTime.UtcNow > waitUntil)
+            {
+                Log.Error(nameof(UpdateInstaller), $"Other viewers still run '{exePath}', the update is installed when one of them exits");
+                return 1;
+            }
+
+            Thread.Sleep(500);
         }
 
         try

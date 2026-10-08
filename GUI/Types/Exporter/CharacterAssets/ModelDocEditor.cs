@@ -689,6 +689,9 @@ namespace GUI.Types.Exporter.CharacterAssets
             var idle = animations.FirstOrDefault(static animation => animation.Activity == "ACT_DOTA_IDLE")
                 ?? animations.FirstOrDefault(static animation => animation.Looping);
 
+            // Parts of blends are numbered as sequences of their own too, e.g. "@turns_lookFrame_0"
+            var parts = animations.Select(static animation => animation.Name.Value).Except(sequences, StringComparer.OrdinalIgnoreCase).ToList();
+
             if (idle == null || original.Count == 0)
             {
                 return vmdl;
@@ -698,7 +701,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             var copied = new List<string>();
 
             // Sequence names are compared ignoring case, the model's own spelling is kept
-            string? FindOwn(string name) => sequences.FirstOrDefault(own => own.Equals(name, StringComparison.OrdinalIgnoreCase));
+            string? FindOwn(string name) => sequences.Concat(parts).FirstOrDefault(own => own.Equals(name, StringComparison.OrdinalIgnoreCase));
 
             // Models name their sequences after themselves, e.g. ss_totem_attack_90 and ss_monster_ward_attack_90
             var originalPrefix = GetCommonPrefix(original.Select(static sequence => sequence.Name));
@@ -707,7 +710,10 @@ namespace GUI.Types.Exporter.CharacterAssets
             static string WithoutPrefix(string name, string prefix)
                 => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? name[prefix.Length..] : name;
 
-            foreach (var (name, activity) in original.Where(sequence => FindOwn(sequence.Name) == null))
+            // The compiler makes "@name" by itself for a sequence with layers, it is only put in its place
+            bool IsGenerated(string name) => name.StartsWith('@') && FindOwn(name) == null && FindOwn(name[1..]) != null;
+
+            foreach (var (name, activity) in original.Where(sequence => FindOwn(sequence.Name) == null && !IsGenerated(sequence.Name)))
             {
                 var suffix = WithoutPrefix(name, originalPrefix);
                 var source = animations.FirstOrDefault(animation => WithoutPrefix(animation.Name.Value, ownPrefix).Equals(suffix, StringComparison.OrdinalIgnoreCase))
@@ -720,7 +726,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                 sequences.Add(name);
             }
 
-            var order = original.Select(sequence => FindOwn(sequence.Name)!).ToList();
+            var order = original.Select(sequence => FindOwn(sequence.Name) ?? $"@{FindOwn(sequence.Name[1..])}").ToList();
             order.AddRange(sequences.Except(order, StringComparer.OrdinalIgnoreCase));
 
             // Only one AnimOrder is compiled, the one the decompiled model may have is replaced
@@ -965,9 +971,13 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// <param name="otherVmdl">The .vmdl text of the model whose animations are added.</param>
         /// <param name="prefix">Prepended to the names of the added animations and of their bone mask.</param>
         /// <param name="bones">The other model's bones this model does not have.</param>
+        /// <param name="gestureModifiers">
+        /// Activity modifiers whose sequences play the other model's scripted gesture, see
+        /// <see cref="MergedModel.GestureModifiers"/>, ahead of the sequence of the same activity.
+        /// </param>
         /// <param name="details">Receives a description of what now plays.</param>
         public static string AddLayeredAnimations(string vmdl, string otherVmdl, string prefix, IReadOnlyCollection<string> bones,
-            ICollection<string>? details = null)
+            IReadOnlyCollection<string> gestureModifiers, ICollection<string>? details = null)
         {
             var otherAnimations = GetAnimFiles(otherVmdl)
                 .Where(static animation => IsPlayed(animation) && !IsLoadoutAnimation(animation.Name.Value))
@@ -975,6 +985,10 @@ namespace GUI.Types.Exporter.CharacterAssets
             var idle = otherAnimations.FirstOrDefault(static animation => animation.Activity == "ACT_DOTA_IDLE")
                 ?? otherAnimations.FirstOrDefault(static animation => animation.Looping)
                 ?? throw new InvalidDataException("The model has no idle animation to play");
+            var gesture = gestureModifiers.Count > 0
+                ? otherAnimations.FirstOrDefault(static animation => animation.Looping
+                    && animation.Activity?.StartsWith("ACT_SCRIPT_CUSTOM_", StringComparison.OrdinalIgnoreCase) == true)
+                : null;
 
             var weightList = $"{prefix}_bones";
             var used = new Dictionary<string, AnimFileNode>(StringComparer.Ordinal);
@@ -987,8 +1001,14 @@ namespace GUI.Types.Exporter.CharacterAssets
                     continue;
                 }
 
-                var layer = otherAnimations.FirstOrDefault(other => other.Activity is { Length: > 0 } activity
-                    && activity.Equals(animation.Activity, StringComparison.OrdinalIgnoreCase)) ?? idle;
+                var playsGesture = gesture != null && animation.ActivityModifiers
+                    .Any(modifier => ActivityNameRegex().Match(vmdl, modifier.Start, modifier.End - modifier.Start) is { Success: true } name
+                        && gestureModifiers.Contains(name.Groups["name"].Value, StringComparer.OrdinalIgnoreCase));
+
+                var layer = (playsGesture ? gesture : null)
+                    ?? otherAnimations.FirstOrDefault(other => other.Activity is { Length: > 0 } activity
+                        && activity.Equals(animation.Activity, StringComparison.OrdinalIgnoreCase))
+                    ?? idle;
 
                 used.TryAdd(layer.Name.Value, layer);
 

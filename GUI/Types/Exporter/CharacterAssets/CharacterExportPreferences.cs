@@ -25,6 +25,12 @@ namespace GUI.Types.Exporter.CharacterAssets
         /// </summary>
         public bool RecommendedMaterials { get; set; }
 
+        /// <summary>
+        /// Whether Recommended also writes the particles every hero uses that the items swap, like the blink dagger's, see
+        /// <see cref="CharacterExportOptions.ReplaceSharedParticles"/>.
+        /// </summary>
+        public bool RecommendedSharedParticles { get; set; }
+
         /// <summary>The loadout last picked for each hero, by hero name.</summary>
         public Dictionary<string, SavedLoadout> Loadouts { get; set; } = [];
 
