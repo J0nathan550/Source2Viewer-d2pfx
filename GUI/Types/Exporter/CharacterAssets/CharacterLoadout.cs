@@ -178,6 +178,41 @@ namespace GUI.Types.Exporter.CharacterAssets
             .DistinctBy(static swap => swap.DefaultModel, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// Models the equipped items give the hero's other variants, e.g. Tiny's at each Grow level past the first, with
+        /// the variant's own model they replace. The first variant is the hero's own model, see <see cref="HeroModel"/>.
+        /// </summary>
+        public IEnumerable<(EquippedItem Item, string Model, string DefaultModel)> VariantModelSwaps => Items
+            .SelectMany(item => item.Modifiers
+                .Where(static modifier => modifier.Type == "entity_model" && IsModelPath(modifier.Modifier))
+                .Select(modifier => (Item: item, Model: modifier.Modifier!, DefaultModel: GetVariantModel(modifier.Asset))))
+            .Where(static swap => swap.DefaultModel != null)
+            .Select(static swap => (swap.Item, swap.Model, DefaultModel: swap.DefaultModel!))
+            .DistinctBy(static swap => swap.DefaultModel, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The model of the hero's variant past the first that an entity name stands for, or null for other names.
+        /// </summary>
+        private string? GetVariantModel(string? entity)
+        {
+            for (var variant = 1; variant < Hero.VariantModels.Count; variant++)
+            {
+                if (Hero.GetVariantName(variant).Equals(entity, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Hero.VariantModels[variant];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Whether items swap the hero's own model by the entity name: the hero's, or its first variant's.
+        /// </summary>
+        public bool IsHeroEntity(string? entity)
+            => Hero.Name.Equals(entity, StringComparison.OrdinalIgnoreCase)
+                || (Hero.VariantModels.Count > 1 && Hero.GetVariantName(0).Equals(entity, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
         /// Models of the hero's abilities that the equipped items swap, e.g. the mound Nyx Assassin burrows into,
         /// Tidehunter's fish or the animal Shadow Shaman's hex turns targets into, with the game's own model they
         /// replace. Unlike swaps of other items' models, these apply whatever else is equipped. Only the hero's own
@@ -409,10 +444,11 @@ namespace GUI.Types.Exporter.CharacterAssets
                 .Select(modifier => (item, modifier.Asset!)));
 
         /// <summary>
-        /// The models the hero is shown with: its own model or the one an item swaps it for, then the models of the items
-        /// it wears, as package source paths.
+        /// The models the hero is shown with: its own model or the one an item swaps it for, the ones items swap its other
+        /// variants for, then the models of the items it wears, as package source paths.
         /// </summary>
         public IEnumerable<string> WornModels => new[] { HeroModel }
+            .Concat(VariantModelSwaps.Select(static swap => swap.Model))
             .Concat(Items.Where(item => IsWornByHero(item.Item.Slot)).Select(GetItemModel))
             .OfType<string>()
             .Select(NormalizePath)
@@ -539,8 +575,7 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         private string? GetHeroModelSwap(EquippedItem item)
-            => item.Modifiers.LastOrDefault(modifier => modifier is { Type: "entity_model", Modifier: not null }
-                && Hero.Name.Equals(modifier.Asset, StringComparison.OrdinalIgnoreCase))?.Modifier;
+            => item.Modifiers.LastOrDefault(modifier => modifier is { Type: "entity_model", Modifier: not null } && IsHeroEntity(modifier.Asset))?.Modifier;
 
         public static bool IsSamePath(string? a, string? b)
             => a != null && b != null && NormalizePath(a).Equals(NormalizePath(b), StringComparison.OrdinalIgnoreCase);

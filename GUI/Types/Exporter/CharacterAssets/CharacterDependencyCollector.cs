@@ -631,6 +631,7 @@ namespace GUI.Types.Exporter.CharacterAssets
             if (options.HeroModel && (loadout.HeroModel ?? loadout.Hero.Model) is { } heroModel)
             {
                 worn.Add(heroModel);
+                worn.AddRange(loadout.VariantModelSwaps.Select(static swap => swap.Model));
             }
 
             if (options.ItemModels)
@@ -884,8 +885,7 @@ namespace GUI.Types.Exporter.CharacterAssets
                         break;
 
                     // Other units, like summons, which have no default model of the hero's to be written over
-                    case "entity_model" when options.ItemModels && IsAssetPath(modifier.Modifier)
-                        && !loadout.Hero.Name.Equals(modifier.Asset, StringComparison.OrdinalIgnoreCase):
+                    case "entity_model" when options.ItemModels && IsAssetPath(modifier.Modifier) && !loadout.IsHeroEntity(modifier.Asset):
                         Enqueue(modifier.Modifier);
                         break;
 
@@ -911,6 +911,11 @@ namespace GUI.Types.Exporter.CharacterAssets
                 if (loadout.HeroModel != null)
                 {
                     Enqueue(loadout.HeroModel);
+                }
+
+                foreach (var (_, variantModel, _) in loadout.VariantModelSwaps)
+                {
+                    Enqueue(variantModel);
                 }
             }
 
@@ -954,7 +959,10 @@ namespace GUI.Types.Exporter.CharacterAssets
             var slotless = new List<(MergedModel Model, List<string> Particles, List<string> Companions)>();
             var replacedParticles = new Dictionary<string, ParticleReplacement>(StringComparer.OrdinalIgnoreCase);
             var usedParticles = GetUsedParticles(loadout, equippedAssets);
-            var unitSwaps = options.ItemModels ? loadout.UnitModelSwaps.ToList() : [];
+            // The hero's other variants are written over like units, their items have no model of their own either
+            var unitSwaps = (options.ItemModels ? loadout.UnitModelSwaps : [])
+                .Concat(options.HeroModel ? loadout.VariantModelSwaps : [])
+                .ToList();
             var personaModels = options.ItemModels ? loadout.PersonaModels : null;
             var rename = options.RenameModels;
 

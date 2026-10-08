@@ -361,6 +361,8 @@ namespace GUI.Types.Exporter.CharacterAssets
                         ? ReadRenamedModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, progress, details)
                         : ReadModel(outputRoot, replacement.Source, replacement.Skin, replacement.BodyGroups, plan.StyleMaterialRemaps.GetValueOrDefault(replacement.Source), progress, details);
 
+                    vmdl = InlineOwnInclude(vmdl, replacement, outputRoot, progress, details);
+
                     if (replacement.ActivityModifiers.Count > 0)
                     {
                         try
@@ -531,6 +533,38 @@ namespace GUI.Types.Exporter.CharacterAssets
             }
 
             return failed;
+        }
+
+        /// <summary>
+        /// Models that borrow the animations of the one they are written over, e.g. Tiny's bodies that include his model
+        /// of the same Grow level, would include themselves and stand in their bind pose, so they get those animations
+        /// as their own. The model written over is still the game's own here, its include was exported with the item.
+        /// </summary>
+        private static string InlineOwnInclude(string vmdl, ModelReplacement replacement, string outputRoot, IProgress<string> progress, List<string> details)
+        {
+            var targetPath = GetOutputPath(outputRoot, Path.ChangeExtension(replacement.Target, "vmdl"));
+
+            if (CharacterLoadout.IsSamePath(replacement.Source, replacement.Target) || !File.Exists(targetPath))
+            {
+                return vmdl;
+            }
+
+            try
+            {
+                var inlined = ModelDocEditor.InlineAnimIncludeModel(vmdl, File.ReadAllText(targetPath), replacement.Target);
+
+                if (!ReferenceEquals(inlined, vmdl))
+                {
+                    details.Add($"with the animations of {replacement.Target} it includes");
+                }
+
+                return inlined;
+            }
+            catch (Exception e)
+            {
+                progress.Report($"  ! {replacement.Target}: the animations it includes from itself were not added: {e.Message}");
+                return vmdl;
+            }
         }
 
         /// <summary>

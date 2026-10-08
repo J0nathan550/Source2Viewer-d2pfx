@@ -117,7 +117,12 @@ namespace GUI.Types.Exporter.CharacterAssets
     /// a form it transforms into.
     /// </param>
     /// <param name="Units">The units the slot's items dress, e.g. Beastmaster's boar.</param>
-    sealed record HeroSlot(int Index, string Name, string DisplayName, bool WornByHero = true, IReadOnlyList<string>? Units = null);
+    /// <param name="SwapsHeroModel">
+    /// Whether the slot's items swap one of the hero's whole models rather than add a part to it, e.g. Tiny's slot for
+    /// each Grow level, see <see cref="HeroDefinition.VariantModels"/>.
+    /// </param>
+    sealed record HeroSlot(int Index, string Name, string DisplayName, bool WornByHero = true, IReadOnlyList<string>? Units = null,
+        bool SwapsHeroModel = false);
 
     /// <summary>
     /// A playable hero as declared in the npc hero scripts.
@@ -135,6 +140,13 @@ namespace GUI.Types.Exporter.CharacterAssets
         public int? Id { get; init; }
 
         public string? Model { get; init; }
+
+        /// <summary>
+        /// The hero's models by variant, which items swap by the entity name <see cref="GetVariantName"/> gives, e.g.
+        /// Tiny's for each Grow level. The first one is <see cref="Model"/>.
+        /// </summary>
+        public List<string> VariantModels { get; } = [];
+
         public string? GameSoundsFile { get; init; }
         public string? VoiceFile { get; init; }
         public string? ParticleFolder { get; init; }
@@ -158,6 +170,11 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         /// <summary>The entity name without the "npc_dota_hero_" prefix, e.g. "earthshaker".</summary>
         public string ShortName => Name.StartsWith(NamePrefix, StringComparison.Ordinal) ? Name[NamePrefix.Length..] : Name;
+
+        /// <summary>
+        /// The entity name items swap one of <see cref="VariantModels"/> by, e.g. "npc_dota_hero_tiny_variant_2".
+        /// </summary>
+        public string GetVariantName(int variant) => string.Create(CultureInfo.InvariantCulture, $"{Name}_variant_{variant}");
 
         public override string ToString() => DisplayName;
     }
@@ -260,13 +277,15 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
-        /// The hero's own loadout slots, followed by any other slot the hero's items are made for.
+        /// The hero's own loadout slots, followed by any other slot the hero's items are made for. Heroes whose slots swap
+        /// their whole models only get their own, as the other slots' items are parts of an older model the hero no longer
+        /// has, e.g. Tiny's head and arms.
         /// </summary>
         public IReadOnlyList<HeroSlot> GetSlots(HeroDefinition hero)
         {
             var slots = hero.Slots.OrderBy(static slot => slot.Index).ToList();
 
-            if (itemsByHero.TryGetValue(hero.Name, out var items))
+            if (!slots.Any(static slot => slot.SwapsHeroModel) && itemsByHero.TryGetValue(hero.Name, out var items))
             {
                 var extraSlots = items
                     .Select(static item => item.Slot)
@@ -694,6 +713,13 @@ namespace GUI.Types.Exporter.CharacterAssets
                     ParticleFolder = NullIfEmpty(GetValue(heroData, "particle_folder")),
                 };
 
+                hero.VariantModels.Add(hero.Model!);
+
+                while (NullIfEmpty(GetValue(heroData, string.Create(CultureInfo.InvariantCulture, $"Model{hero.VariantModels.Count}"))) is { } variantModel)
+                {
+                    hero.VariantModels.Add(variantModel);
+                }
+
                 foreach (var (key, value) in heroData)
                 {
                     if (!key.StartsWith("Ability", StringComparison.Ordinal) || !int.TryParse(key.AsSpan("Ability".Length), CultureInfo.InvariantCulture, out _))
@@ -745,9 +771,12 @@ namespace GUI.Types.Exporter.CharacterAssets
                             ? generatesUnits.Select(static unit => ToText(unit.Value)).OfType<string>().ToList()
                             : null;
 
-                        var wornByHero = units == null && GetValue(slotData, "LoadoutPreviewMode") == null;
+                        var previewMode = GetValue(slotData, "LoadoutPreviewMode");
+                        var swapsHeroModel = previewMode == "hero_model_override";
+                        var wornByHero = units == null && (previewMode == null || swapsHeroModel);
 
-                        hero.Slots.Add(new HeroSlot(slotIndex, slotName, Localize(localization, GetValue(slotData, "SlotText")) ?? slotName, wornByHero, units));
+                        hero.Slots.Add(new HeroSlot(slotIndex, slotName, Localize(localization, GetValue(slotData, "SlotText")) ?? slotName, wornByHero, units,
+                            swapsHeroModel));
                     }
                 }
 

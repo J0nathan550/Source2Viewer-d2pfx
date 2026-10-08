@@ -761,6 +761,79 @@ namespace GUI.Types.Exporter.CharacterAssets
         }
 
         /// <summary>
+        /// Puts the animations of a model this one includes in place of the include, e.g. an item that borrows every
+        /// sequence of the hero's model it is written over, whose include would then point at itself. Sequences this
+        /// model has of its own keep their own version, as they do over included ones.
+        /// </summary>
+        /// <param name="vmdl">The .vmdl text.</param>
+        /// <param name="includedVmdl">The included model's .vmdl text.</param>
+        /// <param name="includedModel">The included model, as a package source path.</param>
+        /// <returns>The text with the animations in place of the include, or as it was when it does not include the model.</returns>
+        public static string InlineAnimIncludeModel(string vmdl, string includedVmdl, string includedModel)
+        {
+            bool IsIncludeOf(string text, (int Start, int End) range)
+                => ObjectHeaderRegex().Match(text, range.Start) is { Success: true } header
+                    && header.Groups["class"].Value == "AnimIncludeModel"
+                    && IncludedModelRegex().Match(text, range.Start, range.End - range.Start) is { Success: true } model
+                    && CharacterLoadout.IsSamePath(model.Groups["model"].Value, includedModel);
+
+            var include = FindObjects(vmdl).FirstOrDefault(range => IsIncludeOf(vmdl, range));
+
+            if (include == default)
+            {
+                return vmdl;
+            }
+
+            if (FindObjects(includedVmdl).Any(range => IsIncludeOf(includedVmdl, range)))
+            {
+                throw new InvalidDataException($"\"{includedModel}\" includes itself, it was written over already");
+            }
+
+            var ownSequences = GetSequenceNames(vmdl).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var objects = FindObjects(includedVmdl);
+            var list = objects.FirstOrDefault(range => ObjectHeaderRegex().Match(includedVmdl, range.Start) is { Success: true } header
+                && header.Groups["class"].Value == "AnimationList");
+
+            if (list == default)
+            {
+                throw new InvalidDataException("The included model's animation list was not found");
+            }
+
+            var animations = objects.Where(range => range.Start > list.Start && range.End < list.End).ToList();
+
+            (int Start, int End) GetParent((int Start, int End) range)
+                => animations.Where(other => other.Start < range.Start && other.End >= range.End).DefaultIfEmpty(list).MaxBy(static other => other.Start);
+
+            // Only one AnimOrder is compiled, the including model's own
+            var removed = animations
+                .Where(range => ObjectHeaderRegex().Match(includedVmdl, range.Start) is { Success: true } header
+                    && (header.Groups["class"].Value == "AnimOrder" || (header.Groups["name"].Success && ownSequences.Contains(header.Groups["name"].Value)))
+                    && ObjectHeaderRegex().Match(includedVmdl, GetParent(range).Start) is { Success: true } parent
+                    && parent.Groups["class"].Value is "AnimationList" or "Folder")
+                .ToList();
+
+            var children = new StringBuilder();
+
+            foreach (var child in animations.Where(range => GetParent(range) == list && !removed.Contains(range)))
+            {
+                var text = new StringBuilder(includedVmdl[GetLineStart(includedVmdl, child.Start)..GetLineEnd(includedVmdl, child.End)]);
+                var offset = GetLineStart(includedVmdl, child.Start);
+
+                foreach (var nested in removed.Where(range => range.Start > child.Start && range.End < child.End).OrderByDescending(static range => range.Start))
+                {
+                    var start = GetLineStart(includedVmdl, nested.Start) - offset;
+                    text.Remove(start, GetLineEnd(includedVmdl, nested.End) - offset - start);
+                }
+
+                children.Append(text);
+            }
+
+            var includeStart = GetLineStart(vmdl, include.Start);
+
+            return Validate(string.Concat(vmdl.AsSpan(0, includeStart), children.ToString(), vmdl.AsSpan(GetLineEnd(vmdl, include.End))));
+        }
+
+        /// <summary>
         /// The start the names share up to an underscore, e.g. "ss_totem_", or an empty string.
         /// </summary>
         private static string GetCommonPrefix(IEnumerable<string> names)
@@ -1762,6 +1835,9 @@ namespace GUI.Types.Exporter.CharacterAssets
 
         [GeneratedRegex(@"_class\s*=\s*""WeightListList""\s*children\s*=\s*\[", RegexOptions.CultureInvariant)]
         private static partial Regex WeightListListChildrenRegex();
+
+        [GeneratedRegex(@"\bmodel\s*=\s*""(?<model>[^""]*)""", RegexOptions.CultureInvariant)]
+        private static partial Regex IncludedModelRegex();
 
         [GeneratedRegex(@"\bhidden\s*=\s*(?<value>true|false)\b", RegexOptions.CultureInvariant)]
         private static partial Regex HiddenRegex();
