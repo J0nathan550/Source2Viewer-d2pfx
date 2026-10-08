@@ -17,6 +17,9 @@ partial class ModelExtract
     // Nodes the compiler adds around a joint to give its chain a width are named after it with this prefix
     private const string ClothExtrusionPrefix = "$cc";
 
+    // A node's compiled mass is this per unit of its rods' length, times the square of its joint's authored mass
+    private const float ClothRodMassPerUnitLength = 8f;
+
     // Goal damping compiles into how much of the way to its animated position a node is pulled on top of its goal
     // strength, with no closed form. These are -ln((1 - vertex attraction) / (1 - force attraction)) for the authored
     // goal strengths (rows) and goal dampings (columns), which grow with the damping.
@@ -119,12 +122,40 @@ partial class ModelExtract
 
         var (softbody, children) = MakeListNode("Softbody");
 
-        foreach (var node in alignments.Concat(chains))
+        foreach (var node in alignments.Concat(chains).Concat(BuildClothFollowBones(cloth)))
         {
             children.Add(node);
         }
 
         lists.RootChildren.Add(softbody);
+    }
+
+    /// <summary>
+    /// Joints that are not simulated but follow a simulated one rather than their animation, e.g. the limbs of a figure
+    /// held by its body, which would otherwise stay where the animation has them and stretch the cloth between.
+    /// </summary>
+    private static List<KVObject> BuildClothFollowBones(ClothModel cloth)
+    {
+        var follows = new List<KVObject>();
+
+        foreach (var link in cloth.FeModel.GetArray("m_DynKinLinks") ?? [])
+        {
+            var leader = link.GetInt32Property("m_nParent");
+            var follower = link.GetInt32Property("m_nChild");
+
+            if (!cloth.IsJoint(leader) || !cloth.IsJoint(follower) || !cloth.IsBoneNode(leader) || !cloth.IsBoneNode(follower))
+            {
+                continue;
+            }
+
+            follows.Add(MakeNode("ClothFollowBone",
+                ("name", $"follow_{leader}_{follower}"),
+                ("leader_type", 0),
+                ("leader_bone", cloth.GetBoneName(leader)),
+                ("follower_bone", cloth.GetBoneName(follower))));
+        }
+
+        return follows;
     }
 
     /// <summary>
@@ -224,6 +255,11 @@ partial class ModelExtract
         private readonly Dictionary<int, List<(int Node, Vector3 Offset)>> sideNodes = [];
         private readonly HashSet<int> addedNodes = [];
         private readonly Dictionary<int, string> vertexMaps = [];
+        private readonly Dictionary<int, (float World, float Ground)> worldCollisions = [];
+        private readonly Dictionary<int, (float MaxDistance, float Relaxation)> strayRadii = [];
+        private readonly float strayRelaxationScale;
+        private readonly float[] inverseMasses;
+        private readonly Dictionary<int, float> geometricMasses = [];
 
         public ClothModel(KVObject feModel, string[] names, long[] parents, HashSet<string> bones)
         {
@@ -241,11 +277,26 @@ partial class ModelExtract
             {
                 var nodes = rod.GetIntegerArray("nNode");
 
-                if (nodes.Length == 2)
+                if (nodes.Length != 2)
                 {
-                    rods.Add(((int)nodes[0], (int)nodes[1], rod.GetFloatProperty("flRelaxationFactor", 1f)));
+                    continue;
+                }
+
+                rods.Add(((int)nodes[0], (int)nodes[1], rod.GetFloatProperty("flRelaxationFactor", 1f)));
+
+                // A node weighs what the rods of fixed length it holds do, before the joint's mass scales it
+                var maxDistance = rod.GetFloatProperty("flMaxDist");
+
+                if (MathF.Abs(maxDistance - rod.GetFloatProperty("flMinDist")) <= 1e-3f)
+                {
+                    foreach (var node in nodes)
+                    {
+                        geometricMasses[(int)node] = geometricMasses.GetValueOrDefault((int)node) + (ClothRodMassPerUnitLength * maxDistance);
+                    }
                 }
             }
+
+            inverseMasses = feModel.ContainsKey("m_NodeInvMasses") ? feModel.GetFloatArray("m_NodeInvMasses") : [];
 
             foreach (var offset in feModel.GetArray("m_CtrlOffsets") ?? [])
             {
@@ -282,6 +333,34 @@ partial class ModelExtract
                     }
                 }
             }
+
+            // The nodes that collide with the ground, each run of them with a friction of its own, e.g. a figure
+            // dragged along the floor that would otherwise sink through it
+            var worldCollisionNodes = feModel.ContainsKey("m_WorldCollisionNodes") ? feModel.GetIntegerArray("m_WorldCollisionNodes") : [];
+
+            foreach (var range in feModel.GetArray("m_WorldCollisionParams") ?? [])
+            {
+                var friction = (range.GetFloatProperty("flWorldFriction"), range.GetFloatProperty("flGroundFriction"));
+                var end = Math.Min(range.GetInt32Property("nListEnd"), worldCollisionNodes.Length);
+
+                for (var i = Math.Max(range.GetInt32Property("nListBegin"), 0); i < end; i++)
+                {
+                    worldCollisions[(int)worldCollisionNodes[i]] = friction;
+                }
+            }
+
+            // How far each node may stray from its animated position, the ones that pair a node with itself
+            foreach (var stray in feModel.GetArray("m_AnimStrayRadii") ?? [])
+            {
+                if (stray.GetIntegerArray("nNode") is [var node0, var node1, ..] && node0 == node1 && IsNode((int)node0))
+                {
+                    strayRadii[(int)node0] = (stray.GetFloatProperty("flMaxDist"), stray.GetFloatProperty("flRelaxationFactor"));
+                }
+            }
+
+            // Relaxations compile scaled by the thread stretch
+            var threadStretch = feModel.ContainsKey("m_flDefaultThreadStretch") ? feModel.GetFloatProperty("m_flDefaultThreadStretch") : 0f;
+            strayRelaxationScale = threadStretch > 0f ? MathF.Exp(-threadStretch) : 1f;
         }
 
         public bool IsNode(int node) => node >= 0 && node < Names.Length;
@@ -327,9 +406,10 @@ partial class ModelExtract
             var joint = KVObject.Collection();
             var parent = GetParentJoint(node);
             var grandParent = parent >= 0 ? GetParentJoint(parent) : -1;
+            var greatGrandParent = grandParent >= 0 ? GetParentJoint(grandParent) : -1;
 
             // A joint given a width follows the nodes added around it, which hold what is simulated
-            var simulated = sideNodes.TryGetValue(node, out var sides) && sides.Count > 0 ? sides[0].Node : node;
+            var simulated = sideNodes.TryGetValue(node, out var sides) && sides.Count > 0 && !IsEndEffector(node) ? sides[0].Node : node;
             var dynamicIndex = simulated - StaticNodeCount;
 
             joint.Add("joint_name", GetBoneName(node));
@@ -342,14 +422,24 @@ partial class ModelExtract
             joint.Add("simulate", node >= StaticNodeCount);
             joint.Add("allow_rotation", node >= RotationLockedStaticNodeCount);
 
-            if (FindRod(parent, node) is { } stretch)
+            if (FindSpanRod(parent, node) is { } stretch)
             {
                 joint.Add("stretch_spring", stretch);
             }
 
-            if (FindRod(grandParent, node) is { } bend)
+            if (FindSpanRod(grandParent, node) is { } bend)
             {
                 joint.Add("bend_spring", bend);
+            }
+            else if (grandParent >= 0 && !HasAnyRod(grandParent, node))
+            {
+                // Left out, the bend spring compiles at full stiffness
+                joint.Add("bend_spring", 0f);
+            }
+
+            if (FindSpanRod(greatGrandParent, node) is { } torsion)
+            {
+                joint.Add("torsion_spring", torsion);
             }
 
             var children = Enumerable.Range(0, Names.Length).Where(child => IsJoint(child) && GetParentJoint(child) == node).ToList();
@@ -361,6 +451,11 @@ partial class ModelExtract
                     joint.Add("child_sibling_spring", sibling);
                     break;
                 }
+            }
+
+            if (GetMassMultiplier(node) is { } mass)
+            {
+                joint.Add("mass", mass);
             }
 
             if (dynamicIndex >= 0 && dynamicIndex < collisionRadii.Length)
@@ -386,12 +481,31 @@ partial class ModelExtract
                 joint.Add("gravity_z", integrator.GetFloatProperty("flGravity") / ClothGravity);
             }
 
+            // A joint given a width collides through the nodes added around it
+            if (worldCollisions.TryGetValue(simulated, out var world) || worldCollisions.TryGetValue(node, out world))
+            {
+                joint.Add("world_collision", true);
+                joint.Add("world_friction", world.World);
+                joint.Add("ground_friction", world.Ground);
+            }
+
+            if (Extrusion(node).Prepend(node).Where(strayRadii.ContainsKey).Select(stray => strayRadii[stray]).FirstOrDefault() is { MaxDistance: > 0f } strayRadius)
+            {
+                joint.Add("stray_radius", strayRadius.MaxDistance);
+                joint.Add("stray_radius_stretchiness", 1f - Math.Clamp(strayRadius.Relaxation / strayRelaxationScale, 0f, 1f));
+            }
+
             if (vertexMaps.TryGetValue(node, out var vertexMap))
             {
                 joint.Add("vertex_map", vertexMap);
             }
 
-            if (sides is { Count: > 0 })
+            if (IsEndEffector(node))
+            {
+                // One node past the end of the chain's last joint, which the compiler names after its center
+                joint.Add("end_effector", sides![0].Offset.Length());
+            }
+            else if (sides is { Count: > 0 })
             {
                 // Sides spread along the bone's Y and Z, or along X and Y when the bone points along Z
                 var side = sides[0].Offset;
@@ -405,6 +519,82 @@ partial class ModelExtract
             }
 
             return joint;
+        }
+
+        /// <summary>
+        /// The mass a joint was authored with, e.g. heavier ends that hold a figure's limbs down, or null for the default
+        /// or when its simulated nodes do not agree on one.
+        /// </summary>
+        private float? GetMassMultiplier(int node)
+        {
+            float? multiplier = null;
+
+            foreach (var simulated in Extrusion(node))
+            {
+                var geometric = geometricMasses.GetValueOrDefault(simulated);
+
+                if (simulated < StaticNodeCount || simulated >= inverseMasses.Length || inverseMasses[simulated] is <= 0f or >= 1f || geometric <= 0f)
+                {
+                    continue;
+                }
+
+                var reading = MathF.Sqrt(1f / inverseMasses[simulated] / geometric);
+
+                if (multiplier is { } seen && MathF.Abs(reading - seen) > 0.02f * seen)
+                {
+                    return null;
+                }
+
+                multiplier ??= reading;
+            }
+
+            return multiplier is { } value && MathF.Abs(value - 1f) > 0.02f ? MathF.Round(value, 2) : null;
+        }
+
+        /// <summary>Whether any rod joins the nodes two joints are simulated with.</summary>
+        private bool HasAnyRod(int node0, int node1)
+            => Extrusion(node0).Prepend(node0).Any(a => Extrusion(node1).Prepend(node1).Any(b => FindRod(a, b) != null));
+
+        /// <summary>The nodes a joint is simulated with: the ones added around it when it has a width, else itself.</summary>
+        private List<int> Extrusion(int node)
+            => !IsEndEffector(node) && sideNodes.TryGetValue(node, out var sides) && sides.Count > 0 ? [.. sides.Select(static side => side.Node)] : [node];
+
+        private bool IsEndEffector(int node)
+            => sideNodes.TryGetValue(node, out var sides) && sides.Count > 0
+                && sides.TrueForAll(side => Names[side.Node].EndsWith("_Ctr", StringComparison.Ordinal) && side.Offset.Length() > 1e-3f);
+
+        /// <summary>
+        /// The relaxation of the rods a spring between two joints compiles to: one rod between their nodes, or one
+        /// between every pair of the nodes added around them when they have a width, all alike.
+        /// </summary>
+        private float? FindSpanRod(int node0, int node1)
+        {
+            if (FindRod(node0, node1) is { } direct)
+            {
+                return direct;
+            }
+
+            if (node0 < 0 || node1 < 0 || (!sideNodes.ContainsKey(node0) && !sideNodes.ContainsKey(node1)))
+            {
+                return null;
+            }
+
+            float? relaxation = null;
+
+            foreach (var a in Extrusion(node0))
+            {
+                foreach (var b in Extrusion(node1))
+                {
+                    if (FindRod(a, b) is not { } rod || (relaxation is { } seen && MathF.Abs(seen - rod) > 1e-3f))
+                    {
+                        return null;
+                    }
+
+                    relaxation = rod;
+                }
+            }
+
+            return relaxation;
         }
 
         private float? FindRod(int node0, int node1)
